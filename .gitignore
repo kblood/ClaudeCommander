@@ -21,6 +21,8 @@ cce.key
 cce_keys.bin
 CCEDUMP.TXT
 TESTED.TXT
+# find (CCFIND) test artifacts
+findout.txt
 # scratch playgrounds for headless copy/delete tests
 AAASRC/
 AAADST/

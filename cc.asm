@@ -131,6 +131,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_MENU
   %define FEAT_MASK
   %define FEAT_EDIT
+  %define FEAT_FIND
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -2591,6 +2592,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_EDIT
 %include "mod/edit.inc"
 %endif
+%ifdef FEAT_FIND
+%include "mod/find.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2618,6 +2622,9 @@ keytab:
         KEYBIND_EXT 52h, key_tag        ; Insert  tag
         KEYBIND_EXT 68h, key_drive_l    ; Alt+F1  left drive
         KEYBIND_EXT 69h, key_drive_r    ; Alt+F2  right drive
+%ifdef FEAT_FIND
+        KEYBIND_EXT 6Eh, key_find       ; Alt+F7  find files (CCFIND.COM)
+%endif
         KEYBIND_EXT 44h, key_quit       ; F10
         ; ---- ascii keys (al!=0, match ascii in al) ----
         KEYBIND_ASC 09h, key_tab        ; Tab

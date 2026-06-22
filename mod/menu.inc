@@ -197,6 +197,9 @@ menu_tbl:
 %ifdef FEAT_EDIT
         dw      mi_edit,  key_edit
 %endif
+%ifdef FEAT_FIND
+        dw      mi_find2, key_find
+%endif
         dw      mi_quit,  key_quit
         dw      0, 0
 
@@ -217,5 +220,8 @@ mi_tag      db 'Tag by mask',0
 %endif
 %ifdef FEAT_EDIT
 mi_edit     db 'Edit file (F4)',0
+%endif
+%ifdef FEAT_FIND
+mi_find2    db 'Find files (Alt-F7)',0
 %endif
 mi_quit     db 'Quit',0
