@@ -31,14 +31,28 @@ Today (`cc.asm`):
 | `.bss` — `panelL`+`panelR` (2 × `PANELSIZE`, 512 entries × 24 B) | ~24.7 KB |
 | `.bss` — `viewbuf` (`VIEW_MAX`, 16 KB viewer) | 16 KB |
 | `.bss` — `snapbuf` (4000), stack (2048), small scratch | ~7 KB |
-| **Resident image total** | **~51 KB** |
-| **Headroom left in the segment** | **~13 KB** |
+| **Resident image total** (measured by `build.ps1`: `0x100` PSP + code + all `.bss` + 2 KB stack) | **60,714 B (~59.3 KB)** |
+| **Headroom left in the segment** (65,536 − 60,714) | **~4.7 KB** |
 
-**Everything resident must fit in that ~13 KB.** This is *the* number to respect.
+> The measured 60,714 B is authoritative — it equals the `mov ax, prog_end`
+> immediate (`0xED2A`) the assembler bakes into `start` (`cc.asm:128`). The
+> README's older "~51 KB" prose under-counted; treat **~4.7 KB** as the real
+> resident headroom for the default build.
+
+**Everything resident must fit in that ~4.7 KB.** This is *the* number to
+respect — and it is far tighter than first assumed, which reshapes the plan:
+the full `FEAT_FULL` resident set will **not** fit on top of today's image
+without trading down a big buffer. The realistic levers are (a) push heavy
+features external/overlay, and (b) under `FEAT_*` flags **reclaim** the two
+fat buffers — `viewbuf` (16 KB) and the panel arrays (`MAX_FILES`, 24.7 KB) —
+to make room. `build.ps1` enforces the wall so this can't be violated silently.
 Consequences, baked into the plan below:
 
 - Cheap resident features (sort, clock, columns, quick-search, menu bar,
-  config loader, string table) are fine — each is hundreds of bytes to ~2 KB.
+  config loader, string table) each cost hundreds of bytes to ~2 KB — so even
+  these must be **counted against the ~4.7 KB**, and a couple of them together
+  already approach the wall. Build profiles, not "add everything," are how the
+  default stays buildable.
 - RAM-hungry features (LFN names, archive directory parsing, a built-in
   editor) either (a) ship as **external** programs, (b) **trade** against
   existing buffers (e.g. shrink `viewbuf` or `MAX_FILES` under a build flag),

@@ -3,7 +3,7 @@ dosbox-x/
 dbstaging/
 *.zip
 # build + test artifacts
-cc.com
+*.com
 CCDUMP.TXT
 CCSNAP.BIN
 _snap*.txt
