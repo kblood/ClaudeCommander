@@ -2574,6 +2574,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_SEARCH
 %include "mod/search.inc"
 %endif
+%ifdef FEAT_MENU
+%include "mod/menu.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2617,6 +2620,9 @@ keytab:
 %endif
 %ifdef FEAT_SEARCH
         KEYBIND_EXT 63h, key_qsearch    ; Ctrl-F6  incremental quick-search
+%endif
+%ifdef FEAT_MENU
+        KEYBIND_EXT 43h, key_menu       ; F9  pop-up command menu
 %endif
         KEYBIND_END                     ; sentinel
 
@@ -2698,6 +2704,10 @@ footbuf     resb 48         ; mod/free.inc footer text scratch
 %ifdef FEAT_SEARCH
 qsbuf       resb 16         ; mod/search.inc quick-search prefix
 qslen       resw 1
+%endif
+%ifdef FEAT_MENU
+menu_n      resw 1          ; mod/menu.inc item count + selection
+menu_sel    resw 1
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
