@@ -137,6 +137,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_HELP
   %define FEAT_LANG
   %define FEAT_LFN
+  %define FEAT_GREP
 %endif
 %if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
 %endif
@@ -2613,6 +2614,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_FIND
 %include "mod/find.inc"
 %endif
+%ifdef FEAT_GREP
+%include "mod/grep.inc"
+%endif
 %ifdef FEAT_ZIP
 %include "mod/zip.inc"
 %endif
@@ -2660,6 +2664,9 @@ keytab:
         KEYBIND_EXT 69h, key_drive_r    ; Alt+F2  right drive
 %ifdef FEAT_FIND
         KEYBIND_EXT 6Eh, key_find       ; Alt+F7  find files (CCFIND.COM)
+%endif
+%ifdef FEAT_GREP
+        KEYBIND_EXT 6Fh, key_grep       ; Alt+F8  grep file contents (CCGREP.COM)
 %endif
         KEYBIND_EXT 44h, key_quit       ; F10
         ; ---- ascii keys (al!=0, match ascii in al) ----

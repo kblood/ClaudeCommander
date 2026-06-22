@@ -11,7 +11,8 @@
     F5 .. copy               F6 .. move/rename    F7 .. make dir
     F8 .. delete             F9 .. menu           F10 . quit
     Alt-F1/F2 ....... change drive (left / right panel)
-    Alt-F7 .......... find files (CCFIND)
+    Alt-F7 .......... find files by name (CCFIND)
+    Alt-F8 .......... search file contents / grep (CCGREP)
 
   DISPLAY / SELECT
     Ctrl-F1..F4 ..... sort by name / ext / size / date

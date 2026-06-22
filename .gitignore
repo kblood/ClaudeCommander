@@ -23,6 +23,8 @@ CCEDUMP.TXT
 TESTED.TXT
 # find (CCFIND) test artifacts
 findout.txt
+# grep (CCGREP) test artifacts
+grepout.txt
 # zip (CCZIP) test artifacts
 ziplist.txt
 ZTEST.ZIP

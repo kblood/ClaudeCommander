@@ -6,7 +6,7 @@
 ; add a row to menu_tbl; no changes to the loop or the renderer.
 
 MENU_C0  equ 3              ; left border column
-MENU_IW  equ 18             ; interior width (label field)
+MENU_IW  equ 24             ; interior width (fits the longest label + indent)
 MENU_R0  equ 2              ; top border row
 A_MENU   equ 030h           ; black on cyan (box + items)
 A_MENUS  equ 070h           ; black on white (highlighted item)
@@ -200,6 +200,9 @@ menu_tbl:
 %ifdef FEAT_FIND
         dw      mi_find2, key_find
 %endif
+%ifdef FEAT_GREP
+        dw      mi_grep,  key_grep
+%endif
 %ifdef FEAT_ZIP
         dw      mi_zip,   key_zip
 %endif
@@ -226,6 +229,9 @@ mi_edit     db 'Edit file (F4)',0
 %endif
 %ifdef FEAT_FIND
 mi_find2    db 'Find files (Alt-F7)',0
+%endif
+%ifdef FEAT_GREP
+mi_grep     db 'Grep contents (Alt-F8)',0
 %endif
 %ifdef FEAT_ZIP
 mi_zip      db 'List archive (Ctrl-F9)',0
