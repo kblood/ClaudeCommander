@@ -1468,11 +1468,27 @@ format_entry:
         inc     si
         jmp     .lp
 .num:
-        ; format dword size right-justified into SIZEW field
+        ; file: right-justified field shows size / date / time per col_mode.
+%ifdef FEAT_COLS
+        mov     bl, [col_mode]
+        or      bl, bl
+        jz      .numsize
+        cmp     bl, 1
+        jne     .numtime
+        mov     ax, [si+E_DATE]
+        call    fmt_date            ; -> si=numbuf, cx=len
+        jmp     .numjust
+.numtime:
+        mov     ax, [si+E_TIME]
+        call    fmt_time            ; -> si=numbuf, cx=len
+        jmp     .numjust
+.numsize:
+%endif
         mov     ax, [si+E_SIZE]
         mov     dx, [si+E_SIZE+2]
         ; di -> field start; produce into numbuf then right-justify
         call    u32toa              ; dx:ax -> numbuf, returns cx=len, si=numbuf
+.numjust:
         mov     bx, SIZEW
         sub     bx, cx              ; leading spaces
         add     di, bx
@@ -2546,6 +2562,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_SORT
 %include "mod/sort.inc"
 %endif
+%ifdef FEAT_COLS
+%include "mod/cols.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2583,6 +2602,9 @@ keytab:
         KEYBIND_EXT 5Fh, sort_ext       ; Ctrl-F2  by extension
         KEYBIND_EXT 60h, sort_size      ; Ctrl-F3  by size
         KEYBIND_EXT 61h, sort_date      ; Ctrl-F4  by date (newest first)
+%endif
+%ifdef FEAT_COLS
+        KEYBIND_EXT 62h, col_cycle      ; Ctrl-F5  cycle size/date/time column
 %endif
         KEYBIND_END                     ; sentinel
 
@@ -2639,6 +2661,7 @@ want_keys   db 0
 count_dbg   db 0
 snap_mode   db 0
 sort_mode   db 0            ; 0=name 1=ext 2=size 3=date (FEAT_SORT)
+col_mode    db 0            ; right column: 0=size 1=date 2=time (FEAT_COLS)
 orig_mode   db 3
 pcx         db 0
 pcw         db 0
