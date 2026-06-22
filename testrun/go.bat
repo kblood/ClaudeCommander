@@ -1,1 +1,0 @@
-echo RUNOK> ranproof.txt
