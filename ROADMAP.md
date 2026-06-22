@@ -233,8 +233,13 @@ Goal: introduce the seams with **zero behaviour change**. Acceptance = the
    `harness`) included at the current spots. Each extraction verified
    **byte-identical** (`cc.com` SHA-256 unchanged at every step; 7,104 B).
    `cc.asm` 3722 → 2557 lines; 1,189 lines moved out.
-2. **Data-driven key dispatch** + `KEYBIND` macro; port the current chain to
-   table rows.
+2. ✅ **DONE.** Data-driven key dispatch: `KEYBIND_EXT/ASC/END` macros + a
+   `keytab` walked by `dispatch:`, replacing the `cmp ah,XX/je` chain. Modules
+   can now register keys by emitting rows before `KEYBIND_END`. Not
+   byte-identical (intended), so verified **behaviourally identical** — old vs
+   new binary run back-to-back in a frozen dir across the dispatch/nav/view
+   `/T` keyfiles showed 0 real diffs (only the CC.COM/CC.ASM size columns moved).
+   Binary shrank 7104 → 7100 B.
 3. **Data-driven menu + F-key bar** registration; reproduce today's bar.
 4. **UI string table** + `MSG(id)`; move all current strings into it.
 5. **`cc.ini` loader** (generic section/key reader) + a settings struct;

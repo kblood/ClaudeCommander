@@ -82,6 +82,33 @@ E_SIZE      equ 16         ; dword
 E_TIME      equ 20         ; word
 E_DATE      equ 22         ; word
 
+; --- data-driven key dispatch -------------------------------------------------
+; Each binding is a 4-byte row: db class, db code, dw handler. A module can
+; register its own keys by emitting KEYBIND_* rows into keytab (see plan/
+; m1_dispatch.md). dispatch walks the table; unmatched printable ASCII falls
+; through to cmd_addchar exactly as the old cmp/je chain did.
+KB_EXT      equ 0          ; match on AH (scan) -- extended key (al was 0)
+KB_ASC      equ 1          ; match on AL (ascii)
+KB_END      equ 0FFh       ; table sentinel (class byte)
+
+%macro KEYBIND_EXT 2        ; %1 = scan code (AH), %2 = handler label
+        db      KB_EXT
+        db      %1
+        dw      %2
+%endmacro
+
+%macro KEYBIND_ASC 2        ; %1 = ascii code (AL), %2 = handler label
+        db      KB_ASC
+        db      %1
+        dw      %2
+%endmacro
+
+%macro KEYBIND_END 0
+        db      KB_END
+        db      0
+        dw      0
+%endmacro
+
 ; ============================================================================
 start:
         cld
@@ -231,54 +258,37 @@ main_loop:
 ; ============================================================================
 ;  DISPATCH
 ; ============================================================================
+; Data-driven: walk keytab (built by KEYBIND_* rows). al=ascii, ah=scan from
+; get_key. al==0 -> match scan(ah) against KB_EXT rows; else match ascii(al)
+; against KB_ASC rows. No row + printable ascii -> cmd_addchar fallthrough.
+; AL/AH are preserved into the handler (scratch is DL/DH/CL/SI/BX only).
 dispatch:
+        mov     dl, KB_ASC          ; assume ascii key
+        mov     dh, al              ; code to match = al (ascii)
         or      al, al
-        jnz     .ascii
-        ; --- extended key: dispatch on scan code in ah ---
-        cmp     ah, 48h
-        je      key_up
-        cmp     ah, 50h
-        je      key_down
-        cmp     ah, 49h
-        je      key_pgup
-        cmp     ah, 4Bh             ; Left  -> page up
-        je      key_pgup
-        cmp     ah, 51h
-        je      key_pgdn
-        cmp     ah, 4Dh             ; Right -> page down
-        je      key_pgdn
-        cmp     ah, 47h
-        je      key_home
-        cmp     ah, 4Fh
-        je      key_end
-        cmp     ah, 3Dh             ; F3  View
-        je      key_view
-        cmp     ah, 3Fh             ; F5  Copy
-        je      key_copy
-        cmp     ah, 40h             ; F6  Rename/Move
-        je      key_rename
-        cmp     ah, 41h             ; F7  MkDir
-        je      key_mkdir
-        cmp     ah, 42h             ; F8  Delete
-        je      key_delete
-        cmp     ah, 52h             ; Insert  tag
-        je      key_tag
-        cmp     ah, 68h             ; Alt+F1  left drive
-        je      key_drive_l
-        cmp     ah, 69h             ; Alt+F2  right drive
-        je      key_drive_r
-        cmp     ah, 44h             ; F10
-        je      key_quit
+        jnz     .haveclass
+        mov     dl, KB_EXT          ; al==0 -> extended key
+        mov     dh, ah              ; code to match = ah (scan)
+.haveclass:
+        mov     si, keytab
+.scan:
+        mov     cl, [si]            ; row class
+        cmp     cl, KB_END
+        je      .nomatch            ; hit sentinel -> no explicit binding
+        cmp     cl, dl
+        jne     .nextrow            ; class differs (ext vs ascii)
+        cmp     dh, [si+1]          ; code match?
+        je      .hit
+.nextrow:
+        add     si, 4
+        jmp     .scan
+.hit:
+        mov     bx, [si+2]          ; handler offset
+        call    bx                  ; handler ret returns to main_loop
         ret
-.ascii:
-        cmp     al, 09h             ; Tab
-        je      key_tab
-        cmp     al, 0Dh             ; Enter
-        je      on_enter
-        cmp     al, 1Bh             ; Esc -> clear command line
-        je      on_esc
-        cmp     al, 08h             ; Backspace
-        je      on_bksp
+.nomatch:
+        or      al, al              ; extended key, no binding -> nothing
+        jz      .ret
         cmp     al, 20h             ; printable range -> append to cmd line
         jb      .ret
         cmp     al, 7Eh
@@ -2428,6 +2438,35 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 ; ============================================================================
 ;  INITIALIZED DATA
 ; ============================================================================
+; key dispatch table -- walked by dispatch:. Core bindings here; feature
+; modules add their own KEYBIND_* rows before KEYBIND_END (see plan/m1_dispatch.md).
+keytab:
+        ; ---- extended keys (al==0, match scan in ah) ----
+        KEYBIND_EXT 48h, key_up         ; Up
+        KEYBIND_EXT 50h, key_down       ; Down
+        KEYBIND_EXT 49h, key_pgup       ; PgUp
+        KEYBIND_EXT 4Bh, key_pgup       ; Left  -> page up   (alias)
+        KEYBIND_EXT 51h, key_pgdn       ; PgDn
+        KEYBIND_EXT 4Dh, key_pgdn       ; Right -> page down (alias)
+        KEYBIND_EXT 47h, key_home       ; Home
+        KEYBIND_EXT 4Fh, key_end        ; End
+        KEYBIND_EXT 3Dh, key_view       ; F3  View
+        KEYBIND_EXT 3Fh, key_copy       ; F5  Copy
+        KEYBIND_EXT 40h, key_rename     ; F6  Rename/Move
+        KEYBIND_EXT 41h, key_mkdir      ; F7  MkDir
+        KEYBIND_EXT 42h, key_delete     ; F8  Delete
+        KEYBIND_EXT 52h, key_tag        ; Insert  tag
+        KEYBIND_EXT 68h, key_drive_l    ; Alt+F1  left drive
+        KEYBIND_EXT 69h, key_drive_r    ; Alt+F2  right drive
+        KEYBIND_EXT 44h, key_quit       ; F10
+        ; ---- ascii keys (al!=0, match ascii in al) ----
+        KEYBIND_ASC 09h, key_tab        ; Tab
+        KEYBIND_ASC 0Dh, on_enter       ; Enter
+        KEYBIND_ASC 1Bh, on_esc         ; Esc -> clear command line
+        KEYBIND_ASC 08h, on_bksp        ; Backspace
+        ; printable 20h..7Eh -> cmd_addchar is the dispatch fallthrough, not a row
+        KEYBIND_END                     ; sentinel
+
 ; function-key bar: 10 labels, one per 8-column slot (drawn by draw_fkeys)
 fk_tbl      dw fk0,fk1,fk2,fk3,fk4,fk5,fk6,fk7,fk8,fk9
 fk0         db '1Help',0
