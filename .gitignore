@@ -28,6 +28,9 @@ grepout.txt
 # hex (CCHEX) test artifacts
 hexout.txt
 HEXIN.TXT
+# checksum (CCSUM) test artifacts
+sumout.txt
+SUMIN.TXT
 # zip (CCZIP) test artifacts
 ziplist.txt
 ZTEST.ZIP
