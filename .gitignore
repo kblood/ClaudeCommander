@@ -5,6 +5,8 @@ dbstaging/
 # build + test artifacts
 cc.com
 CCDUMP.TXT
+CCSNAP.BIN
+_snap*.txt
 cc.key
 *.png
 *.conf

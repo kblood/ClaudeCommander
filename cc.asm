@@ -67,7 +67,7 @@ P_COUNT     equ 68         ; word: number of entries
 P_TOP       equ 70         ; word: first visible entry index
 P_CUR       equ 72         ; word: cursor entry index (absolute)
 P_ENTRIES   equ 74         ; entry array
-MAX_FILES   equ 700
+MAX_FILES   equ 512         ; per panel (keeps the whole .COM within one 64KB segment)
 ENTSIZE     equ 24
 PANELSIZE   equ P_ENTRIES + MAX_FILES*ENTSIZE
 
@@ -100,6 +100,8 @@ start:
         je      .set_dump
         cmp     al, 'c'
         je      .set_count
+        cmp     al, 's'
+        je      .set_snap
         jmp     .next
 .set_test:
         mov     byte [test_mode], 1
@@ -111,6 +113,9 @@ start:
 .set_count:
         mov     byte [test_mode], 1
         mov     byte [count_dbg], 1
+        jmp     .next
+.set_snap:
+        mov     byte [snap_mode], 1
 .next:
         loop    .scan
 .noargs:
@@ -161,6 +166,19 @@ start:
         mov     ax, 4C00h
         int     21h
 .nodbg:
+
+        ; --- snapshot mode: render once, dump raw VRAM to CCSNAP.BIN, exit ---
+        cmp     byte [snap_mode], 0
+        je      .nosnap
+        call    render_all
+        call    snap_vram
+        mov     ah, 0
+        mov     al, [orig_mode]
+        int     10h
+        call    show_cursor
+        mov     ax, 4C00h
+        int     21h
+.nosnap:
 
 ; ---- main loop -------------------------------------------------------------
 main_loop:
@@ -2142,8 +2160,8 @@ set_panel_drive:
 ; ============================================================================
 ;  F3 -- FILE VIEWER  (reads up to VIEW_MAX bytes, scrolls by line)
 ; ============================================================================
-VIEW_MAX    equ 32768
-MAX_VLINES  equ 2048
+VIEW_MAX    equ 16384
+MAX_VLINES  equ 1024
 VIEW_ROWS   equ 23             ; text rows 1..23 (row 0 header, row 24 bar)
 A_VHDR      equ 030h           ; black on cyan header
 A_VTXT      equ 007h           ; grey on black text
@@ -2418,6 +2436,37 @@ render_view:
         ret
 
 ; ============================================================================
+;  SNAPSHOT: copy the 4000-byte B800 text page to CCSNAP.BIN (for PNG render)
+; ============================================================================
+snap_vram:
+        push    ds
+        push    es
+        mov     ax, cs              ; our segment (COM: cs=ds=ss=es)
+        mov     es, ax
+        mov     di, snapbuf
+        mov     ax, VIDEO
+        mov     ds, ax
+        xor     si, si
+        mov     cx, 2000            ; 4000 bytes = 2000 words
+        rep     movsw
+        pop     es
+        pop     ds
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, snapname
+        int     21h
+        jc      .ret
+        mov     bx, ax
+        mov     ah, 40h
+        mov     cx, 4000
+        mov     dx, snapbuf
+        int     21h
+        mov     ah, 3Eh
+        int     21h
+.ret:
+        ret
+
+; ============================================================================
 ;  SELF-TEST (diagnostic): write panel counts + first names to dump
 ; ============================================================================
 selftest:
@@ -2477,6 +2526,7 @@ fkey_str    db ' 1Help 2Menu 3View 4Edit 5Copy 6RenMov7MkDir 8Delete9PullDn10Qui
 str_dir     db '<DIR>',0
 str_up      db '<UP>',0
 dumpname    db 'CCDUMP.TXT',0
+snapname    db 'CCSNAP.BIN',0
 keyname     db 'cc.key',0
 dumpsep     db '==== FRAME ====',0Dh,0Ah
 dumpsep_len equ $-dumpsep
@@ -2504,6 +2554,7 @@ quit_flag   db 0
 test_mode   db 0
 want_keys   db 0
 count_dbg   db 0
+snap_mode   db 0
 orig_mode   db 3
 pcx         db 0
 pcw         db 0
@@ -2547,6 +2598,7 @@ vtop        resw 1
 vnlines     resw 1
 viewbuf     resb VIEW_MAX
 lineoff     resw MAX_VLINES
+snapbuf     resb 4000
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE
 stackspace  resb 2048
