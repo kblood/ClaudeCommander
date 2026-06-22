@@ -16,3 +16,10 @@ proof*.txt
 dirproof.txt
 harnesstest.txt
 keys_*.bin
+# scratch playgrounds for headless copy/delete tests
+AAASRC/
+AAADST/
+ZZTEST/
+ZZC/
+testrun/
+EXECTEST.TXT

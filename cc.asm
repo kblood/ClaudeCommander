@@ -71,6 +71,10 @@ MAX_FILES   equ 512         ; per panel (keeps the whole .COM within one 64KB se
 ENTSIZE     equ 24
 PANELSIZE   equ P_ENTRIES + MAX_FILES*ENTSIZE
 
+; recursive copy/delete: per-level DTA stack
+DTASZ       equ 64         ; bytes per FindFirst DTA (record is 43)
+MAX_DEPTH   equ 24         ; max directory nesting we will recurse
+
 ; entry layout
 E_NAME      equ 0          ; 14 bytes ASCIIZ (8.3 max 12 + nul)
 E_ATTR      equ 14
@@ -180,9 +184,28 @@ start:
         int     21h
 .nosnap:
 
+        ; --- mouse init (live mode only) ---
+        mov     byte [mouse_ok], 0
+        mov     byte [mouse_mode], MM_BROWSER
+        mov     byte [m_lb], 0
+        mov     byte [m_rb], 0
+        mov     word [m_lastpan], 0FFFFh
+        cmp     byte [test_mode], 0
+        jne     .nomouse
+        xor     ax, ax
+        int     33h                 ; reset / detect mouse driver
+        or      ax, ax
+        jz      .nomouse            ; AX=0 -> no driver
+        mov     byte [mouse_ok], 1
+        mov     ax, 1
+        int     33h                 ; show mouse cursor
+.nomouse:
+
 ; ---- main loop -------------------------------------------------------------
 main_loop:
+        call    mouse_hide
         call    render_all
+        call    mouse_show
         cmp     byte [test_mode], 0
         je      .live
         call    dump_screen
@@ -197,6 +220,7 @@ main_loop:
         je      .noclose
         call    close_dump
 .noclose:
+        call    mouse_hide
         mov     ah, 0
         mov     al, [orig_mode]
         int     10h
@@ -217,7 +241,11 @@ dispatch:
         je      key_down
         cmp     ah, 49h
         je      key_pgup
+        cmp     ah, 4Bh             ; Left  -> page up
+        je      key_pgup
         cmp     ah, 51h
+        je      key_pgdn
+        cmp     ah, 4Dh             ; Right -> page down
         je      key_pgdn
         cmp     ah, 47h
         je      key_home
@@ -276,10 +304,12 @@ on_esc:
 on_bksp:
         mov     ax, [cmdlen]
         or      ax, ax
-        jz      .r
+        jz      .parent             ; empty command line -> go up a folder
         dec     ax
         mov     [cmdlen], ax
-.r:
+        ret
+.parent:
+        call    go_parent
         ret
 
 cmd_addchar:
@@ -408,14 +438,13 @@ key_enter:
         jne     .descend
         cmp     byte [si+E_NAME+1], '.'
         jne     .descend
-        ; go up
-        call    path_up
-        jmp     .reload
+        ; go up, landing the cursor on the folder we came from
+        call    go_parent
+        ret
 .descend:
         ; append "\name" to path
         lea     di, [si+E_NAME]
         call    path_append
-.reload:
         call    read_dir
 .ret:
         ret
@@ -848,29 +877,48 @@ draw_cmdline:
         pop     es
         ret
 
-; function-key bar (row 24) ---------------------------------------------------
+; function-key bar (row 24): 10 evenly-spaced 8-column slots. Each slot shows
+; the digit(s) in grey-on-black and the label in black-on-cyan, so the keys
+; read as separated buttons.
 draw_fkeys:
         push    es
         mov     ax, VIDEO
         mov     es, ax
+        ; clear the row to grey-on-black (the gaps between buttons)
         mov     di, FKEY_ROW*ROW_BYTES
-        mov     si, fkey_str
-        mov     ah, A_FKL
+        mov     ax, (A_FKN<<8)|' '
         mov     cx, SCR_W
-.fl:
-        lodsb
+        rep     stosw
+        xor     bp, bp              ; slot index 0..9
+.slot:
+        cmp     bp, 10
+        jae     .done
+        mov     ax, bp             ; di = row base + slot*8 cells
+        shl     ax, 4              ; *16 bytes (8 cols * 2)
+        add     ax, FKEY_ROW*ROW_BYTES
+        mov     di, ax
+        mov     bx, bp             ; si = fk_tbl[slot]
+        shl     bx, 1
+        mov     si, [fk_tbl+bx]
+.ch:
+        mov     al, [si]
         or      al, al
-        jz      .pad
-        stosw
-        loop    .fl
-        jmp     .done
-.pad:
-        mov     al, ' '
-.padl:
+        jz      .nextslot
+        mov     ah, A_FKL          ; label -> black on cyan
+        cmp     al, '0'
+        jb      .put
+        cmp     al, '9'
+        ja      .put
+        mov     ah, A_FKN          ; digit -> grey on black
+.put:
         mov     [es:di], al
-        mov     byte [es:di+1], A_FKL
+        mov     [es:di+1], ah
         add     di, 2
-        loop    .padl
+        inc     si
+        jmp     .ch
+.nextslot:
+        inc     bp
+        jmp     .slot
 .done:
         pop     es
         ret
@@ -1069,6 +1117,68 @@ path_up:
 .root:
         ; already at root "C:\" -> keep terminator after backslash
         mov     byte [bx+P_PATH+3], 0
+        ret
+
+; go up a folder in the active panel, leaving the cursor on the child we left
+go_parent:
+        mov     bx, [active]
+        ; capture the last path component of P_PATH into comefrom
+        lea     si, [bx+P_PATH]
+        mov     di, si
+.fend:
+        cmp     byte [di], 0
+        je      .feod
+        inc     di
+        jmp     .fend
+.feod:
+        ; di at terminator; walk back to the separating '\'
+.fb:
+        cmp     di, si
+        jbe     .nolf
+        dec     di
+        cmp     byte [di], '\'
+        jne     .fb
+        inc     di                  ; di -> leaf start
+        mov     si, di
+        mov     di, comefrom
+.fc:
+        mov     al, [si]
+        mov     [di], al
+        or      al, al
+        jz      .doup
+        inc     si
+        inc     di
+        jmp     .fc
+.nolf:
+        mov     byte [comefrom], 0
+.doup:
+        mov     bx, [active]
+        call    path_up
+        mov     bx, [active]
+        call    read_dir
+        ; select the remembered child among the parent's entries
+        cmp     byte [comefrom], 0
+        je      .ret
+        mov     bx, [active]
+        mov     [ppanel], bx
+        mov     cx, [bx+P_COUNT]
+        jcxz    .ret
+        xor     dx, dx              ; entry index
+.scan:
+        mov     ax, dx
+        call    entry_ptr           ; si -> entry (name at offset 0)
+        mov     di, comefrom
+        call    streqi              ; CF=1 if equal (cx/dx preserved)
+        jc      .found
+        inc     dx
+        cmp     dx, cx
+        jb      .scan
+        ret                         ; not found -> cursor stays at top
+.found:
+        mov     bx, [active]
+        mov     [bx+P_CUR], dx
+        call    fix_scroll
+.ret:
         ret
 
 ; ============================================================================
@@ -1530,8 +1640,19 @@ get_key:
         mov     ah, 44h             ; simulate F10
         ret
 .live:
-        mov     ah, 10h
+        cmp     byte [mouse_ok], 0
+        je      .kbonly
+.poll:
+        mov     ah, 1               ; keystroke waiting?
         int     16h
+        jnz     .kbonly
+        call    mouse_poll          ; CF=1 -> ax = synthetic key
+        jc      .mret
+        jmp     .poll
+.kbonly:
+        mov     ah, 00h             ; legacy read: gray arrows -> al=0, ah=scan
+        int     16h
+.mret:
         ret
 
 ; ============================================================================
@@ -1693,6 +1814,18 @@ DLG_C0  equ 14
 DLG_C1  equ 65
 A_DLG   equ 030h            ; black on cyan (box + prompt)
 A_DLGF  equ 070h            ; black on grey (input field)
+A_BTN   equ 03Fh            ; bright white on cyan (unfocused button)
+A_BTNSEL equ 070h           ; black on white (focused button)
+; confirm-dialog button geometry (row + column spans), symmetric in the box
+BTN_ROW equ DLG_R0+3
+YES_C0  equ 28
+YES_C1  equ 34              ; "[ Yes ]" (7 cols)
+NO_C0   equ 45
+NO_C1   equ 50              ; "[ No ]"  (6 cols)
+; mouse routing modes
+MM_BROWSER  equ 0
+MM_OFF      equ 1
+MM_CONFIRM  equ 2
 
 ; draw the double-line dialog box + clear interior
 dlg_box:
@@ -1775,6 +1908,58 @@ putzstr:
 .e:     pop     es
         ret
 
+; ----------------------------------------------------------------------------
+; progress / "please wait" box, shown during long copy/delete operations so the
+; screen doesn't look frozen. busy_box draws the frame + title once; busy_name
+; updates the second line with the item currently being processed. Both save
+; every register so they can be sprinkled inside the recursive tree walkers.
+; ----------------------------------------------------------------------------
+busy_box:                       ; ds:si = title
+        pusha
+        push    es
+        call    mouse_hide
+        call    dlg_box
+        mov     ax, DLG_R0+1
+        mov     bx, DLG_C0+2
+        call    rc_to_off
+        mov     ah, A_DLG
+        call    putzstr
+        pop     es
+        popa
+        ret
+
+busy_name:                      ; ds:si = ASCIIZ name/path (clipped to box width)
+        pusha
+        push    es
+        mov     ax, VIDEO
+        mov     es, ax
+        mov     ax, DLG_R0+2
+        mov     bx, DLG_C0+2
+        call    rc_to_off           ; di = row start
+        mov     dx, DLG_C1-DLG_C0-3 ; interior width
+        mov     cx, dx
+        push    di
+.clr:   mov     byte [es:di], ' '
+        mov     byte [es:di+1], A_DLG
+        add     di, 2
+        loop    .clr
+        pop     di
+        mov     cx, dx
+.wr:    mov     al, [si]
+        or      al, al
+        jz      .done
+        jcxz    .done
+        mov     [es:di], al
+        mov     byte [es:di+1], A_DLG
+        inc     si
+        add     di, 2
+        dec     cx
+        jmp     .wr
+.done:
+        pop     es
+        popa
+        ret
+
 ; input dialog: si=prompt. Text -> dlgbuf (NUL-term) + dlglen. CF=1 if cancelled.
 dlg_input:
         mov     [dlg_prompt], si
@@ -1786,6 +1971,7 @@ dlg_input:
         mov     ah, A_DLG
         call    putzstr
         mov     word [dlglen], 0
+        mov     byte [mouse_mode], MM_OFF
 .loop:
         call    dlg_field
         call    get_key
@@ -1811,11 +1997,13 @@ dlg_input:
         dec     word [dlglen]
         jmp     .loop
 .ok:
+        mov     byte [mouse_mode], MM_BROWSER
         mov     bx, [dlglen]
         mov     byte [dlgbuf+bx], 0
         clc
         ret
 .cancel:
+        mov     byte [mouse_mode], MM_BROWSER
         mov     word [dlglen], 0
         mov     byte [dlgbuf], 0
         stc
@@ -1852,9 +2040,12 @@ dlg_field:
         pop     es
         ret
 
-; confirm dialog: si=message. CF=0 if YES (Y/Enter), CF=1 if NO (N/Esc).
+; confirm dialog: si=message. CF=0 if YES, CF=1 if NO.
+; Navigable: Left/Right/Tab move focus, Enter/Space activate, Y/N shortcut,
+; Esc = No, and the Yes/No buttons are mouse-clickable.
 dlg_confirm:
         mov     [dlg_prompt], si
+        mov     byte [dlg_focus], 0     ; default focus = Yes
         call    dlg_box
         mov     ax, DLG_R0+1
         mov     bx, DLG_C0+2
@@ -1862,30 +2053,79 @@ dlg_confirm:
         mov     si, [dlg_prompt]
         mov     ah, A_DLG
         call    putzstr
-        mov     ax, DLG_R0+2
-        mov     bx, DLG_C0+2
-        call    rc_to_off
-        mov     si, s_yn
-        mov     ah, A_DLG
-        call    putzstr
+        mov     byte [mouse_mode], MM_CONFIRM
+.draw:
+        call    dlg_draw_buttons
+        cmp     byte [test_mode], 0
+        jz      .k
+        call    dump_screen         ; test harness: capture the dialog frame
 .k:
         call    get_key
         cmp     al, 'y'
         je      .yes
         cmp     al, 'Y'
         je      .yes
-        cmp     al, 0Dh
-        je      .yes
         cmp     al, 'n'
         je      .no
         cmp     al, 'N'
         je      .no
-        cmp     al, 1Bh
+        cmp     al, 1Bh             ; Esc -> No
         je      .no
+        cmp     al, 0Dh             ; Enter -> activate focus
+        je      .activate
+        cmp     al, 20h             ; Space -> activate focus
+        je      .activate
+        cmp     al, 09h             ; Tab -> toggle focus
+        je      .toggle
+        or      al, al
+        jnz     .k                  ; other ascii: ignore
+        cmp     ah, 4Bh             ; Left  -> focus Yes
+        je      .focusy
+        cmp     ah, 4Dh             ; Right -> focus No
+        je      .focusn
         jmp     .k
-.yes:   clc
+.toggle:
+        xor     byte [dlg_focus], 1
+        jmp     .draw
+.focusy:
+        mov     byte [dlg_focus], 0
+        jmp     .draw
+.focusn:
+        mov     byte [dlg_focus], 1
+        jmp     .draw
+.activate:
+        cmp     byte [dlg_focus], 0
+        je      .yes
+        jmp     .no
+.yes:
+        mov     byte [mouse_mode], MM_BROWSER
+        clc
         ret
-.no:    stc
+.no:
+        mov     byte [mouse_mode], MM_BROWSER
+        stc
+        ret
+
+; draw the Yes/No buttons, highlighting the one with focus
+dlg_draw_buttons:
+        mov     ax, BTN_ROW
+        mov     bx, YES_C0
+        call    rc_to_off
+        mov     si, s_btn_yes
+        mov     ah, A_BTN
+        cmp     byte [dlg_focus], 0
+        jne     .y2
+        mov     ah, A_BTNSEL
+.y2:    call    putzstr
+        mov     ax, BTN_ROW
+        mov     bx, NO_C0
+        call    rc_to_off
+        mov     si, s_btn_no
+        mov     ah, A_BTN
+        cmp     byte [dlg_focus], 1
+        jne     .n2
+        mov     ah, A_BTNSEL
+.n2:    call    putzstr
         ret
 
 ; ============================================================================
@@ -1992,11 +2232,38 @@ key_mkdir:
         call    refresh_panels
 .ret:   ret
 
-; F8 -- delete current entry (file or empty dir), with confirm
+; F8 -- delete: all tagged entries if any, else the cursor entry. Recurses
+; into directory trees. One confirm for the whole batch.
 key_delete:
         mov     bx, [active]
         mov     cx, [bx+P_COUNT]
         jcxz    .ret
+        call    count_tagged        ; -> cx = # tagged in active panel
+        jcxz    .single
+        mov     si, s_delconf
+        call    dlg_confirm
+        jc      .ret
+        mov     si, s_busy_del
+        call    busy_box
+        mov     word [iter_i], 0
+.bl:
+        mov     bx, [active]
+        mov     ax, [iter_i]
+        cmp     ax, [bx+P_COUNT]
+        jae     .bdone
+        mov     [ppanel], bx
+        call    entry_ptr           ; si = entry[ax]
+        test    byte [si+E_ATTR], 40h
+        jz      .bnext
+        call    delete_one
+.bnext:
+        inc     word [iter_i]
+        jmp     .bl
+.bdone:
+        call    refresh_panels
+        ret
+.single:
+        mov     bx, [active]
         call    cur_entry_ptr       ; si=entry
         mov     al, [si+E_NAME]
         cmp     al, '.'
@@ -2009,38 +2276,611 @@ key_delete:
         call    dlg_confirm
         pop     si
         jc      .ret                ; user said No
-        call    build_entry_path    ; targpath = path\name (si preserved)
-        mov     dx, targpath
-        test    byte [si+E_ATTR], 10h
-        jz      .file
-        mov     ah, 3Ah             ; rmdir
-        int     21h
-        jmp     .reread
-.file:
-        mov     ah, 41h             ; delete file
-        int     21h
-.reread:
+        push    si
+        mov     si, s_busy_del
+        call    busy_box
+        pop     si
+        call    delete_one
         call    refresh_panels
 .ret:   ret
 
-; F5 -- copy current file to the other panel's directory, with confirm
+; delete one entry (si=entry in active panel): file, or whole directory tree
+delete_one:
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        je      .ret                ; never touch '.' / '..'
+        call    build_entry_path    ; targpath = active\name (si preserved)
+        test    byte [si+E_ATTR], 10h
+        jz      .file
+        push    si                  ; recursive directory delete
+        mov     si, targpath
+        mov     di, rsrc
+        call    bp_copy_name
+        mov     word [rdepth], 0
+        call    del_tree
+        pop     si
+        ret
+.file:
+        mov     si, targpath
+        call    busy_name
+        mov     ah, 41h
+        mov     dx, targpath
+        int     21h
+.ret:   ret
+
+; F5 -- copy: all tagged entries if any, else the cursor entry. Recurses into
+; directory trees. One confirm for the whole batch.
 key_copy:
         mov     bx, [active]
         mov     cx, [bx+P_COUNT]
         jcxz    .ret
+        call    count_tagged        ; -> cx = # tagged
+        jcxz    .single
+        mov     si, s_copyconf
+        call    dlg_confirm
+        jc      .ret
+        mov     si, s_busy_copy
+        call    busy_box
+        mov     word [iter_i], 0
+.bl:
+        mov     bx, [active]
+        mov     ax, [iter_i]
+        cmp     ax, [bx+P_COUNT]
+        jae     .bdone
+        mov     [ppanel], bx
+        call    entry_ptr           ; si = entry[ax]
+        test    byte [si+E_ATTR], 40h
+        jz      .bnext
+        call    copy_one
+.bnext:
+        inc     word [iter_i]
+        jmp     .bl
+.bdone:
+        call    refresh_panels
+        ret
+.single:
+        mov     bx, [active]
         call    cur_entry_ptr
-        test    byte [si+E_ATTR], 10h
-        jnz     .ret                ; v1: files only
         push    si
         mov     si, s_copyconf
         call    dlg_confirm
         pop     si
         jc      .ret
-        call    build_entry_path    ; targpath  = src (si preserved)
-        call    build_other_path    ; targpath2 = dst (si preserved)
-        call    copy_file
+        push    si
+        mov     si, s_busy_copy
+        call    busy_box
+        pop     si
+        call    copy_one
         call    refresh_panels
 .ret:   ret
+
+; copy one entry (si=entry in active panel) to the OTHER panel's directory.
+; File -> copy_file; directory -> recursive copy_tree. Skips '.'/'..' and any
+; case where source path == destination path (would self-destruct).
+copy_one:
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        je      .ret
+        call    build_entry_path    ; targpath  = active\name (si preserved)
+        call    build_other_path    ; targpath2 = other\name  (si preserved)
+        mov     dl, [si+E_ATTR]     ; remember attr across the guard
+        ; refuse ONLY the exact same-location copy (it is a no-op and would
+        ; otherwise overwrite each file with itself). Copying into a SUBfolder
+        ; of the source is allowed; copy_tree just skips the destination dir so
+        ; it doesn't descend into the copy it is creating.
+        mov     si, targpath
+        mov     di, targpath2
+        call    streqi              ; CF=1 if dst path == src path
+        jc      .ret
+        test    dl, 10h
+        jz      .file
+        ; directory: record the destination root, then recursive copy
+        mov     si, targpath2
+        mov     di, dstroot
+        call    bp_copy_name
+        mov     si, targpath
+        mov     di, rsrc
+        call    bp_copy_name
+        mov     si, targpath2
+        mov     di, rdst
+        call    bp_copy_name
+        mov     word [rdepth], 0
+        call    copy_tree
+        ret
+.file:
+        call    copy_file
+.ret:   ret
+
+; count tagged (E_ATTR bit 0x40) entries in the active panel -> cx
+count_tagged:
+        push    ax
+        push    bx
+        push    si
+        mov     bx, [active]
+        mov     [ppanel], bx
+        xor     cx, cx
+        xor     ax, ax
+.l:
+        cmp     ax, [bx+P_COUNT]
+        jae     .e
+        push    ax
+        call    entry_ptr           ; si = entry[ax]
+        test    byte [si+E_ATTR], 40h
+        jz      .nx
+        inc     cx
+.nx:
+        pop     ax
+        inc     ax
+        jmp     .l
+.e:
+        pop     si
+        pop     bx
+        pop     ax
+        ret
+
+; compare ASCIIZ ds:si vs ds:di -> ZF=1 if equal. Preserves dl.
+; case-insensitive ASCIIZ compare ds:si vs ds:di -> CF=1 if equal, else CF=0.
+; Preserves dl; clobbers al/ah.
+streqi:
+        push    si
+        push    di
+.l:
+        mov     al, [si]
+        mov     ah, [di]
+        cmp     al, 'a'             ; uppercase al
+        jb      .a1
+        cmp     al, 'z'
+        ja      .a1
+        sub     al, 20h
+.a1:
+        cmp     ah, 'a'             ; uppercase ah
+        jb      .a2
+        cmp     ah, 'z'
+        ja      .a2
+        sub     ah, 20h
+.a2:
+        cmp     al, ah
+        jne     .ne
+        or      al, al
+        jz      .eq
+        inc     si
+        inc     di
+        jmp     .l
+.eq:
+        pop     di
+        pop     si
+        stc
+        ret
+.ne:
+        pop     di
+        pop     si
+        clc
+        ret
+
+; ============================================================================
+;  RECURSIVE DIRECTORY COPY / DELETE
+;    rsrc / rdst : growable ASCIIZ working paths
+;    findpat     : rsrc + "\*.*" search template
+;    rdepth      : current recursion depth (selects a private DTA)
+; ============================================================================
+; set DOS DTA to the current depth's private buffer
+set_dta_cur:
+        push    ax
+        push    dx
+        mov     ax, [rdepth]
+        mov     dx, DTASZ
+        mul     dx
+        add     ax, dta_stack
+        mov     dx, ax
+        mov     ah, 1Ah
+        int     21h
+        pop     dx
+        pop     ax
+        ret
+
+; -> bx = current depth's DTA pointer
+cur_dta_ptr:
+        push    ax
+        push    dx
+        mov     ax, [rdepth]
+        mov     dx, DTASZ
+        mul     dx
+        add     ax, dta_stack
+        mov     bx, ax
+        pop     dx
+        pop     ax
+        ret
+
+; findpat = rsrc + "\*.*"
+make_findpat:
+        mov     si, rsrc
+        mov     di, findpat
+.cp:
+        mov     al, [si]
+        mov     [di], al
+        or      al, al
+        jz      .e
+        inc     si
+        inc     di
+        jmp     .cp
+.e:
+        cmp     byte [di-1], '\'
+        je      .star
+        mov     byte [di], '\'
+        inc     di
+.star:
+        mov     byte [di], '*'
+        mov     byte [di+1], '.'
+        mov     byte [di+2], '*'
+        mov     byte [di+3], 0
+        ret
+
+; del_tree: delete the directory tree whose path is in rsrc, then the dir
+; itself. Uses dta_stack[rdepth]; recurses with rdepth+1.
+del_tree:
+        mov     ax, [rdepth]
+        cmp     ax, MAX_DEPTH
+        jae     .ret                ; safety cap -> leave it
+        call    set_dta_cur
+        call    make_findpat
+        mov     ah, 4Eh
+        mov     cx, 37h
+        mov     dx, findpat
+        int     21h
+        jc      .rmdir
+.loop:
+        call    cur_dta_ptr
+        cmp     byte [bx+1Eh], '.'
+        je      .next               ; '.' or '..'
+        mov     di, rsrc
+        call    strlen_di           ; di -> NUL of rsrc
+        push    di                  ; truncation point
+        mov     byte [di], '\'
+        inc     di
+        call    cur_dta_ptr
+        lea     si, [bx+1Eh]
+        call    bp_copy_name        ; append name
+        call    cur_dta_ptr
+        test    byte [bx+15h], 10h
+        jz      .file
+        inc     word [rdepth]       ; subdirectory -> recurse
+        call    del_tree
+        dec     word [rdepth]
+        jmp     .after
+.file:
+        mov     si, rsrc
+        call    busy_name
+        mov     ah, 41h
+        mov     dx, rsrc
+        int     21h
+.after:
+        pop     di
+        mov     byte [di], 0        ; truncate rsrc back
+.next:
+        call    set_dta_cur         ; recursion changed the DTA -> restore ours
+        mov     ah, 4Fh
+        int     21h
+        jnc     .loop
+.rmdir:
+        mov     ah, 3Ah
+        mov     dx, rsrc
+        int     21h
+.ret:
+        ret
+
+; copy_tree: copy the directory tree rsrc -> rdst (both ASCIIZ), creating rdst.
+copy_tree:
+        mov     ax, [rdepth]
+        cmp     ax, MAX_DEPTH
+        jae     .ret
+        mov     ah, 39h             ; mkdir dest (ignore "exists")
+        mov     dx, rdst
+        int     21h
+        call    set_dta_cur
+        call    make_findpat        ; from rsrc
+        mov     ah, 4Eh
+        mov     cx, 37h
+        mov     dx, findpat
+        int     21h
+        jc      .ret
+.loop:
+        call    cur_dta_ptr
+        cmp     byte [bx+1Eh], '.'
+        je      .next
+        mov     di, rsrc            ; append \name to rsrc
+        call    strlen_di
+        push    di
+        mov     byte [di], '\'
+        inc     di
+        call    cur_dta_ptr
+        lea     si, [bx+1Eh]
+        call    bp_copy_name        ; rsrc = full child source path
+        ; skip the destination directory itself, so we don't recurse into the
+        ; copy we are creating (copying a folder into its own subtree)
+        mov     si, rsrc
+        mov     di, dstroot
+        call    streqi
+        jc      .skipchild
+        mov     di, rdst            ; append \name to rdst
+        call    strlen_di
+        push    di
+        mov     byte [di], '\'
+        inc     di
+        call    cur_dta_ptr
+        lea     si, [bx+1Eh]
+        call    bp_copy_name
+        call    cur_dta_ptr
+        test    byte [bx+15h], 10h
+        jz      .file
+        inc     word [rdepth]       ; subdirectory -> recurse
+        call    copy_tree
+        dec     word [rdepth]
+        jmp     .after
+.file:
+        mov     si, rsrc            ; copy_file uses targpath/targpath2
+        mov     di, targpath
+        call    bp_copy_name
+        mov     si, rdst
+        mov     di, targpath2
+        call    bp_copy_name
+        call    copy_file
+.after:
+        pop     di                  ; rdst truncation (pushed last)
+        mov     byte [di], 0
+        pop     di                  ; rsrc truncation
+        mov     byte [di], 0
+        jmp     .next
+.skipchild:
+        pop     di                  ; only rsrc truncation was pushed
+        mov     byte [di], 0
+.next:
+        call    set_dta_cur
+        mov     ah, 4Fh
+        int     21h
+        jnc     .loop
+.ret:
+        ret
+
+; ============================================================================
+;  MOUSE SUPPORT (INT 33h)
+;    left click  : activate panel + move cursor to the clicked entry
+;    dbl click   : open (Enter)         right click : tag/untag the entry
+;    click F-bar : invoke that F-key
+; ============================================================================
+mouse_hide:
+        cmp     byte [mouse_ok], 0
+        je      .r
+        push    ax
+        mov     ax, 2
+        int     33h
+        pop     ax
+.r:     ret
+
+mouse_show:
+        cmp     byte [mouse_ok], 0
+        je      .r
+        push    ax
+        mov     ax, 1
+        int     33h
+        pop     ax
+.r:     ret
+
+; poll mouse; CF=1 with ax=synthetic key if a click was acted on, else CF=0
+mouse_poll:
+        push    bx
+        push    cx
+        push    dx
+        mov     ax, 3
+        int     33h                 ; bx=buttons cx=x dx=y (virtual 8px cells)
+        mov     [m_x], cx
+        mov     [m_y], dx
+        ; ---- left button edge ----
+        mov     al, bl
+        and     al, 1
+        mov     ah, [m_lb]
+        mov     [m_lb], al
+        or      al, al
+        jz      .right
+        or      ah, ah
+        jnz     .right              ; was already down -> not an edge
+        mov     al, [mouse_mode]
+        cmp     al, MM_OFF
+        je      .none               ; clicks ignored (e.g. file viewer)
+        cmp     al, MM_CONFIRM
+        je      .cfm
+        call    mouse_left          ; browser: -> ax = synthetic key
+        jmp     .event
+.cfm:
+        call    mouse_confirm       ; confirm dialog: -> al = 'Y'/'N' or 0
+        jmp     .event
+.right:
+        mov     al, bl
+        and     al, 2
+        mov     ah, [m_rb]
+        mov     [m_rb], al
+        or      al, al
+        jz      .none
+        or      ah, ah
+        jnz     .none
+        cmp     byte [mouse_mode], MM_BROWSER
+        jne     .none               ; right-click only tags in the browser
+        call    mouse_right         ; -> ax = synthetic key
+        jmp     .event
+.none:
+        pop     dx
+        pop     cx
+        pop     bx
+        clc
+        ret
+.event:
+        pop     dx
+        pop     cx
+        pop     bx
+        stc
+        ret
+
+; resolve [m_x]/[m_y] to row/col; if it lands on a panel entry, set bx=panel
+; and ax=entry index, return CF=1. Otherwise CF=0.
+mouse_hit:
+        mov     ax, [m_y]
+        shr     ax, 3
+        mov     [m_row], ax
+        mov     ax, [m_x]
+        shr     ax, 3
+        mov     [m_col], ax
+        cmp     word [m_row], FIRST_ROW
+        jb      .miss
+        mov     ax, [m_row]
+        sub     ax, FIRST_ROW
+        cmp     ax, VIS_ROWS
+        jae     .miss
+        mov     [m_vis], ax
+        mov     ax, [m_col]
+        cmp     ax, L_CONX
+        jb      .miss
+        cmp     ax, L_CONX+L_CONW
+        jb      .leftp
+        cmp     ax, R_CONX
+        jb      .miss               ; on the divider
+        cmp     ax, R_CONX+R_CONW
+        jb      .rightp
+.miss:
+        clc
+        ret
+.leftp:
+        mov     bx, panelL
+        jmp     .sel
+.rightp:
+        mov     bx, panelR
+.sel:
+        mov     ax, [bx+P_TOP]
+        add     ax, [m_vis]
+        cmp     ax, [bx+P_COUNT]
+        jae     .miss               ; clicked past the last entry
+        stc
+        ret
+
+mouse_left:
+        call    mouse_hit           ; computes m_row/m_col; CF=1 -> bx,ax
+        jc      .onrow
+        ; not on a row: maybe the function-key bar
+        cmp     word [m_row], FKEY_ROW
+        je      .fbar
+        xor     ax, ax
+        ret
+.onrow:
+        mov     [active], bx
+        mov     [bx+P_CUR], ax
+        call    fix_scroll          ; bx=panel (clobbers ax)
+        call    get_tick            ; -> ax = tick
+        mov     cx, ax
+        mov     dx, [bx+P_CUR]
+        cmp     bx, [m_lastpan]
+        jne     .new
+        cmp     dx, [m_lastidx]
+        jne     .new
+        mov     ax, cx
+        sub     ax, [m_lasttick]
+        cmp     ax, 9               ; ~0.5s double-click window
+        ja      .new
+        mov     word [m_lastpan], 0FFFFh
+        mov     ax, 000Dh           ; Enter
+        ret
+.new:
+        mov     [m_lasttick], cx
+        mov     [m_lastpan], bx
+        mov     [m_lastidx], dx
+        xor     ax, ax              ; no-op key -> just re-render
+        ret
+.fbar:
+        call    fbar_to_key
+        ret
+
+mouse_right:
+        call    mouse_hit           ; CF=1 -> bx=panel, ax=index
+        jnc     .noop
+        mov     [active], bx
+        mov     [bx+P_CUR], ax
+        call    fix_scroll
+        mov     [ppanel], bx
+        mov     ax, [bx+P_CUR]
+        call    entry_ptr           ; si = entry[ax]
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        je      .noop               ; never tag '.'/'..'
+        xor     byte [si+E_ATTR], 40h
+.noop:
+        xor     ax, ax
+        ret
+
+; confirm-dialog click: hit-test [m_x]/[m_y] vs the Yes/No buttons
+; -> al='Y' or 'N' (ah=0) if a button was hit, else ax=0
+mouse_confirm:
+        mov     ax, [m_y]
+        shr     ax, 3
+        cmp     ax, BTN_ROW
+        jne     .noop
+        mov     ax, [m_x]
+        shr     ax, 3               ; col
+        cmp     ax, YES_C0
+        jb      .chkno
+        cmp     ax, YES_C1
+        ja      .chkno
+        mov     ax, 'Y'
+        ret
+.chkno:
+        cmp     ax, NO_C0
+        jb      .noop
+        cmp     ax, NO_C1
+        ja      .noop
+        mov     ax, 'N'
+        ret
+.noop:
+        xor     ax, ax
+        ret
+
+; BIOS tick counter low word (0040:006Ch) -> ax
+get_tick:
+        push    es
+        push    bx
+        xor     bx, bx
+        mov     es, bx
+        mov     ax, [es:046Ch]
+        pop     bx
+        pop     es
+        ret
+
+; map a click column [m_col] on the F-key bar to a synthetic key in ax.
+; The bar is 10 even slots of 8 cols; slot = col/8, F-number = slot+1.
+fbar_to_key:
+        mov     ax, [m_col]
+        shr     ax, 3               ; slot 0..9
+        cmp     ax, 2
+        je      .f3
+        cmp     ax, 4
+        je      .f5
+        cmp     ax, 5
+        je      .f6
+        cmp     ax, 6
+        je      .f7
+        cmp     ax, 7
+        je      .f8
+        cmp     ax, 9
+        je      .f10
+.none:  xor     ax, ax
+        ret
+.f3:    mov     ax, 3D00h
+        ret
+.f5:    mov     ax, 3F00h
+        ret
+.f6:    mov     ax, 4000h
+        ret
+.f7:    mov     ax, 4100h
+        ret
+.f8:    mov     ax, 4200h
+        ret
+.f10:   mov     ax, 4400h
+        ret
 
 ; F6 -- rename / move current entry to a name typed in a dialog
 key_rename:
@@ -2074,6 +2914,8 @@ key_rename:
 
 ; copy file targpath -> targpath2 (512-byte chunks)
 copy_file:
+        mov     si, targpath        ; show what we're copying (anti-"frozen")
+        call    busy_name
         mov     ax, 3D00h           ; open src read-only
         mov     dx, targpath
         int     21h
@@ -2191,6 +3033,7 @@ key_view:
         int     21h
         call    view_build_lines
         mov     word [vtop], 0
+        mov     byte [mouse_mode], MM_OFF  ; ignore panel clicks while viewing
 .loop:
         call    render_view
         cmp     byte [test_mode], 0
@@ -2200,6 +3043,7 @@ key_view:
         call    get_key
         call    view_move           ; update vtop; CF=1 -> quit
         jnc     .loop
+        mov     byte [mouse_mode], MM_BROWSER
 .ret:
         ret
 
@@ -2522,7 +3366,18 @@ dbg_panel_line:
 ; ============================================================================
 ;  INITIALIZED DATA
 ; ============================================================================
-fkey_str    db ' 1Help 2Menu 3View 4Edit 5Copy 6RenMov7MkDir 8Delete9PullDn10Quit',0
+; function-key bar: 10 labels, one per 8-column slot (drawn by draw_fkeys)
+fk_tbl      dw fk0,fk1,fk2,fk3,fk4,fk5,fk6,fk7,fk8,fk9
+fk0         db '1Help',0
+fk1         db '2Menu',0
+fk2         db '3View',0
+fk3         db '4Edit',0
+fk4         db '5Copy',0
+fk5         db '6Move',0
+fk6         db '7MkDir',0
+fk7         db '8Del',0
+fk8         db '9Menu',0
+fk9         db '10Quit',0
 str_dir     db '<DIR>',0
 str_up      db '<UP>',0
 dumpname    db 'CCDUMP.TXT',0
@@ -2544,7 +3399,10 @@ s_rename    db 'Rename/move current entry to:',0
 s_drive     db 'Switch to drive (A-Z):',0
 s_delconf   db 'Delete the current entry?',0
 s_copyconf  db 'Copy this file to the other panel?',0
-s_yn        db '[ Y = Yes    N = No ]',0
+s_busy_copy db 'Copying, please wait...',0
+s_busy_del  db 'Deleting, please wait...',0
+s_btn_yes   db '[ Yes ]',0
+s_btn_no    db '[ No ]',0
 s_viewhdr   db '   [ View ]',0
 s_viewbar   db ' Up/Dn PgUp/PgDn Home/End: scroll      Esc or F3: quit',0
 
@@ -2588,11 +3446,34 @@ save_ss     resw 1
 dlgbuf      resb 44
 dlglen      resw 1
 dlg_prompt  resw 1
-targpath    resb 80
-targpath2   resb 80
+targpath    resb 128
+targpath2   resb 128
 copybuf     resb 512
 fh_src      resw 1
 fh_dst      resw 1
+; --- tagged-set + recursive copy/delete state ---
+iter_i      resw 1
+rdepth      resw 1
+rsrc        resb 128
+rdst        resb 128
+dstroot     resb 128       ; top-level copy destination (skipped during the walk)
+comefrom    resb 16        ; leaf name we left when going to a parent folder
+findpat     resb 132
+dta_stack   resb MAX_DEPTH*DTASZ
+; --- mouse state ---
+mouse_ok    resb 1
+mouse_mode  resb 1         ; MM_BROWSER / MM_OFF / MM_CONFIRM
+dlg_focus   resb 1         ; confirm dialog: 0=Yes 1=No
+m_lb        resb 1
+m_rb        resb 1
+m_x         resw 1
+m_y         resw 1
+m_row       resw 1
+m_col       resw 1
+m_vis       resw 1
+m_lasttick  resw 1
+m_lastidx   resw 1
+m_lastpan   resw 1
 vlen        resw 1
 vtop        resw 1
 vnlines     resw 1
