@@ -133,6 +133,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_EDIT
   %define FEAT_FIND
   %define FEAT_ZIP
+  %define FEAT_INI
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -205,6 +206,11 @@ start:
         je      .noteset
         call    load_keys
 .noteset:
+
+%ifdef FEAT_INI
+        ; --- load cc.ini before the panels are read so sort/columns apply ---
+        call    ini_load
+%endif
 
         ; --- init both panels to current drive/dir ---
         mov     di, panelL
@@ -2599,6 +2605,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_ZIP
 %include "mod/zip.inc"
 %endif
+%ifdef FEAT_INI
+%include "mod/ini.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2746,6 +2755,11 @@ menu_sel    resw 1
 %endif
 %ifdef FEAT_MASK
 mask_set    resb 1          ; mod/mask.inc: 1=tag, 0=untag
+%endif
+%ifdef FEAT_INI
+INIMAX      equ 256
+inibuf      resb INIMAX     ; mod/ini.inc cc.ini text scratch
+ini_n       resw 1
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
