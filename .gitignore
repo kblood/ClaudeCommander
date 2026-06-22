@@ -21,5 +21,8 @@ AAASRC/
 AAADST/
 ZZTEST/
 ZZC/
+ZZO/
 testrun/
 EXECTEST.TXT
+# third-party file manager dropped in for comparison
+SPARROW/
