@@ -132,6 +132,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_MASK
   %define FEAT_EDIT
   %define FEAT_FIND
+  %define FEAT_ZIP
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -2595,6 +2596,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_FIND
 %include "mod/find.inc"
 %endif
+%ifdef FEAT_ZIP
+%include "mod/zip.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2651,6 +2655,9 @@ keytab:
 %ifdef FEAT_MASK
         KEYBIND_EXT 64h, key_mask_sel   ; Ctrl-F7  tag files by *.mask
         KEYBIND_EXT 65h, key_mask_unsel ; Ctrl-F8  untag files by *.mask
+%endif
+%ifdef FEAT_ZIP
+        KEYBIND_EXT 66h, key_zip        ; Ctrl-F9  list archive (CCZIP.COM)
 %endif
         KEYBIND_END                     ; sentinel
 

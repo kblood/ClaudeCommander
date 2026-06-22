@@ -200,6 +200,9 @@ menu_tbl:
 %ifdef FEAT_FIND
         dw      mi_find2, key_find
 %endif
+%ifdef FEAT_ZIP
+        dw      mi_zip,   key_zip
+%endif
         dw      mi_quit,  key_quit
         dw      0, 0
 
@@ -223,5 +226,8 @@ mi_edit     db 'Edit file (F4)',0
 %endif
 %ifdef FEAT_FIND
 mi_find2    db 'Find files (Alt-F7)',0
+%endif
+%ifdef FEAT_ZIP
+mi_zip      db 'List archive (Ctrl-F9)',0
 %endif
 mi_quit     db 'Quit',0

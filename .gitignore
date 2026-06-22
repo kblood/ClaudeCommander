@@ -23,6 +23,11 @@ CCEDUMP.TXT
 TESTED.TXT
 # find (CCFIND) test artifacts
 findout.txt
+# zip (CCZIP) test artifacts
+ziplist.txt
+ZTEST.ZIP
+TA.TXT
+TB.TXT
 # scratch playgrounds for headless copy/delete tests
 AAASRC/
 AAADST/
