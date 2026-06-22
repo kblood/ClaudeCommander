@@ -366,7 +366,7 @@ key_enter:
         jcxz    .ret
         call    cur_entry_ptr       ; -> si = entry ptr
         test    byte [si+E_ATTR], 10h
-        jz      .ret                ; not a directory (Stage B: run files)
+        jz      .file               ; not a directory -> maybe run it
         ; directory: is it ".."?
         mov     al, [si+E_NAME]
         cmp     al, '.'
@@ -383,6 +383,102 @@ key_enter:
 .reload:
         call    read_dir
 .ret:
+        ret
+.file:
+        call    is_exec             ; si -> CF set if .EXE/.COM/.BAT
+        jnc     .ret
+        ; copy filename onto the command line and shell-run it
+        push    si
+        lea     si, [si+E_NAME]
+        mov     di, cmdbuf
+        xor     cx, cx
+.fc:
+        mov     al, [si]
+        mov     [di], al
+        or      al, al
+        jz      .fce
+        inc     si
+        inc     di
+        inc     cx
+        jmp     .fc
+.fce:
+        mov     [cmdlen], cx
+        pop     si
+        call    set_active_cwd
+        jmp     run_command
+
+; si=entry -> CF=1 if the name ends in .EXE/.COM/.BAT (case-insensitive)
+is_exec:
+        push    si
+        lea     si, [si+E_NAME]
+        xor     bx, bx              ; bx = ptr just past last '.'
+.f:
+        mov     al, [si]
+        or      al, al
+        jz      .chk
+        cmp     al, '.'
+        jne     .nx
+        lea     bx, [si+1]
+.nx:
+        inc     si
+        jmp     .f
+.chk:
+        or      bx, bx
+        jz      .no
+        mov     si, bx
+        mov     di, s_exe
+        call    cmp3
+        je      .yes
+        mov     si, bx
+        mov     di, s_com
+        call    cmp3
+        je      .yes
+        mov     si, bx
+        mov     di, s_bat
+        call    cmp3
+        je      .yes
+.no:
+        pop     si
+        clc
+        ret
+.yes:
+        pop     si
+        stc
+        ret
+
+; compare 3 bytes [si] (uppercased) vs [di]; ZF=1 if equal
+cmp3:
+        mov     cx, 3
+.l:
+        mov     al, [si]
+        cmp     al, 'a'
+        jb      .u
+        cmp     al, 'z'
+        ja      .u
+        sub     al, 20h
+.u:
+        cmp     al, [di]
+        jne     .ne
+        inc     si
+        inc     di
+        loop    .l
+        xor     al, al              ; ZF=1 (equal)
+        ret
+.ne:
+        mov     al, 1
+        or      al, al              ; ZF=0 (differ)
+        ret
+
+; set the DOS current drive + directory to the active panel's path
+set_active_cwd:
+        mov     bx, [active]
+        mov     dl, [bx+P_PATH]
+        sub     dl, 'A'
+        mov     ah, 0Eh             ; select drive
+        int     21h
+        lea     dx, [bx+P_PATH]
+        mov     ah, 3Bh             ; chdir
+        int     21h
         ret
 
 ; ============================================================================
@@ -1615,6 +1711,9 @@ dbg_cnt     db 'count=',0
 s_comspec   db 'COMSPEC=',0
 s_defcom    db 'COMMAND.COM',0
 s_slashc    db ' /C ',0
+s_exe       db 'EXE'
+s_com       db 'COM'
+s_bat       db 'BAT'
 s_runmsg    db 0Dh,0Ah,'[Claude Commander] running command...',0Dh,0Ah,'$'
 s_anykey    db 0Dh,0Ah,'Press any key to return to Claude Commander...',0Dh,0Ah,'$'
 
