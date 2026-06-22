@@ -109,6 +109,31 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
         dw      0
 %endmacro
 
+; --- build profile -> feature set ---------------------------------------------
+; build.ps1 passes -dFEAT_MIN / -dFEAT_STD / -dFEAT_FULL. A bare `nasm cc.asm`
+; (no flag) builds as STD. Tiers are cumulative: FULL = STD + heavy features.
+%ifdef FEAT_FULL
+  %define _TIER 3
+%elifdef FEAT_STD
+  %define _TIER 2
+%elifdef FEAT_MIN
+  %define _TIER 1
+%else
+  %define _TIER 2            ; default bare build == STD
+%endif
+
+%if _TIER >= 2               ; ---- STD feature set ----
+  %define FEAT_CLOCK
+  %define FEAT_SORT
+  %define FEAT_SEARCH
+  %define FEAT_FREE
+  %define FEAT_COLS
+  %define FEAT_MENU
+%endif
+%if _TIER >= 3               ; ---- FULL adds ----
+  %define FEAT_LFN
+%endif
+
 ; ============================================================================
 start:
         cld
@@ -573,6 +598,9 @@ render_all:
         call    draw_frames
         call    draw_cmdline
         call    draw_fkeys
+%ifdef FEAT_CLOCK
+        call    draw_clock
+%endif
         ret
 
 ; fill whole screen with blue spaces ------------------------------------------
@@ -2434,6 +2462,10 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 
 %include "mod/viewer.inc"
 %include "mod/harness.inc"
+; ---- optional feature modules (gated by the build-profile feature set) ----
+%ifdef FEAT_CLOCK
+%include "mod/clock.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
