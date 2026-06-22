@@ -28,6 +28,8 @@ ziplist.txt
 ZTEST.ZIP
 TA.TXT
 TB.TXT
+# user's active language file (opt-in; da.lng is the tracked sample)
+cc.lng
 # scratch playgrounds for headless copy/delete tests
 AAASRC/
 AAADST/

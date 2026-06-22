@@ -22,5 +22,6 @@
 
   CONFIG
     cc.ini .......... set initial "sort" and "columns" options
+    cc.lng .......... translate the F-key bar (copy da.lng to cc.lng)
 
   Scroll this help with Up/Down/PgUp/PgDn; press Esc, q, F1 or F10 to close.

@@ -135,6 +135,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_ZIP
   %define FEAT_INI
   %define FEAT_HELP
+  %define FEAT_LANG
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -211,6 +212,10 @@ start:
 %ifdef FEAT_INI
         ; --- load cc.ini before the panels are read so sort/columns apply ---
         call    ini_load
+%endif
+%ifdef FEAT_LANG
+        ; --- repoint the F-key bar labels from cc.lng if present ---
+        call    lang_load
 %endif
 
         ; --- init both panels to current drive/dir ---
@@ -2612,6 +2617,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_HELP
 %include "mod/help.inc"
 %endif
+%ifdef FEAT_LANG
+%include "mod/lang.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2767,6 +2775,9 @@ mask_set    resb 1          ; mod/mask.inc: 1=tag, 0=untag
 INIMAX      equ 256
 inibuf      resb INIMAX     ; mod/ini.inc cc.ini text scratch
 ini_n       resw 1
+LNGMAX      equ 160
+lngbuf      resb LNGMAX     ; mod/lang.inc cc.lng label text (repointed in place)
+lng_n       resw 1
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
