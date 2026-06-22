@@ -1479,7 +1479,13 @@ format_entry:
         or      bl, bl
         jz      .numsize
         cmp     bl, 1
-        jne     .numtime
+        je      .numdate
+        cmp     bl, 2
+        je      .numtime
+        mov     al, [si+E_ATTR]     ; mode 3 = attributes
+        call    fmt_attr            ; -> si=numbuf, cx=len
+        jmp     .numjust
+.numdate:
         mov     ax, [si+E_DATE]
         call    fmt_date            ; -> si=numbuf, cx=len
         jmp     .numjust

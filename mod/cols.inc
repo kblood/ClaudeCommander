@@ -3,15 +3,51 @@
 ; rendering is in core format_entry (gated on [col_mode]); this module owns
 ; the cycle key and the date/time formatters.
 
-; cycle col_mode 0(size) -> 1(date) -> 2(time) -> 0 ; bound to Ctrl-F5.
+; cycle col_mode 0(size)->1(date)->2(time)->3(attrs)->0 ; bound to Ctrl-F5.
 col_cycle:
         mov     al, [col_mode]
         inc     al
-        cmp     al, 3
+        cmp     al, 4
         jb      .ok
         xor     al, al
 .ok:
         mov     [col_mode], al
+        ret
+
+; al = file attribute byte -> numbuf "RHSA" (letter if set, '-' if not);
+; returns si=numbuf, cx=4.  Preserves di (the caller's rowbuf field pointer).
+fmt_attr:
+        push    di
+        mov     ah, al              ; keep the attribute
+        mov     di, numbuf
+        mov     al, '-'
+        test    ah, 01h             ; read-only
+        jz      .r
+        mov     al, 'R'
+.r:     mov     [di], al
+        inc     di
+        mov     al, '-'
+        test    ah, 02h             ; hidden
+        jz      .h
+        mov     al, 'H'
+.h:     mov     [di], al
+        inc     di
+        mov     al, '-'
+        test    ah, 04h             ; system
+        jz      .s
+        mov     al, 'S'
+.s:     mov     [di], al
+        inc     di
+        mov     al, '-'
+        test    ah, 20h             ; archive
+        jz      .a
+        mov     al, 'A'
+.a:     mov     [di], al
+        inc     di
+        mov     byte [di], 0
+        mov     si, numbuf
+        mov     cx, 4
+        pop     di
         ret
 
 ; ax = packed DOS date -> numbuf "MM-DD-YY"; returns si=numbuf, cx=8.
