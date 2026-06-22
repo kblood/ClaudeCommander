@@ -2571,6 +2571,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_FREE
 %include "mod/free.inc"
 %endif
+%ifdef FEAT_SEARCH
+%include "mod/search.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2611,6 +2614,9 @@ keytab:
 %endif
 %ifdef FEAT_COLS
         KEYBIND_EXT 62h, col_cycle      ; Ctrl-F5  cycle size/date/time column
+%endif
+%ifdef FEAT_SEARCH
+        KEYBIND_EXT 63h, key_qsearch    ; Ctrl-F6  incremental quick-search
 %endif
         KEYBIND_END                     ; sentinel
 
@@ -2688,6 +2694,10 @@ rowbuf      resb 84
 numbuf      resb 16
 %ifdef FEAT_FREE
 footbuf     resb 48         ; mod/free.inc footer text scratch
+%endif
+%ifdef FEAT_SEARCH
+qsbuf       resb 16         ; mod/search.inc quick-search prefix
+qslen       resw 1
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
