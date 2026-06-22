@@ -596,6 +596,9 @@ render_all:
         mov     byte [pcw], R_CONW
         call    draw_panel
         call    draw_frames
+%ifdef FEAT_FREE
+        call    draw_foot
+%endif
         call    draw_cmdline
         call    draw_fkeys
 %ifdef FEAT_CLOCK
@@ -2565,6 +2568,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_COLS
 %include "mod/cols.inc"
 %endif
+%ifdef FEAT_FREE
+%include "mod/free.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2680,6 +2686,9 @@ section .bss
 align 2
 rowbuf      resb 84
 numbuf      resb 16
+%ifdef FEAT_FREE
+footbuf     resb 48         ; mod/free.inc footer text scratch
+%endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
 linebuf     resb 84
