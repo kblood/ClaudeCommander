@@ -1,0 +1,26 @@
+              Claude Commander (cc) -- Keyboard Help
+
+  NAVIGATION
+    Up/Down ......... move cursor          Tab ........... switch panel
+    PgUp/PgDn ....... page                 Home/End ...... top / bottom
+    Enter ........... open dir / run       Backspace ..... parent dir
+    Insert .......... tag / untag entry
+
+  FUNCTION KEYS
+    F1 .. this help          F3 .. view          F4 .. edit (CCEDIT)
+    F5 .. copy               F6 .. move/rename    F7 .. make dir
+    F8 .. delete             F9 .. menu           F10 . quit
+    Alt-F1/F2 ....... change drive (left / right panel)
+    Alt-F7 .......... find files (CCFIND)
+
+  DISPLAY / SELECT
+    Ctrl-F1..F4 ..... sort by name / ext / size / date
+    Ctrl-F5 ......... cycle column: size / date / time / attributes
+    Ctrl-F6 ......... incremental quick-search
+    Ctrl-F7/F8 ...... tag / untag files by *.mask
+    Ctrl-F9 ......... list archive contents (CCZIP)
+
+  CONFIG
+    cc.ini .......... set initial "sort" and "columns" options
+
+  Scroll this help with Up/Down/PgUp/PgDn; press Esc, q, F1 or F10 to close.

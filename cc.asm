@@ -134,6 +134,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_FIND
   %define FEAT_ZIP
   %define FEAT_INI
+  %define FEAT_HELP
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -2608,6 +2609,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_INI
 %include "mod/ini.inc"
 %endif
+%ifdef FEAT_HELP
+%include "mod/help.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2624,6 +2628,9 @@ keytab:
         KEYBIND_EXT 4Dh, key_pgdn       ; Right -> page down (alias)
         KEYBIND_EXT 47h, key_home       ; Home
         KEYBIND_EXT 4Fh, key_end        ; End
+%ifdef FEAT_HELP
+        KEYBIND_EXT 3Bh, key_help       ; F1  Help (views cc.hlp)
+%endif
         KEYBIND_EXT 3Dh, key_view       ; F3  View
 %ifdef FEAT_EDIT
         KEYBIND_EXT 3Eh, key_edit       ; F4  Edit (launches CCEDIT.COM)
