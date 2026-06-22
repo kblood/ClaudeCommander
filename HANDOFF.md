@@ -94,25 +94,42 @@ Resident modules: clock · sort (Ctrl-F1..F4) · columns size/date/time/attrs
 
 External helpers: CCEDIT · CCFIND · CCZIP · CCGREP · CCHEX · CCSUM.
 
-Every feature the user originally asked for is shipped. All verified GREEN via
-the harness or end-to-end (e.g. CCATTR sets the real host read-only bit; CCSUM
-matches the canonical CRC-32 vector `CBF43926`).
+F5/F6 (commit 6510e14): F5 copies and F6 *moves* the cursor entry (or all
+tagged) to the OTHER panel; both prompt with the destination name pre-filled so
+editing it renames in flight. Same-drive moves use one DOS rename (files +
+trees); cross-drive falls back to copy+delete. Shift-F6 = rename in place.
 
 ---
 
-## Open tasks / next moves (all optional)
+## Container browser — the [open] plugin framework (IN PROGRESS)
 
-The explicit ask list is 100% done; these are roadmap extras:
+Total-Commander-style packer plugins; ext→helper map in cc.ini `[open]`.
 
-- **External (free, recommended next):** `CCDIFF` file compare · `CCREN`
-  multi-rename · `CCSPLIT`/`CCJOIN`. Same pattern as CCGREP/CCHEX/CCSUM.
-- **Needs resident reclaim:** full `MSG(id)` string-table i18n (today only the
-  F-key bar is translated) · F2 user menu (`cc.mnu`) · remappable keys ·
-  command-line history · bookmarks · themes · file associations · touch ·
-  copy/move progress %.
-- **LFN live render:** validated only as graceful 8.3 fallback (DOSBox-staging
-  has no LFN API). To see a real long name, test under DOSBox-X with LFN on, an
-  LFN provider (DOSLFN), or Win9x DOS — or on the MiSTer ao486 rig with DOSLFN.
+- **DONE — browse (commit 9594ef8):** Enter on a `.zip` opens it as a folder
+  (virtual panel: P_VFS + P_CNAME). cc runs `<helper> L <file> >CCVFS.LST` via a
+  silent `run_helper` (NOT run_command — that re-reads panels and would recurse
+  through a VFS panel's read_dir), parses `<size> <name>` lines into the entry
+  array with a synthetic `..`, deletes the scratch file. Backspace / `..`
+  (go_parent) exits and re-reads the real folder (P_PATH is preserved). Panel
+  title shows the container name. CCZIP gained an `L` machine-list mode;
+  ext→helper parsed by `open_lookup`/`openmap` (ini.inc). Verified GREEN: Enter
+  on TEST.ZIP lists its members; Backspace returns clean.
+- **NEXT (recommended move): F5 EXTRACT.** When the active panel is P_VFS, F5
+  runs `<helper> X <container> <member-index> <destdir>` instead of copy_one;
+  add an `X` mode to CCZIP that extracts the Nth FILE member (index matches `L`,
+  dirs skipped). STORED = copy bytes at the local-header data offset; DEFLATED
+  needs a small INFLATE in CCZIP (the bulk — free resident).
+- **THEN:** more packers, one helper + one cc.ini line each — CCRAR, CCARJ,
+  CCD64/CCT64 (C64 images, no decompression); plus a `[view]` section for
+  per-extension viewers (image/audio) dispatched from F3.
+
+## Open tasks / next moves (lower priority)
+
+- **External (free):** `CCDIFF` · `CCREN` multi-rename · `CCSPLIT`/`CCJOIN`.
+- **Needs resident reclaim:** full `MSG(id)` i18n · F2 user menu · remappable
+  keys · history · bookmarks · themes · touch · copy/move progress %.
+- **LFN live render:** validated only as 8.3 fallback (DOSBox-staging has no LFN
+  API). Test under DOSBox-X / DOSLFN / Win9x DOS for a real long name.
 
 ---
 
@@ -128,8 +145,15 @@ The explicit ask list is 100% done; these are roadmap extras:
 - **DOSBox-staging has no LFN API** (714Eh/7160h return CF=1). Don't try to
   validate LFN rendering there. DOSBox-X supports it but is unreliable headless
   in this setup (detached launcher / no host flush).
-- **The resident wall is full (~8 B).** Re-run `build.ps1` after every resident
-  change; a green build is the gate.
+- **Resident headroom is now ~2.6 KB** (the `/S` VRAM-snapshot debug feature is
+  gated behind `FEAT_SNAP`, off by default, freeing its 4 KB snapbuf). Still
+  re-run `build.ps1` after every resident change; a green build is the gate.
+- **Don't shell out with `run_command` from inside a handler** — it clears the
+  screen, waits on `get_key` (eats a harness keystroke), and re-reads both
+  panels (which recurses through a P_VFS panel). Use `run_helper` for silent,
+  redirect-to-file helper calls.
+- **`cc.ini` is read up to `INIMAX` (1024) bytes**, whole-file; keep it under
+  that or raise INIMAX, or trailing sections (like `[open]`) get truncated.
 - **`.bss` counts toward resident** even though it's not in the `.com` on disk.
 - **`cc.lng` overrides the F-key bar if present** — keep it out of the working
   dir for English-bar tests (it's gitignored; `da.lng` is the tracked sample).
@@ -149,6 +173,9 @@ The explicit ask list is 100% done; these are roadmap extras:
 
 ## State
 
-- Branch `master`, latest commit `d36ef1b` (docs update). 10+ feature/tool
-  commits this round, all local, **none pushed**.
-- `build.ps1` → FEAT_STD PASS (64,504 B). All external helpers assemble clean.
+- Branch `master`, latest commit `9594ef8` (container browser + ZIP browse).
+  Recent: `6510e14` F5/F6 copy-move-rename, `e8ba410` dist packager. All local,
+  **none pushed**.
+- `build.ps1` → FEAT_STD PASS (61,902 B; ~2.6 KB headroom). All external helpers
+  assemble clean. `package.ps1` → browsable dist (CC.COM + CCZIP.COM + cc.ini
+  with `[open]`). Try it interactively with `.\run_cc.ps1`.

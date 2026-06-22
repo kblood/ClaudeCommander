@@ -62,3 +62,8 @@ SPARROW/
 dist/
 # copy/move test fixture
 _mvtest/
+# container-browser (VFS) test fixtures
+_vfstest/
+_ziptest/
+CCVFS.LST
+LST.TXT
