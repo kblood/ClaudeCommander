@@ -66,10 +66,16 @@ P_PATH      equ 0          ; ASCIIZ current dir, e.g. "C:\GAMES"  (68 bytes)
 P_COUNT     equ 68         ; word: number of entries
 P_TOP       equ 70         ; word: first visible entry index
 P_CUR       equ 72         ; word: cursor entry index (absolute)
-P_ENTRIES   equ 74         ; entry array
+P_VFS       equ 74         ; byte: 1 = this panel is a container (virtual) view
+P_CNAME     equ 76         ; 14 bytes: container filename when P_VFS=1
+P_ENTRIES   equ 90         ; entry array
 MAX_FILES   equ 512         ; per panel (keeps the whole .COM within one 64KB segment)
 ENTSIZE     equ 24
 PANELSIZE   equ P_ENTRIES + MAX_FILES*ENTSIZE
+
+; container (VFS) registry: extension -> external helper, parsed from cc.ini
+OPENMAX     equ 12          ; max [open] mappings
+OPENROW     equ 18          ; 4-byte ext (upper, NUL-padded) + 14-byte helper
 
 ; recursive copy/delete: per-level DTA stack
 DTASZ       equ 64         ; bytes per FindFirst DTA (record is 43)
@@ -139,6 +145,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_LFN
   %define FEAT_GREP
   %define FEAT_ATTR
+  %define FEAT_VFS
 %endif
 %if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
 %endif
@@ -165,8 +172,10 @@ start:
         je      .set_dump
         cmp     al, 'c'
         je      .set_count
+%ifdef FEAT_SNAP
         cmp     al, 's'
         je      .set_snap
+%endif
         jmp     .next
 .set_test:
         mov     byte [test_mode], 1
@@ -179,8 +188,10 @@ start:
         mov     byte [test_mode], 1
         mov     byte [count_dbg], 1
         jmp     .next
+%ifdef FEAT_SNAP
 .set_snap:
         mov     byte [snap_mode], 1
+%endif
 .next:
         loop    .scan
 .noargs:
@@ -241,6 +252,7 @@ start:
         int     21h
 .nodbg:
 
+%ifdef FEAT_SNAP
         ; --- snapshot mode: render once, dump raw VRAM to CCSNAP.BIN, exit ---
         cmp     byte [snap_mode], 0
         je      .nosnap
@@ -253,6 +265,7 @@ start:
         mov     ax, 4C00h
         int     21h
 .nosnap:
+%endif
 
         ; --- mouse init (live mode only) ---
         mov     byte [mouse_ok], 0
@@ -502,6 +515,17 @@ key_enter:
 .ret:
         ret
 .file:
+%ifdef FEAT_VFS
+        ; container? (extension registered in cc.ini's [open] map)
+        push    si
+        lea     si, [si+E_NAME]
+        call    open_lookup         ; CF=1 if the extension maps to a helper
+        pop     si
+        jnc     .notcont
+        call    vfs_enter           ; si=entry -> browse it as a folder
+        ret
+.notcont:
+%endif
         call    is_exec             ; si -> CF set if .EXE/.COM/.BAT
         jnc     .ret
         ; copy filename onto the command line and shell-run it
@@ -740,8 +764,14 @@ one_title:
         mov     al, A_TITLE
 .a:
         mov     [tattr], al
-        ; compute strlen(path)
+        ; compute strlen(path) -- or the container name when browsing one
         lea     si, [bx+P_PATH]
+%ifdef FEAT_VFS
+        cmp     byte [bx+P_VFS], 0
+        je      .src
+        lea     si, [bx+P_CNAME]
+.src:
+%endif
         call    strlen              ; -> ax = len
         mov     bp, ax              ; bp = path len
         ; field width = dx-2 (leave a space each side)
@@ -1011,6 +1041,7 @@ init_panel_cwd:
         mov     word [di+P_COUNT], 0
         mov     word [di+P_TOP], 0
         mov     word [di+P_CUR], 0
+        mov     byte [di+P_VFS], 0
         mov     bx, di
         call    read_dir
         pop     di
@@ -1019,6 +1050,12 @@ init_panel_cwd:
 ; read directory for panel bx into its entry array, then sort -----------------
 read_dir:
         mov     [ppanel], bx
+%ifdef FEAT_VFS
+        cmp     byte [bx+P_VFS], 0
+        je      .notvfs
+        jmp     vfs_relist          ; virtual panel -> re-list the container
+.notvfs:
+%endif
         ; set DTA = dta_buf
         push    dx
         mov     ah, 1Ah
@@ -1185,6 +1222,15 @@ path_up:
 
 ; go up a folder in the active panel, leaving the cursor on the child we left
 go_parent:
+%ifdef FEAT_VFS
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        je      .real
+        mov     byte [bx+P_VFS], 0  ; leaving a container -> back to its folder
+        call    read_dir
+        ret
+.real:
+%endif
         mov     bx, [active]
         ; capture the last path component of P_PATH into comefrom
         lea     si, [bx+P_PATH]
@@ -2628,6 +2674,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_INI
 %include "mod/ini.inc"
 %endif
+%ifdef FEAT_VFS
+%include "mod/vfs.inc"
+%endif
 %ifdef FEAT_HELP
 %include "mod/help.inc"
 %endif
@@ -2724,7 +2773,9 @@ fk9         db '10Quit',0
 str_dir     db '<DIR>',0
 str_up      db '<UP>',0
 dumpname    db 'CCDUMP.TXT',0
+%ifdef FEAT_SNAP
 snapname    db 'CCSNAP.BIN',0
+%endif
 keyname     db 'cc.key',0
 dumpsep     db '==== FRAME ====',0Dh,0Ah
 dumpsep_len equ $-dumpsep
@@ -2764,7 +2815,9 @@ quit_flag   db 0
 test_mode   db 0
 want_keys   db 0
 count_dbg   db 0
+%ifdef FEAT_SNAP
 snap_mode   db 0
+%endif
 sort_mode   db 0            ; 0=name 1=ext 2=size 3=date (FEAT_SORT)
 col_mode    db 0            ; right column: 0=size 1=date 2=time (FEAT_COLS)
 orig_mode   db 3
@@ -2800,7 +2853,7 @@ menu_sel    resw 1
 mask_set    resb 1          ; mod/mask.inc: 1=tag, 0=untag
 %endif
 %ifdef FEAT_INI
-INIMAX      equ 256
+INIMAX      equ 1024
 inibuf      resb INIMAX     ; mod/ini.inc cc.ini text scratch
 ini_n       resw 1
 LNGMAX      equ 160
@@ -2808,6 +2861,17 @@ lngbuf      resb LNGMAX     ; mod/lang.inc cc.lng label text (repointed in place
 lng_n       resw 1
 lfn_di      resw 1          ; mod/lfn.inc saved CMD_ROW draw position
 attr_cur    resb 1          ; mod/attr.inc working attribute bits
+openmap     resb OPENMAX*OPENROW ; [open] ext->helper map (ini.inc / vfs.inc)
+open_n      resw 1
+cur_sect    resb 1          ; ini parser: 1 while inside an [open] section
+ext_tmp     resb 4
+%endif
+%ifdef FEAT_VFS
+vfs_pan     resw 1          ; the panel being (re)listed
+vfs_helper  resw 1          ; -> helper name within openmap
+vfs_end     resw 1          ; end of the listing text in viewbuf
+vfs_lpath   resb 96         ; full path of the CCVFS.LST scratch file
+vfs_cpath   resb 96         ; full path of the container being browsed
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
@@ -2860,7 +2924,9 @@ vtop        resw 1
 vnlines     resw 1
 viewbuf     resb VIEW_MAX
 lineoff     resw MAX_VLINES
+%ifdef FEAT_SNAP
 snapbuf     resb 4000
+%endif
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE
 stackspace  resb 1024

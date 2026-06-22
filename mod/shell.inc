@@ -1,6 +1,18 @@
 ; mod/shell.inc  --  extracted from cc.asm (M1 module split, byte-identical)
 ; Plain implicit-text code only; no section/equ/macro (see plan/m1_split.md).
 
+; Run an external helper silently: COMSPEC /C <cmdbuf>, with its stdout meant
+; to be redirected to a file.  Unlike run_command this does NOT clear the
+; screen, wait for a key, or re-read the panels -- so it is safe to call from
+; inside a handler (e.g. the container browser) and from the /T harness without
+; consuming keystrokes or recursing through a virtual panel's read_dir.
+run_helper:
+        call    get_comspec
+        call    build_tail
+        call    fill_epb
+        call    run_exec
+        ret
+
 run_command:
         ; switch to a clean text screen for the command's own output
         mov     ax, 0003h

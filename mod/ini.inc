@@ -8,6 +8,8 @@
 ; more keys can be added by extending the dispatch below.
 
 ini_load:
+        mov     word [open_n], 0
+        mov     byte [cur_sect], 0
         mov     ax, 3D00h
         mov     dx, s_ininame
         int     21h
@@ -50,7 +52,13 @@ ini_load:
         cmp     al, '#'
         je      .skip
         cmp     al, '['
-        je      .skip
+        je      .section
+        ; inside an [open] section, every "ext = helper" line is a mapping
+        cmp     byte [cur_sect], 1
+        jne     .keys
+        call    openmap_add
+        jmp     .skip
+.keys:
         ; try recognised keys
         push    si
         mov     di, k_sort
@@ -70,6 +78,18 @@ ini_load:
 .docols:
         add     sp, 2
         call    set_cols_val
+        jmp     .skip
+.section:
+        push    si
+        inc     si                  ; past '['
+        mov     di, k_open
+        call    sect_is             ; CF=1 if section name is "open"
+        pop     si
+        mov     byte [cur_sect], 0
+        jc      .secopen
+        jmp     .skip
+.secopen:
+        mov     byte [cur_sect], 1
         jmp     .skip
 .skip:
         mov     al, [si]
@@ -210,9 +230,183 @@ set_cols_val:
 .a:     mov     byte [col_mode], 3
         ret
 
+; si -> char after '['. di = section name ASCIIZ. CF=1 if the bracketed name
+; matches (case-insensitive) followed by ']'. si/di not preserved.
+sect_is:
+        push    si
+.c:     mov     al, [di]
+        or      al, al
+        jz      .end
+        mov     ah, [si]
+        and     al, 0DFh
+        and     ah, 0DFh
+        cmp     al, ah
+        jne     .no
+        inc     si
+        inc     di
+        jmp     .c
+.end:   cmp     byte [si], ']'
+        jne     .no
+        pop     ax                  ; discard saved si
+        stc
+        ret
+.no:    pop     si
+        clc
+        ret
+
+; si -> "ext = helper" line. Parse one [open] mapping into openmap.
+openmap_add:
+        mov     ax, [open_n]
+        cmp     ax, OPENMAX
+        jae     .done
+        mov     bx, OPENROW
+        mul     bx                  ; ax = open_n * OPENROW
+        mov     bp, openmap
+        add     bp, ax
+        mov     byte [bp], 0        ; clear the 4-byte ext field
+        mov     byte [bp+1], 0
+        mov     byte [bp+2], 0
+        mov     byte [bp+3], 0
+        mov     di, bp              ; write cursor for the ext (max 3, upper)
+        mov     cx, 3
+.ext:
+        mov     al, [si]
+        or      al, al
+        jz      .bad
+        cmp     al, 0Dh
+        je      .bad
+        cmp     al, 0Ah
+        je      .bad
+        cmp     al, '='
+        je      .exte
+        cmp     al, ' '
+        je      .exte
+        cmp     al, 9
+        je      .exte
+        jcxz    .extn
+        cmp     al, 'a'
+        jb      .st
+        cmp     al, 'z'
+        ja      .st
+        sub     al, 20h
+.st:    mov     [di], al
+        inc     di
+        dec     cx
+.extn:  inc     si
+        jmp     .ext
+.exte:
+        ; skip spaces/tabs and the '='
+.sk:    mov     al, [si]
+        cmp     al, ' '
+        je      .ska
+        cmp     al, 9
+        je      .ska
+        cmp     al, '='
+        je      .ska
+        jmp     .hel
+.ska:   inc     si
+        jmp     .sk
+.hel:
+        lea     di, [bp+4]          ; helper field (max 13 + NUL)
+        mov     cx, 13
+.hl:    mov     al, [si]
+        or      al, al
+        jz      .hend
+        cmp     al, 0Dh
+        je      .hend
+        cmp     al, 0Ah
+        je      .hend
+        cmp     al, ' '
+        je      .hend
+        jcxz    .hadv
+        mov     [di], al
+        inc     di
+        dec     cx
+.hadv:  inc     si
+        jmp     .hl
+.hend:
+        mov     byte [di], 0
+        cmp     byte [bp], 0        ; need a non-empty ext and helper
+        je      .done
+        cmp     byte [bp+4], 0
+        je      .done
+        inc     word [open_n]
+.done:
+        ret
+.bad:
+        ret
+
+; si -> a filename ASCIIZ. If its extension is in openmap, CF=1 and di -> the
+; helper name; otherwise CF=0. si preserved.
+open_lookup:
+        push    si
+        xor     bx, bx              ; bx -> char after last '.', 0 if none
+.fe:    mov     al, [si]
+        or      al, al
+        jz      .got
+        cmp     al, '.'
+        jne     .fn
+        lea     bx, [si+1]
+.fn:    inc     si
+        jmp     .fe
+.got:
+        or      bx, bx
+        jz      .no
+        mov     si, bx              ; uppercase ext (max 3) into ext_tmp
+        mov     di, ext_tmp
+        mov     byte [di], 0
+        mov     byte [di+1], 0
+        mov     byte [di+2], 0
+        mov     byte [di+3], 0
+        mov     cx, 3
+.uc:    mov     al, [si]
+        or      al, al
+        jz      .ucd
+        jcxz    .ucd
+        cmp     al, 'a'
+        jb      .us
+        cmp     al, 'z'
+        ja      .us
+        sub     al, 20h
+.us:    mov     [di], al
+        inc     di
+        inc     si
+        dec     cx
+        jmp     .uc
+.ucd:
+        mov     cx, [open_n]
+        jcxz    .no
+        mov     bx, openmap
+.row:
+        mov     si, ext_tmp
+        mov     di, bx
+        mov     al, [si]
+        cmp     al, [di]
+        jne     .nx
+        mov     al, [si+1]
+        cmp     al, [di+1]
+        jne     .nx
+        mov     al, [si+2]
+        cmp     al, [di+2]
+        jne     .nx
+        mov     al, [si+3]
+        cmp     al, [di+3]
+        jne     .nx
+        lea     di, [bx+4]          ; match -> helper
+        pop     si
+        stc
+        ret
+.nx:    add     bx, OPENROW
+        loop    .row
+.no:
+        pop     si
+        clc
+        ret
+
 s_ininame   db 'cc.ini',0
 k_sort      db 'sort',0
 k_cols      db 'columns',0
+k_open      db 'open',0
 v_name      db 'name',0
 v_ext       db 'ext',0
 v_size      db 'size',0

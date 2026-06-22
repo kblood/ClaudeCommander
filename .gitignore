@@ -60,3 +60,5 @@ EXECTEST.TXT
 SPARROW/
 # packaged distribution (rebuilt on demand by package.ps1)
 dist/
+# copy/move test fixture
+_mvtest/

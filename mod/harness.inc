@@ -4,6 +4,7 @@
 ; ============================================================================
 ;  SNAPSHOT: copy the 4000-byte B800 text page to CCSNAP.BIN (for PNG render)
 ; ============================================================================
+%ifdef FEAT_SNAP
 snap_vram:
         push    ds
         push    es
@@ -31,6 +32,7 @@ snap_vram:
         int     21h
 .ret:
         ret
+%endif
 
 ; ============================================================================
 ;  SELF-TEST (diagnostic): write panel counts + first names to dump

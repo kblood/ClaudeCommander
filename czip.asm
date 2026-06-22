@@ -1,10 +1,13 @@
 ; ============================================================================
 ;  CCZIP.COM  --  Claude Commander's external ZIP lister (Layer 3 helper)
 ;
-;  Usage:  CCZIP <file.zip>
-;  Lists the contents of a ZIP archive (name, uncompressed size, method) by
-;  parsing the End-Of-Central-Directory record and the central directory.
-;  Prints to stdout so cc can show or redirect it:  CCZIP foo.zip > list.txt
+;  Usage:  CCZIP <file.zip>        human-readable listing (name/size/method)
+;          CCZIP L <file.zip>      machine listing for cc: "<size> <name>" lines
+;                                  (one per FILE; directory members are skipped)
+;  Parses the End-Of-Central-Directory record and the central directory.
+;  Prints to stdout so cc can show or redirect it:  CCZIP L foo.zip > list.txt
+;  cc's container-browser (the [open] map) uses the L form to show a ZIP as a
+;  navigable folder.
 ;
 ;  (Listing only -- DEFLATE decompression is intentionally out of scope for a
 ;  tiny helper.  Extraction can be added later or delegated to a real unzip.)
@@ -19,7 +22,7 @@ CDMAX   equ 32768               ; central-directory bytes buffered
 start:
         cld
         mov     sp, stacktop
-        call    parse_tail          ; -> fname
+        call    parse_args          ; -> fname (+ lmode if "L" prefix)
         cmp     byte [fname], 0
         je      .usage
         mov     ax, 3D00h
@@ -163,6 +166,8 @@ start:
 ;   method=word[+10] usize=dword[+24] namelen=word[+28]
 ;   extralen=word[+30] commentlen=word[+32] name@+46
 print_entry:
+        cmp     byte [lmode], 0
+        jne     print_entry_l
         mov     di, linebuf
         ; name (namelen bytes from si+46)
         mov     cx, [si+28]
@@ -223,6 +228,52 @@ print_entry:
         mov     dx, linebuf
         int     21h
         ; advance si to next header: 46 + namelen + extralen + commentlen
+        mov     ax, 46
+        add     ax, [si+28]
+        add     ax, [si+30]
+        add     ax, [si+32]
+        add     si, ax
+        ret
+
+; machine-readable entry for cc: "<usize> <name>\r\n".  Directory members
+; (name ending in '/' or '\') are skipped.  si -> header, advanced to next.
+print_entry_l:
+        mov     cx, [si+28]         ; namelen
+        jcxz    .adv                ; no name -> skip
+        lea     di, [si+46]         ; -> name
+        add     di, cx
+        dec     di                  ; -> last name char
+        mov     al, [di]
+        cmp     al, '/'
+        je      .adv                ; directory entry -> skip
+        cmp     al, '\'
+        je      .adv
+        mov     di, linebuf
+        mov     ax, [si+24]         ; uncompressed size dword
+        mov     dx, [si+26]
+        call    putnum_di
+        mov     byte [di], ' '
+        inc     di
+        mov     cx, [si+28]         ; name
+        lea     bx, [si+46]
+.nm:
+        jcxz    .nmend
+        mov     al, [bx]
+        mov     [di], al
+        inc     bx
+        inc     di
+        dec     cx
+        jmp     .nm
+.nmend:
+        mov     word [di], 0A0Dh    ; CR LF
+        add     di, 2
+        mov     cx, di
+        sub     cx, linebuf
+        mov     ah, 40h
+        mov     bx, 1
+        mov     dx, linebuf
+        int     21h
+.adv:
         mov     ax, 46
         add     ax, [si+28]
         add     ax, [si+30]
@@ -296,31 +347,75 @@ puts:
         ret
 
 ; ----------------------------------------------------------------------------
-parse_tail:
-        movzx   cx, byte [80h]
-        mov     si, 81h
-        mov     di, fname
-.sp:
-        jcxz    .e
-        cmp     byte [si], ' '
-        jne     .cp
-        inc     si
-        dec     cx
-        jmp     .sp
-.cp:
-        jcxz    .e
+; Parse the command tail.  Optional leading "L" token selects machine listing;
+; the remaining token is the archive filename.
+;   CCZIP file.zip       -> fname=file.zip, lmode=0
+;   CCZIP L file.zip     -> fname=file.zip, lmode=1
+parse_args:
+        mov     si, 81h             ; NUL-terminate the tail at its CR
+.term:
         mov     al, [si]
-        cmp     al, ' '
-        je      .e
+        or      al, al
+        jz      .t0
         cmp     al, 0Dh
-        je      .e
+        je      .t0
+        inc     si
+        jmp     .term
+.t0:
+        mov     byte [si], 0
+        mov     si, 81h
+        call    skip_sp
+        mov     di, tok1            ; first token
+        call    read_tok
+        ; single-char "L"/"l" -> list mode, real file is the next token
+        cmp     byte [tok1], 0
+        je      .none
+        cmp     byte [tok1+1], 0
+        jne     .firstfile
+        mov     al, [tok1]
+        and     al, 0DFh
+        cmp     al, 'L'
+        jne     .firstfile
+        mov     byte [lmode], 1
+        call    skip_sp
+        mov     di, fname
+        call    read_tok
+        ret
+.firstfile:
+        mov     si, tok1
+        mov     di, fname
+.cp:
+        mov     al, [si]
+        mov     [di], al
+        or      al, al
+        jz      .d
+        inc     si
+        inc     di
+        jmp     .cp
+.d:
+        ret
+.none:
+        mov     byte [fname], 0
+        ret
+
+skip_sp:
+        cmp     byte [si], ' '
+        jne     .d
+        inc     si
+        jmp     skip_sp
+.d:     ret
+
+read_tok:                           ; copy [si] until space/NUL -> [di], NUL-term
+        mov     al, [si]
+        or      al, al
+        jz      .d
+        cmp     al, ' '
+        je      .d
         mov     [di], al
         inc     si
         inc     di
-        dec     cx
-        jmp     .cp
-.e:
-        mov     byte [di], 0
+        jmp     read_tok
+.d:     mov     byte [di], 0
         ret
 
 ; ============================================================================
@@ -334,6 +429,8 @@ s_other     db '(method?)',0
 
 section .bss
 align 2
+lmode       resb 1
+tok1        resb 128
 fname       resb 128
 fh          resw 1
 fsize_lo    resw 1
