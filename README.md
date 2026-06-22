@@ -20,7 +20,7 @@ Commander (~64 KB)." Claude Commander lands far under that:
 
 | Build | Size |
 |---|---|
-| `cc.com` (current, with viewer) | **4,781 bytes** |
+| `cc.com` (current, viewer + snapshot) | **4,883 bytes** |
 | Stage A (panels + nav only) | 3,044 bytes |
 
 That is ~0.4 % of a 1.44 MB floppy, and ~2.4 % of the 200 KB budget. How:
@@ -28,12 +28,14 @@ That is ~0.4 % of a 1.44 MB floppy, and ~2.4 % of the 200 KB budget. How:
 1. **Flat `.COM`, not `.EXE`.** No MZ header, no relocations, no segment
    tables. `org 100h`, one segment, code+data+stack share 64 KB.
 2. **Reserved buffers live in `section .bss` (`nobits`).** The directory
-   arrays (two panels × 700 entries × 24 bytes ≈ 33 KB *each*), the 32 KB
+   arrays (two panels × 512 entries × 24 bytes ≈ 12 KB each), the 16 KB
    viewer buffer, the line table, key/dump scratch — none of it is emitted
    into the file. The `.COM` only carries *code + initialized strings*; the
-   ~70 KB of working RAM is claimed at runtime and zeroed by us as needed.
-   This is the single biggest size lever: without it the file would be ~100 KB
-   of zero-padding.
+   working RAM is claimed at runtime and zeroed by us as needed. This is the
+   single biggest size lever: without it the file would be tens of KB of
+   zero-padding. (Because a flat `.COM` is one 64 KB segment, the *total*
+   `.bss` is also capped at 64 KB — the resident image lands at ~51 KB, which
+   is why the per-panel entry count is 512 rather than larger.)
 3. **No libc, no runtime.** Every service is a raw `INT 21h` / `INT 10h` /
    `INT 16h` call. There is nothing to link.
 4. **Direct video writes to `B800:0000`.** No BIOS TTY, no ANSI driver. The
@@ -89,7 +91,7 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
   the ops currently act on the cursor entry.
 - Copy/Move progress + overwrite prompts; recursive directory copy/delete.
 - File-mask filter (`+`/`-` select), sort-order menu, quick-search by typing.
-- Viewer: hex mode, files larger than 32 KB (seek-based windowing), search.
+- Viewer: hex mode, files larger than 16 KB (seek-based windowing), search.
 
 ---
 
@@ -118,6 +120,9 @@ The repo includes a headless regression harness used during development:
 - `cc.com /T` plays a scripted keystroke file `cc.key` (byte pairs of
   AL=ascii, AH=scan), dumping a frame after every step. This is how every
   feature above was verified without a human at the keyboard.
+- `cc.com /S` copies the raw 80×25 video page to `CCSNAP.BIN`;
+  `render_snap.ps1` turns it into a colour PNG with the real VGA text
+  palette — used to produce the screenshot above.
 - `run_test.ps1 -ccArgs /T -keyfile keys_xxx.bin` assembles, runs the program
   under DOSBox Staging with a timeout, and prints `CCDUMP.TXT`.
 
