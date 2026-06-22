@@ -9,8 +9,13 @@ hand-tuned 16-bit x86 assembly. Targets 8086-and-up real mode (assembled for
 nasm -f bin cc.asm -o cc.com
 ```
 
-**The whole program is one `.COM` file of under 8 KB** — a full two-panel
-manager with mouse, recursive copy/delete, and overwrite prompts.
+**The core is one `.COM` file under 11 KB of code** — a full two-panel
+manager with mouse, recursive copy/delete, and overwrite prompts — now grown
+into a **modular** manager: compile-time feature modules (`mod/*.inc` behind
+`%ifdef FEAT_*`), runtime data files (`cc.ini`, `cc.lng`, `cc.hlp`), and a
+family of external Layer-3 helpers (`CCEDIT`, `CCFIND`, `CCZIP`, `CCGREP`,
+`CCHEX`, `CCSUM`). Build tiers: `FEAT_MIN` / `FEAT_STD` (default) / `FEAT_FULL`.
+See `ROADMAP.md` §0 for the full delivered list.
 
 ---
 
@@ -21,9 +26,15 @@ Commander (~64 KB)." Claude Commander lands far under that:
 
 | Build | Size |
 |---|---|
-| `cc.com` (current: mouse, recursive ops, overwrite prompts) | **7,104 bytes** |
+| `cc.com` (FEAT_STD: all modules below) | **~10.4 KB code, 64,504 B resident** |
+| `cc.com` (core: mouse, recursive ops, overwrite prompts) | 7,104 bytes |
 | Stage B (viewer + snapshot, pre-mouse) | 4,883 bytes |
 | Stage A (panels + nav only) | 3,044 bytes |
+
+The FEAT_STD build sits ~8 bytes under the 64 KB segment wall (`build.ps1`
+enforces it). The emitted `.com` is only ~10 KB; the rest is `.bss` working
+RAM (panels, viewer) claimed at runtime. External helpers carry no resident
+cost — they are separate `.COM`s launched on demand.
 
 That is ~0.5 % of a 1.44 MB floppy, and ~3.6 % of the 200 KB budget. How:
 
@@ -123,12 +134,39 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - Long copy/delete runs show a *"please wait"* box naming the current file, so
   the screen never looks frozen.
 
-### Deliberately deferred (room in the budget for all of these)
+**Modular features (FEAT_STD default build)**
+- **Clock** — live `HH:MM:SS` top-right.
+- **Sort** — by name / extension / size / date (`Ctrl-F1..F4`); initial order
+  from `cc.ini`.
+- **Columns** — cycle the right column size / date / time / attributes
+  (`Ctrl-F5`); initial column from `cc.ini`.
+- **Footer** — per-panel file count, free space, and tagged count in the border.
+- **Quick-search** — Norton-style incremental jump-to (`Ctrl-F6`).
+- **F9 menu** — data-driven pop-up command menu.
+- **Tag by mask** — select / deselect by `*.wildcard` (`Ctrl-F7/F8`).
+- **Attribute editor** — toggle Read-only/Hidden/System/Archive (`Ctrl-A`).
+- **F1 help** — pages `cc.hlp` through the viewer.
+- **Language** — `cc.lng` translates the F-key bar (`da.lng` Danish sample).
+- **Long file names** — the cursor file's long name shows on the command row
+  when an LFN provider is active (8.3 otherwise).
+- **Launchers** — `F4` edit (CCEDIT), `Alt-F7` find (CCFIND), `Alt-F8` grep
+  (CCGREP), `Ctrl-F9` list archive (CCZIP).
 
-- F2 user menu, F9 pull-down menu bar, F1 help screen.
-- Copy/Move byte-progress percentage; preserving timestamps/attributes.
-- File-mask filter (`+`/`-` select), sort-order menu, quick-search by typing.
-- Viewer: hex mode, files larger than 16 KB (seek-based windowing), search.
+**External tools** (type the name at the prompt, or via the keys above)
+- `CCEDIT <file>` — full-screen text editor.
+- `CCFIND <pat> [dir]` — recursive find by name.
+- `CCGREP <word> [dir] [mask]` — recursive content search (`path:line`).
+- `CCZIP <zip>` — list a ZIP's central directory.
+- `CCHEX <file>` — hex + ASCII dump (binary viewer).
+- `CCSUM <file>` — CRC-32 + byte size.
+
+### Still deferred
+
+- Full `MSG(id)` string-table i18n (only the F-key bar is translated today).
+- F2 user menu (`cc.mnu`), remappable keys, command-line history, bookmarks,
+  colour themes, file associations.
+- Touch, copy/move progress %, file compare, split/combine, multi-rename.
+- Viewer: hex mode in-place, files larger than 16 KB (seek windowing), search.
 
 ---
 
@@ -143,6 +181,12 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 | `F6` | rename / move | `F7` | make directory |
 | `F8` | delete (tagged set or cursor) | `Insert` | tag entry |
 | `Alt+F1` / `Alt+F2` | left / right drive | `F10` | quit |
+| `F1` | help (`cc.hlp`) | `F4` | edit file (CCEDIT) |
+| `F9` | pop-up menu | `Ctrl-A` | edit attributes (R/H/S/A) |
+| `Ctrl-F1..F4` | sort name/ext/size/date | `Ctrl-F5` | cycle column |
+| `Ctrl-F6` | quick-search | `Ctrl-F7/F8` | tag/untag by mask |
+| `Alt-F7` | find files (CCFIND) | `Alt-F8` | grep contents (CCGREP) |
+| `Ctrl-F9` | list archive (CCZIP) | | |
 | click | select entry | dbl-click | open entry |
 | right-click | tag entry | click F-bar | invoke that F-key |
 
@@ -184,3 +228,17 @@ The repo includes a headless regression harness used during development:
 | Viewer | `key_view`, `view_move`, `view_build_lines`, `render_view` |
 | Shell-out | `run_command`, `get_comspec`, `build_tail`, `fill_epb`, `run_exec` |
 | Test harness | `open_dump`, `dump_screen`, `load_keys`, `get_key`, `selftest` |
+
+### Modules (`mod/*.inc`, gated by `%ifdef FEAT_*`)
+
+`shell` `fileops` `recurse` `mouse` `viewer` `harness` (core splits) ·
+`clock` `sort` `cols` `free` `search` `menu` `mask` `edit` `find` `grep`
+`zip` `ini` `help` `lang` `lfn` `attr` (features). Each owns its keybind
+rows, optional menu entry, handlers, and `.bss` — adding a feature is one
+`%include` + one tier `%define`.
+
+### External helpers (separate binaries)
+
+`cce.asm`→CCEDIT · `cfind.asm`→CCFIND · `czip.asm`→CCZIP · `cgrep.asm`→CCGREP ·
+`chex.asm`→CCHEX · `csum.asm`→CCSUM. Each is standalone (`nasm -f bin`), invoked
+through cc's `run_command` EXEC path or by typing its name at the prompt.

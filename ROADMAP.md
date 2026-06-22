@@ -1,6 +1,6 @@
 # Claude Commander — modularity & feature roadmap
 
-Status: planning. Last updated 2026-06-22.
+Status: **M2–M5 largely delivered.** Last updated 2026-06-23. See §0.
 
 This document plans turning `cc` from a monolithic 7 KB `.COM` into a **modular**
 file manager without breaking the size story. It records the chosen
@@ -17,6 +17,66 @@ Decisions locked with the user (2026-06-22):
 - **First milestone = Foundations refactor.** No new user-facing features in
   M1; instead, build the seams (data-driven dispatch, string table, config
   loader, build profiles) that every later feature plugs into.
+
+---
+
+## 0. Delivered (2026-06-23)
+
+Every feature the user originally asked for is shipped, plus several roadmap
+extras. The default `cc.com` (FEAT_STD) build is **at the resident wall**
+(64,504 B, ~8 B free), so further *resident* features now require buffer
+reclaim; new tools ship as external Layer-3 helpers (invoked by typing their
+name at cc's prompt — `on_enter` already shells out via `run_command`).
+
+**Resident modules (Layer 1, `mod/*.inc`, gated by `%ifdef`):**
+
+| Feature | Key | Module | Commit |
+|---|---|---|---|
+| Clock (top-right HH:MM:SS) | — | clock.inc | c007c84 |
+| Sort: name/ext/size/date | Ctrl-F1..F4 | sort.inc | 70c044d |
+| Columns: size/date/time/attrs | Ctrl-F5 | cols.inc | 3e299b0 / 1ff023b |
+| File-count + free-space + tagged footer | — | free.inc | f4dffce |
+| Incremental quick-search | Ctrl-F6 | search.inc | b0fa646 |
+| F9 pop-up command menu | F9 | menu.inc | d096a4a |
+| Tag/untag by `*.mask` | Ctrl-F7/F8 | mask.inc | 8552881 |
+| Edit file (launches CCEDIT) | F4 | edit.inc | b5aa5a4 |
+| Find files (launches CCFIND) | Alt-F7 | find.inc | 0a33090 |
+| List archive (launches CCZIP) | Ctrl-F9 | zip.inc | 2714b8b |
+| `cc.ini` options loader (sort+columns) | — | ini.inc | a635151 |
+| F1 help screen (pages `cc.hlp`) | F1 | help.inc | 7e796ea |
+| Language: translate F-key bar via `cc.lng` | — | lang.inc | 20e8692 |
+| LFN: cursor file's long name on command row | — | lfn.inc | c3a93ad |
+| Grep contents (launches CCGREP) | Alt-F8 | grep.inc | 0ddd13c |
+| Attribute editor (R/H/S/A) | Ctrl-A | attr.inc | 671ba32 |
+
+**External helpers (Layer 3, separate `.COM`, zero resident cost):**
+
+| Tool | Purpose | Commit |
+|---|---|---|
+| CCEDIT.COM | full-screen text editor | b5aa5a4 |
+| CCFIND.COM | recursive find-by-name | 0a33090 |
+| CCZIP.COM | list ZIP central directory | 2714b8b |
+| CCGREP.COM | recursive content search (path:line) | 0ddd13c |
+| CCHEX.COM | hex + ASCII dump (binary viewer) | 4f4a6ce |
+| CCSUM.COM | CRC-32 + byte size | 01bda41 |
+
+**Runtime data files (Layer 2):** `cc.ini` (sort/columns), `cc.lng` (F-key bar
+translation; `da.lng` shipped as a Danish sample), `cc.hlp` (F1 help text).
+
+Notes on the two hard ones:
+- **LFN** uses the memory-safe strategy from §3 option (a): panels keep 8.3
+  names; only the cursor entry's long name is resolved on demand (INT 21h
+  714Eh) and shown on the command row. Falls back to 8.3 cleanly when no LFN
+  provider is present (bare DOS / DOSBox-staging). The fallback is verified;
+  live long-name rendering needs an LFN provider (Win9x DOS / DOSLFN).
+- **Language** currently translates the F-key bar (the most visible UI text)
+  via `cc.lng`. A full `MSG(id)` string-table i18n (M1 seam #4) is not done;
+  the F-key bar override is the pragmatic subset that fit the resident wall.
+
+**Still open** (would need resident reclaim or stay external): full `MSG` string
+table, F2 user menu (`cc.mnu`), remappable keys, command-line history,
+bookmarks, colour themes, file associations, touch, copy progress %, file
+compare (CCDIFF), split/combine, multi-rename, brief/full/info view modes.
 
 ---
 
