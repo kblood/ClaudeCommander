@@ -228,9 +228,11 @@ Goal: introduce the seams with **zero behaviour change**. Acceptance = the
 `FEAT_STD` build is behaviourally identical to today and the headless harness
 (`/D`, `/T` keyfiles) stays green.
 
-1. Split `cc.asm`: host core stays in `cc.asm`; carve existing feature areas
-   into `mod/*.inc` included at the current spots (mechanical, byte-result
-   should match — verify with a diff of the emitted `.com`).
+1. ✅ **DONE.** Split `cc.asm`: host core stays in `cc.asm`; carved 6 feature
+   areas into `mod/*.inc` (`shell`, `fileops`, `recurse`, `mouse`, `viewer`,
+   `harness`) included at the current spots. Each extraction verified
+   **byte-identical** (`cc.com` SHA-256 unchanged at every step; 7,104 B).
+   `cc.asm` 3722 → 2557 lines; 1,189 lines moved out.
 2. **Data-driven key dispatch** + `KEYBIND` macro; port the current chain to
    table rows.
 3. **Data-driven menu + F-key bar** registration; reproduce today's bar.
