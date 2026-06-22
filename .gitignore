@@ -1,0 +1,16 @@
+# emulators / downloads
+dosbox-x/
+dbstaging/
+*.zip
+# build + test artifacts
+cc.com
+CCDUMP.TXT
+cc.key
+*.png
+*.conf
+dbxlog.txt
+*.CON
+proof*.txt
+dirproof.txt
+harnesstest.txt
+keys_*.bin
