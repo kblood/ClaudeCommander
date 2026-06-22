@@ -138,6 +138,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_LANG
   %define FEAT_LFN
   %define FEAT_GREP
+  %define FEAT_ATTR
 %endif
 %if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
 %endif
@@ -2617,6 +2618,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_GREP
 %include "mod/grep.inc"
 %endif
+%ifdef FEAT_ATTR
+%include "mod/attr.inc"
+%endif
 %ifdef FEAT_ZIP
 %include "mod/zip.inc"
 %endif
@@ -2674,6 +2678,9 @@ keytab:
         KEYBIND_ASC 0Dh, on_enter       ; Enter
         KEYBIND_ASC 1Bh, on_esc         ; Esc -> clear command line
         KEYBIND_ASC 08h, on_bksp        ; Backspace
+%ifdef FEAT_ATTR
+        KEYBIND_ASC 01h, key_attr       ; Ctrl-A  edit file attributes
+%endif
         ; printable 20h..7Eh -> cmd_addchar is the dispatch fallthrough, not a row
 %ifdef FEAT_SORT
         ; --- mod/sort.inc : sort order (handlers in mod/sort.inc) ---
@@ -2794,6 +2801,7 @@ LNGMAX      equ 160
 lngbuf      resb LNGMAX     ; mod/lang.inc cc.lng label text (repointed in place)
 lng_n       resw 1
 lfn_di      resw 1          ; mod/lfn.inc saved CMD_ROW draw position
+attr_cur    resb 1          ; mod/attr.inc working attribute bits
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE

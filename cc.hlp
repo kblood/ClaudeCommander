@@ -19,6 +19,7 @@
     Ctrl-F5 ......... cycle column: size / date / time / attributes
     Ctrl-F6 ......... incremental quick-search
     Ctrl-F7/F8 ...... tag / untag files by *.mask
+    Ctrl-A .......... edit file attributes (Read-only/Hidden/System/Archive)
     Ctrl-F9 ......... list archive contents (CCZIP)
 
   DISPLAY (cont.)

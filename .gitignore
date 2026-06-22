@@ -32,6 +32,9 @@ TA.TXT
 TB.TXT
 # user's active language file (opt-in; da.lng is the tracked sample)
 cc.lng
+# attribute-editor test scaffolding
+attrtest/
+_attr.conf
 # LFN test scaffolding
 lfntest/
 keys_lfn.bin

@@ -194,6 +194,9 @@ menu_tbl:
 %ifdef FEAT_MASK
         dw      mi_tag,   key_mask_sel
 %endif
+%ifdef FEAT_ATTR
+        dw      mi_attr,  key_attr
+%endif
 %ifdef FEAT_EDIT
         dw      mi_edit,  key_edit
 %endif
@@ -223,6 +226,9 @@ mi_find     db 'Quick search',0
 %endif
 %ifdef FEAT_MASK
 mi_tag      db 'Tag by mask',0
+%endif
+%ifdef FEAT_ATTR
+mi_attr     db 'Edit attribs (Ctrl-A)',0
 %endif
 %ifdef FEAT_EDIT
 mi_edit     db 'Edit file (F4)',0
