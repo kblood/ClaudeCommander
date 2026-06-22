@@ -25,6 +25,9 @@ TESTED.TXT
 findout.txt
 # grep (CCGREP) test artifacts
 grepout.txt
+# hex (CCHEX) test artifacts
+hexout.txt
+HEXIN.TXT
 # zip (CCZIP) test artifacts
 ziplist.txt
 ZTEST.ZIP
