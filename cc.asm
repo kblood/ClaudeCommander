@@ -1822,10 +1822,20 @@ YES_C0  equ 28
 YES_C1  equ 34              ; "[ Yes ]" (7 cols)
 NO_C0   equ 45
 NO_C1   equ 50              ; "[ No ]"  (6 cols)
+; overwrite-dialog button geometry: [Overwrite] [Skip] [All] [Cancel]
+OWR_C0  equ 17
+OWR_C1  equ 27              ; "[Overwrite]" (11 cols)
+SKP_C0  equ 31
+SKP_C1  equ 36              ; "[Skip]" (6 cols)
+OAL_C0  equ 40
+OAL_C1  equ 44              ; "[All]" (5 cols)
+CAN_C0  equ 48
+CAN_C1  equ 55              ; "[Cancel]" (8 cols)
 ; mouse routing modes
 MM_BROWSER  equ 0
 MM_OFF      equ 1
 MM_CONFIRM  equ 2
+MM_OWRITE   equ 3
 
 ; draw the double-line dialog box + clear interior
 dlg_box:
@@ -2128,6 +2138,140 @@ dlg_draw_buttons:
 .n2:    call    putzstr
         ret
 
+; ----------------------------------------------------------------------------
+; overwrite prompt: ds:si = name of the file about to be overwritten.
+; Returns the choice in al: 0=overwrite, 1=skip, 2=overwrite All, 3=cancel.
+; Keyboard O/S/A/C(+Esc), Enter/Space activate the focused button, Left/Right
+; and Tab move focus, and all four buttons are mouse-clickable.
+; ----------------------------------------------------------------------------
+dlg_overwrite:
+        mov     [dlg_prompt], si       ; stash the filename pointer
+        mov     byte [ow_focus], 0     ; default focus = Overwrite
+        call    mouse_show             ; copy hid the cursor; show it for clicks
+        call    dlg_box
+        mov     ax, DLG_R0+1
+        mov     bx, DLG_C0+2
+        call    rc_to_off
+        mov     si, s_owmsg
+        mov     ah, A_DLG
+        call    putzstr
+        mov     si, [dlg_prompt]
+        call    busy_name              ; draws the clipped filename on line 2
+        mov     byte [mouse_mode], MM_OWRITE
+.draw:
+        call    ow_draw_buttons
+        cmp     byte [test_mode], 0
+        jz      .k
+        call    dump_screen
+.k:
+        call    get_key
+        cmp     al, 'o'
+        je      .ovr
+        cmp     al, 'O'
+        je      .ovr
+        cmp     al, 's'
+        je      .skp
+        cmp     al, 'S'
+        je      .skp
+        cmp     al, 'a'
+        je      .all
+        cmp     al, 'A'
+        je      .all
+        cmp     al, 'c'
+        je      .can
+        cmp     al, 'C'
+        je      .can
+        cmp     al, 1Bh             ; Esc -> cancel
+        je      .can
+        cmp     al, 0Dh             ; Enter -> activate focus
+        je      .activate
+        cmp     al, 20h             ; Space -> activate focus
+        je      .activate
+        cmp     al, 09h             ; Tab -> next focus
+        je      .tabf
+        or      al, al
+        jnz     .k
+        cmp     ah, 4Bh             ; Left
+        je      .leftf
+        cmp     ah, 4Dh             ; Right
+        je      .rightf
+        jmp     .k
+.tabf:
+        mov     al, [ow_focus]
+        inc     al
+        cmp     al, 4
+        jb      .setf
+        xor     al, al
+.setf:  mov     [ow_focus], al
+        jmp     .draw
+.leftf:
+        mov     al, [ow_focus]
+        or      al, al
+        jz      .draw
+        dec     al
+        mov     [ow_focus], al
+        jmp     .draw
+.rightf:
+        mov     al, [ow_focus]
+        cmp     al, 3
+        jae     .draw
+        inc     al
+        mov     [ow_focus], al
+        jmp     .draw
+.activate:
+        mov     al, [ow_focus]
+        cmp     al, 0
+        je      .ovr
+        cmp     al, 1
+        je      .skp
+        cmp     al, 2
+        je      .all
+        jmp     .can
+.ovr:   mov     al, 0
+        jmp     .done
+.skp:   mov     al, 1
+        jmp     .done
+.all:   mov     al, 2
+        jmp     .done
+.can:   mov     al, 3
+.done:
+        mov     byte [mouse_mode], MM_BROWSER
+        call    mouse_hide             ; restore the during-copy hidden state
+        ret
+
+; draw the four overwrite buttons, highlighting the focused one
+ow_draw_buttons:
+        mov     bx, OWR_C0
+        mov     si, s_btn_ovr
+        xor     cx, cx
+        call    ow_one_btn
+        mov     bx, SKP_C0
+        mov     si, s_btn_skp
+        mov     cx, 1
+        call    ow_one_btn
+        mov     bx, OAL_C0
+        mov     si, s_btn_all
+        mov     cx, 2
+        call    ow_one_btn
+        mov     bx, CAN_C0
+        mov     si, s_btn_can
+        mov     cx, 3
+        call    ow_one_btn
+        ret
+
+; draw one button: bx=col, ds:si=label, cl=button index; highlight if focused
+ow_one_btn:
+        push    ax
+        mov     ax, BTN_ROW
+        call    rc_to_off
+        mov     ah, A_BTN
+        cmp     cl, [ow_focus]
+        jne     .w
+        mov     ah, A_BTNSEL
+.w:     call    putzstr
+        pop     ax
+        ret
+
 ; ============================================================================
 ;  PATH BUILDERS for file ops
 ;    targpath  = source / existing entry's full path
@@ -2311,6 +2455,8 @@ delete_one:
 ; F5 -- copy: all tagged entries if any, else the cursor entry. Recurses into
 ; directory trees. One confirm for the whole batch.
 key_copy:
+        mov     byte [ow_mode], 0   ; reset overwrite policy for this operation
+        mov     byte [ow_cancel], 0
         mov     bx, [active]
         mov     cx, [bx+P_COUNT]
         jcxz    .ret
@@ -2332,6 +2478,8 @@ key_copy:
         test    byte [si+E_ATTR], 40h
         jz      .bnext
         call    copy_one
+        cmp     byte [ow_cancel], 0
+        jne     .bdone              ; user cancelled the whole batch
 .bnext:
         inc     word [iter_i]
         jmp     .bl
@@ -2629,6 +2777,8 @@ copy_tree:
         mov     byte [di], 0
         pop     di                  ; rsrc truncation
         mov     byte [di], 0
+        cmp     byte [ow_cancel], 0
+        jne     .ret                ; cancelled: stack is balanced here, unwind
         jmp     .next
 .skipchild:
         pop     di                  ; only rsrc truncation was pushed
@@ -2688,10 +2838,15 @@ mouse_poll:
         je      .none               ; clicks ignored (e.g. file viewer)
         cmp     al, MM_CONFIRM
         je      .cfm
+        cmp     al, MM_OWRITE
+        je      .owr
         call    mouse_left          ; browser: -> ax = synthetic key
         jmp     .event
 .cfm:
         call    mouse_confirm       ; confirm dialog: -> al = 'Y'/'N' or 0
+        jmp     .event
+.owr:
+        call    mouse_overwrite     ; overwrite dialog: -> al = O/S/A/Esc or 0
         jmp     .event
 .right:
         mov     al, bl
@@ -2839,6 +2994,45 @@ mouse_confirm:
         xor     ax, ax
         ret
 
+; click hit-test for the overwrite dialog -> al = 'O'/'S'/'A'/Esc or 0
+mouse_overwrite:
+        mov     ax, [m_y]
+        shr     ax, 3
+        cmp     ax, BTN_ROW
+        jne     .noop
+        mov     ax, [m_x]
+        shr     ax, 3               ; col
+        cmp     ax, OWR_C0
+        jb      .noop
+        cmp     ax, OWR_C1
+        ja      .chkskp
+        mov     ax, 'O'
+        ret
+.chkskp:
+        cmp     ax, SKP_C0
+        jb      .noop
+        cmp     ax, SKP_C1
+        ja      .chkall
+        mov     ax, 'S'
+        ret
+.chkall:
+        cmp     ax, OAL_C0
+        jb      .noop
+        cmp     ax, OAL_C1
+        ja      .chkcan
+        mov     ax, 'A'
+        ret
+.chkcan:
+        cmp     ax, CAN_C0
+        jb      .noop
+        cmp     ax, CAN_C1
+        ja      .noop
+        mov     ax, 1Bh             ; Cancel -> Esc
+        ret
+.noop:
+        xor     ax, ax
+        ret
+
 ; BIOS tick counter low word (0040:006Ch) -> ax
 get_tick:
         push    es
@@ -2914,8 +3108,41 @@ key_rename:
 
 ; copy file targpath -> targpath2 (512-byte chunks)
 copy_file:
+        cmp     byte [ow_cancel], 0
+        jne     .ret                ; whole operation was cancelled
         mov     si, targpath        ; show what we're copying (anti-"frozen")
         call    busy_name
+        ; overwrite policy: does the destination already exist?
+        mov     ax, 4300h           ; get file attributes
+        mov     dx, targpath2
+        int     21h
+        jc      .open               ; not found -> copy freely
+        cmp     byte [ow_mode], 1
+        je      .open               ; overwrite-all
+        cmp     byte [ow_mode], 2
+        je      .ret                ; skip-all
+        mov     si, targpath2       ; ask: returns al = 0/1/2/3
+        call    dlg_overwrite
+        push    ax
+        mov     si, s_busy_copy     ; the dialog clobbered the progress box
+        call    busy_box
+        mov     si, targpath
+        call    busy_name
+        pop     ax
+        cmp     al, 1
+        je      .ret                ; Skip this one
+        cmp     al, 2
+        je      .all
+        cmp     al, 3
+        je      .cancel
+        jmp     .open               ; 0 = Overwrite this one
+.all:
+        mov     byte [ow_mode], 1
+        jmp     .open
+.cancel:
+        mov     byte [ow_cancel], 1
+        ret
+.open:
         mov     ax, 3D00h           ; open src read-only
         mov     dx, targpath
         int     21h
@@ -3403,6 +3630,11 @@ s_busy_copy db 'Copying, please wait...',0
 s_busy_del  db 'Deleting, please wait...',0
 s_btn_yes   db '[ Yes ]',0
 s_btn_no    db '[ No ]',0
+s_owmsg     db 'File exists - overwrite?',0
+s_btn_ovr   db '[Overwrite]',0
+s_btn_skp   db '[Skip]',0
+s_btn_all   db '[All]',0
+s_btn_can   db '[Cancel]',0
 s_viewhdr   db '   [ View ]',0
 s_viewbar   db ' Up/Dn PgUp/PgDn Home/End: scroll      Esc or F3: quit',0
 
@@ -3462,8 +3694,11 @@ findpat     resb 132
 dta_stack   resb MAX_DEPTH*DTASZ
 ; --- mouse state ---
 mouse_ok    resb 1
-mouse_mode  resb 1         ; MM_BROWSER / MM_OFF / MM_CONFIRM
+mouse_mode  resb 1         ; MM_BROWSER / MM_OFF / MM_CONFIRM / MM_OWRITE
 dlg_focus   resb 1         ; confirm dialog: 0=Yes 1=No
+ow_focus    resb 1         ; overwrite dialog: 0=Overwrite 1=Skip 2=All 3=Cancel
+ow_mode     resb 1         ; 0=ask each time, 1=overwrite-all, 2=skip-all
+ow_cancel   resb 1         ; set when the user cancels the whole operation
 m_lb        resb 1
 m_rb        resb 1
 m_x         resw 1
