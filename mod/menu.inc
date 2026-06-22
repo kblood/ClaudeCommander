@@ -191,6 +191,9 @@ menu_tbl:
 %ifdef FEAT_SEARCH
         dw      mi_find,  key_qsearch
 %endif
+%ifdef FEAT_MASK
+        dw      mi_tag,   key_mask_sel
+%endif
         dw      mi_quit,  key_quit
         dw      0, 0
 
@@ -205,5 +208,8 @@ mi_cols     db 'Columns: cycle',0
 %endif
 %ifdef FEAT_SEARCH
 mi_find     db 'Quick search',0
+%endif
+%ifdef FEAT_MASK
+mi_tag      db 'Tag by mask',0
 %endif
 mi_quit     db 'Quit',0

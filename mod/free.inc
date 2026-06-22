@@ -37,6 +37,19 @@ foot_one:
         mov     si, txt_files
         call    foot_str
         pop     bx
+        ; optional " <n> tagged " segment (makes the tag flag visible)
+        push    bx
+        call    foot_tagged         ; ax = count of E_ATTR bit-0x40 entries
+        pop     bx
+        or      ax, ax
+        jz      .notag
+        push    bx
+        xor     dx, dx
+        call    foot_num
+        mov     si, txt_tagw
+        call    foot_str
+        pop     bx
+.notag:
         call    foot_freekb         ; dx:ax = free KB on this panel's drive
         call    foot_num
         mov     si, txt_kfree
@@ -124,5 +137,28 @@ foot_freekb:
         pop     bx
         ret
 
+; bx = panel ptr -> ax = number of tagged entries (E_ATTR bit 0x40).
+foot_tagged:
+        push    bx
+        push    cx
+        push    si
+        mov     cx, [bx+P_COUNT]
+        xor     ax, ax
+        jcxz    .d
+        lea     si, [bx+P_ENTRIES]
+.l:
+        test    byte [si+E_ATTR], 40h
+        jz      .n
+        inc     ax
+.n:
+        add     si, ENTSIZE
+        loop    .l
+.d:
+        pop     si
+        pop     cx
+        pop     bx
+        ret
+
 txt_files   db ' Files  ',0
+txt_tagw    db ' tagged  ',0
 txt_kfree   db 'K free ',0

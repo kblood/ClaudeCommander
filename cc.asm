@@ -129,6 +129,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_FREE
   %define FEAT_COLS
   %define FEAT_MENU
+  %define FEAT_MASK
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -2577,6 +2578,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_MENU
 %include "mod/menu.inc"
 %endif
+%ifdef FEAT_MASK
+%include "mod/mask.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2623,6 +2627,10 @@ keytab:
 %endif
 %ifdef FEAT_MENU
         KEYBIND_EXT 43h, key_menu       ; F9  pop-up command menu
+%endif
+%ifdef FEAT_MASK
+        KEYBIND_EXT 64h, key_mask_sel   ; Ctrl-F7  tag files by *.mask
+        KEYBIND_EXT 65h, key_mask_unsel ; Ctrl-F8  untag files by *.mask
 %endif
         KEYBIND_END                     ; sentinel
 
@@ -2708,6 +2716,9 @@ qslen       resw 1
 %ifdef FEAT_MENU
 menu_n      resw 1          ; mod/menu.inc item count + selection
 menu_sel    resw 1
+%endif
+%ifdef FEAT_MASK
+mask_set    resb 1          ; mod/mask.inc: 1=tag, 0=untag
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
