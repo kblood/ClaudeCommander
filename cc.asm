@@ -1306,13 +1306,90 @@ order_cmp:
         cbw
         or      ax, ax
         jnz     .ret
-        ; same rank -> case-insensitive name compare
+        ; same rank. ".." and directories always sort by name; only files
+        ; (rank 2) honour sort_mode. bl still holds the common rank here.
+        cmp     bl, 2
+        jne     .byname
+        ; files: compare by sort_mode (0=name 1=ext 2=size 3=date), name tiebreak.
+        mov     bl, [sort_mode]
+        cmp     bl, 2
+        je      .bysize
+        cmp     bl, 3
+        je      .bydate
+        cmp     bl, 1
+        je      .byext
+.byname:
         lea     si, [si+E_NAME]
         lea     di, [di+E_NAME]
         call    strcmp_ci           ; -> ax
+        jmp     .ret
+.bysize:                            ; ascending file size (dirs split out by rank)
+        mov     ax, [si+E_SIZE+2]
+        mov     dx, [di+E_SIZE+2]
+        cmp     ax, dx
+        ja      .after
+        jb      .before
+        mov     ax, [si+E_SIZE]
+        mov     dx, [di+E_SIZE]
+        cmp     ax, dx
+        ja      .after
+        jb      .before
+        jmp     .byname             ; equal size -> name tiebreak
+.bydate:                            ; newest first (descending packed date/time)
+        mov     ax, [si+E_DATE]
+        mov     dx, [di+E_DATE]
+        cmp     ax, dx
+        ja      .before
+        jb      .after
+        mov     ax, [si+E_TIME]
+        mov     dx, [di+E_TIME]
+        cmp     ax, dx
+        ja      .before
+        jb      .after
+        jmp     .byname
+.byext:                             ; case-insensitive extension, name tiebreak
+        push    si
+        push    di
+        mov     bx, si
+        call    ext_of
+        mov     si, ax
+        mov     bx, di
+        call    ext_of
+        mov     di, ax
+        call    strcmp_ci
+        pop     di
+        pop     si
+        or      ax, ax
+        jnz     .ret
+        jmp     .byname
+.after:
+        mov     ax, 1
+        jmp     .ret
+.before:
+        mov     ax, -1
 .ret:
         pop     di
         pop     si
+        ret
+
+; bx = entry -> ax = ptr to extension chars (after the '.'), or to the
+; terminating NUL when the name has no dot. Preserves si/di/cx/dx/bp.
+ext_of:
+        push    bx
+        add     bx, E_NAME
+.f:
+        mov     al, [bx]
+        or      al, al
+        jz      .done
+        cmp     al, '.'
+        je      .dot
+        inc     bx
+        jmp     .f
+.dot:
+        inc     bx
+.done:
+        mov     ax, bx
+        pop     bx
         ret
 
 ; rank of entry at si -> al (0=="..",1=dir,2=file)
@@ -2466,6 +2543,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_CLOCK
 %include "mod/clock.inc"
 %endif
+%ifdef FEAT_SORT
+%include "mod/sort.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2497,6 +2577,13 @@ keytab:
         KEYBIND_ASC 1Bh, on_esc         ; Esc -> clear command line
         KEYBIND_ASC 08h, on_bksp        ; Backspace
         ; printable 20h..7Eh -> cmd_addchar is the dispatch fallthrough, not a row
+%ifdef FEAT_SORT
+        ; --- mod/sort.inc : sort order (handlers in mod/sort.inc) ---
+        KEYBIND_EXT 5Eh, sort_name      ; Ctrl-F1  by name
+        KEYBIND_EXT 5Fh, sort_ext       ; Ctrl-F2  by extension
+        KEYBIND_EXT 60h, sort_size      ; Ctrl-F3  by size
+        KEYBIND_EXT 61h, sort_date      ; Ctrl-F4  by date (newest first)
+%endif
         KEYBIND_END                     ; sentinel
 
 ; function-key bar: 10 labels, one per 8-column slot (drawn by draw_fkeys)
@@ -2551,6 +2638,7 @@ test_mode   db 0
 want_keys   db 0
 count_dbg   db 0
 snap_mode   db 0
+sort_mode   db 0            ; 0=name 1=ext 2=size 3=date (FEAT_SORT)
 orig_mode   db 3
 pcx         db 0
 pcw         db 0
