@@ -8,8 +8,10 @@
 
   FUNCTION KEYS
     F1 .. this help          F3 .. view          F4 .. edit (CCEDIT)
-    F5 .. copy               F6 .. move/rename    F7 .. make dir
+    F5 .. copy*              F6 .. move*          F7 .. make dir
     F8 .. delete             F9 .. menu           F10 . quit
+    *F5/F6 copy/move to the OTHER panel; the dialog lets you rename in
+     flight. Shift-F6 renames the file in place (same folder).
     Alt-F1/F2 ....... change drive (left / right panel)
     Alt-F7 .......... find files by name (CCFIND)
     Alt-F8 .......... search file contents / grep (CCGREP)

@@ -126,24 +126,34 @@ key_copy:
         call    refresh_panels
         ret
 .single:
+        ; single entry: prompt for the destination NAME (default = source
+        ; name) in the OTHER panel -- this is how you copy-and-rename.
         mov     bx, [active]
         call    cur_entry_ptr
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        je      .ret                ; never copy '.' / '..'
         push    si
-        mov     si, s_copyconf
-        call    dlg_confirm
+        call    prefill_name        ; dlgbuf = source name
+        mov     si, s_copyto
+        call    dlg_input_pre
         pop     si
-        jc      .ret
+        jc      .ret                ; Esc
+        cmp     word [dlglen], 0
+        je      .ret
         push    si
         mov     si, s_busy_copy
         call    busy_box
         pop     si
-        call    copy_one
+        call    build_entry_path    ; targpath  = source full path
+        call    build_other_named   ; targpath2 = other-panel\dlgbuf
+        mov     dl, [si+E_ATTR]
+        call    copy_one_paths
         call    refresh_panels
 .ret:   ret
 
-; copy one entry (si=entry in active panel) to the OTHER panel's directory.
-; File -> copy_file; directory -> recursive copy_tree. Skips '.'/'..' and any
-; case where source path == destination path (would self-destruct).
+; copy one entry (si=entry in active panel) to the OTHER panel's directory,
+; keeping the same name. Used by the tagged-batch loop.
 copy_one:
         mov     al, [si+E_NAME]
         cmp     al, '.'
@@ -151,6 +161,13 @@ copy_one:
         call    build_entry_path    ; targpath  = active\name (si preserved)
         call    build_other_path    ; targpath2 = other\name  (si preserved)
         mov     dl, [si+E_ATTR]     ; remember attr across the guard
+        jmp     copy_one_paths
+.ret:   ret
+
+; copy: targpath (src) and targpath2 (dst) are already built; dl = src attr.
+; File -> copy_file; directory -> recursive copy_tree. Refuses a same-path
+; copy (would self-destruct). Used by both the single and batch copy paths.
+copy_one_paths:
         ; refuse ONLY the exact same-location copy (it is a no-op and would
         ; otherwise overwrite each file with itself). Copying into a SUBfolder
         ; of the source is allowed; copy_tree just skips the destination dir so
@@ -177,6 +194,143 @@ copy_one:
 .file:
         call    copy_file
 .ret:   ret
+
+; ----------------------------------------------------------------------------
+; F6 -- MOVE: like copy, but removes the source after a successful transfer.
+; A same-drive move is a single DOS rename (INT 21h/56h, atomic, works for
+; files and whole directory trees and even renames in flight). A cross-drive
+; move falls back to copy-then-delete.
+; ----------------------------------------------------------------------------
+key_move:
+        mov     byte [ow_mode], 0
+        mov     byte [ow_cancel], 0
+        mov     bx, [active]
+        mov     cx, [bx+P_COUNT]
+        jcxz    .ret
+        call    count_tagged        ; -> cx = # tagged
+        jcxz    .single
+        mov     si, s_moveconf
+        call    dlg_confirm
+        jc      .ret
+        mov     si, s_busy_move
+        call    busy_box
+        mov     word [iter_i], 0
+.bl:
+        mov     bx, [active]
+        mov     ax, [iter_i]
+        cmp     ax, [bx+P_COUNT]
+        jae     .bdone
+        mov     [ppanel], bx
+        call    entry_ptr           ; si = entry[ax]
+        test    byte [si+E_ATTR], 40h
+        jz      .bnext
+        call    move_one
+        cmp     byte [ow_cancel], 0
+        jne     .bdone
+.bnext:
+        inc     word [iter_i]
+        jmp     .bl
+.bdone:
+        call    refresh_panels
+        ret
+.single:
+        mov     bx, [active]
+        call    cur_entry_ptr
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        je      .ret
+        push    si
+        call    prefill_name        ; dlgbuf = source name (editable -> rename)
+        mov     si, s_moveto
+        call    dlg_input_pre
+        pop     si
+        jc      .ret
+        cmp     word [dlglen], 0
+        je      .ret
+        push    si
+        mov     si, s_busy_move
+        call    busy_box
+        pop     si
+        call    build_entry_path    ; targpath  = source full path
+        call    build_other_named   ; targpath2 = other-panel\dlgbuf
+        mov     dl, [si+E_ATTR]
+        call    move_one_paths
+        call    refresh_panels
+.ret:   ret
+
+; move one tagged entry (si) to the OTHER panel's dir, keeping its name.
+move_one:
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        je      .ret
+        call    build_entry_path
+        call    build_other_path
+        mov     dl, [si+E_ATTR]
+        jmp     move_one_paths
+.ret:   ret
+
+; move: targpath (src) and targpath2 (dst) already built; dl = src attr.
+move_one_paths:
+        mov     si, targpath
+        mov     di, targpath2
+        call    streqi              ; same path -> nothing to do
+        jc      .ret
+        push    ds                  ; fast path: same-drive rename/move
+        pop     es
+        mov     dx, targpath        ; ds:dx old name
+        mov     di, targpath2       ; es:di new name
+        mov     ah, 56h
+        int     21h
+        jnc     .ret                ; moved (and renamed) in one step
+        ; rename failed: cross-drive, or destination exists. Copy across, then
+        ; delete the source so the net effect is still a move.
+        call    copy_one_paths
+        cmp     byte [ow_cancel], 0
+        jne     .ret                ; user cancelled overwrite -> keep source
+        test    dl, 10h
+        jz      .delfile
+        mov     si, targpath        ; delete the source directory tree
+        mov     di, rsrc
+        call    bp_copy_name
+        mov     word [rdepth], 0
+        call    del_tree
+        ret
+.delfile:
+        mov     ah, 41h
+        mov     dx, targpath
+        int     21h
+.ret:   ret
+
+; targpath2 = OTHER-panel path + '\' + dlgbuf (the typed destination name).
+build_other_named:
+        push    si
+        call    other_panel_ptr     ; -> bx
+        lea     si, [bx+P_PATH]
+        mov     di, targpath2
+        call    bp_copy_dir         ; copy dir, ensure trailing '\'
+        mov     si, dlgbuf
+        call    bp_copy_name        ; append the (possibly edited) name
+        pop     si
+        ret
+
+; dlgbuf = source entry name (si=entry); set dlglen. Used to pre-fill the
+; copy/move destination dialog so the user only edits to rename.
+prefill_name:
+        push    si
+        lea     si, [si+E_NAME]
+        mov     di, dlgbuf
+.cp:    mov     al, [si]
+        mov     [di], al
+        or      al, al
+        jz      .done
+        inc     si
+        inc     di
+        jmp     .cp
+.done:  mov     ax, di
+        sub     ax, dlgbuf
+        mov     [dlglen], ax
+        pop     si
+        ret
 
 ; count tagged (E_ATTR bit 0x40) entries in the active panel -> cx
 count_tagged:

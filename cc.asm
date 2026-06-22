@@ -1989,6 +1989,8 @@ busy_name:                      ; ds:si = ASCIIZ name/path (clipped to box width
 
 ; input dialog: si=prompt. Text -> dlgbuf (NUL-term) + dlglen. CF=1 if cancelled.
 dlg_input:
+        mov     word [dlglen], 0    ; no prefill
+dlg_input_pre:                      ; enter here with dlgbuf/dlglen preset
         mov     [dlg_prompt], si
         call    dlg_box
         mov     ax, DLG_R0+1
@@ -1997,7 +1999,6 @@ dlg_input:
         mov     si, [dlg_prompt]
         mov     ah, A_DLG
         call    putzstr
-        mov     word [dlglen], 0
         mov     byte [mouse_mode], MM_OFF
 .loop:
         call    dlg_field
@@ -2659,8 +2660,9 @@ keytab:
 %ifdef FEAT_EDIT
         KEYBIND_EXT 3Eh, key_edit       ; F4  Edit (launches CCEDIT.COM)
 %endif
-        KEYBIND_EXT 3Fh, key_copy       ; F5  Copy
-        KEYBIND_EXT 40h, key_rename     ; F6  Rename/Move
+        KEYBIND_EXT 3Fh, key_copy       ; F5  Copy (to other panel, can rename)
+        KEYBIND_EXT 40h, key_move       ; F6  Move  (to other panel, can rename)
+        KEYBIND_EXT 59h, key_rename     ; Shift+F6  Rename in place
         KEYBIND_EXT 41h, key_mkdir      ; F7  MkDir
         KEYBIND_EXT 42h, key_delete     ; F8  Delete
         KEYBIND_EXT 52h, key_tag        ; Insert  tag
@@ -2739,8 +2741,12 @@ s_mkdir     db 'Create directory:',0
 s_rename    db 'Rename/move current entry to:',0
 s_drive     db 'Switch to drive (A-Z):',0
 s_delconf   db 'Delete the current entry?',0
-s_copyconf  db 'Copy this file to the other panel?',0
+s_copyto    db 'Copy to other panel as:',0
+s_moveto    db 'Move to other panel as:',0
+s_copyconf  db 'Copy the tagged entries?',0
+s_moveconf  db 'Move the tagged entries?',0
 s_busy_copy db 'Copying, please wait...',0
+s_busy_move db 'Moving, please wait...',0
 s_busy_del  db 'Deleting, please wait...',0
 s_btn_yes   db '[ Yes ]',0
 s_btn_no    db '[ No ]',0
@@ -2857,6 +2863,6 @@ lineoff     resw MAX_VLINES
 snapbuf     resb 4000
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE
-stackspace  resb 2048
+stackspace  resb 1024
 stacktop:
 prog_end:
