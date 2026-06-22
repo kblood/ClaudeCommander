@@ -37,8 +37,9 @@ CMD_ROW     equ 23         ; command line
 FKEY_ROW    equ 24         ; function-key bar
 
 ; attributes (bg<<4 | fg)
-A_NORM      equ 01Fh       ; bright white on blue (files)
-A_DIR       equ 01Eh       ; yellow on blue (dirs)
+A_NORM      equ 017h       ; light grey on blue (files)
+A_DIR       equ 01Fh       ; bright white on blue (dirs)
+A_TAG       equ 01Eh       ; yellow on blue (tagged entries)
 A_CUR       equ 030h       ; black on cyan (cursor, active panel)
 A_CURI      equ 070h       ; black on grey (cursor, inactive panel)
 A_FRAME     equ 017h       ; light grey on blue
@@ -204,6 +205,20 @@ dispatch:
         je      key_home
         cmp     ah, 4Fh
         je      key_end
+        cmp     ah, 3Fh             ; F5  Copy
+        je      key_copy
+        cmp     ah, 40h             ; F6  Rename/Move
+        je      key_rename
+        cmp     ah, 41h             ; F7  MkDir
+        je      key_mkdir
+        cmp     ah, 42h             ; F8  Delete
+        je      key_delete
+        cmp     ah, 52h             ; Insert  tag
+        je      key_tag
+        cmp     ah, 68h             ; Alt+F1  left drive
+        je      key_drive_l
+        cmp     ah, 69h             ; Alt+F2  right drive
+        je      key_drive_r
         cmp     ah, 44h             ; F10
         je      key_quit
         ret
@@ -725,11 +740,16 @@ pick_attr:
         push    ax
         call    entry_ptr           ; -> si
         pop     ax
+        test    byte [si+E_ATTR], 40h
+        jnz     .tagged
         mov     al, A_NORM
         test    byte [si+E_ATTR], 10h
         jz      .ret
         mov     al, A_DIR
 .ret:
+        ret
+.tagged:
+        mov     al, A_TAG
         ret
 
 ; draw info line (bottom frame title) for both panels ------------------------
@@ -1645,6 +1665,479 @@ run_exec:
         ret
 
 ; ============================================================================
+;  MODAL DIALOGS  (shared by file operations)
+; ============================================================================
+DLG_R0  equ 9
+DLG_R1  equ 13
+DLG_C0  equ 14
+DLG_C1  equ 65
+A_DLG   equ 030h            ; black on cyan (box + prompt)
+A_DLGF  equ 070h            ; black on grey (input field)
+
+; draw the double-line dialog box + clear interior
+dlg_box:
+        push    es
+        mov     ax, VIDEO
+        mov     es, ax
+        mov     bx, DLG_R0
+.row:
+        mov     ax, bx
+        imul    ax, ROW_BYTES
+        add     ax, DLG_C0*2
+        mov     di, ax
+        mov     si, DLG_C0
+.col:
+        call    dlg_cell            ; bx=row si=col -> al=char
+        mov     ah, A_DLG
+        mov     [es:di], ax
+        add     di, 2
+        inc     si
+        cmp     si, DLG_C1
+        jbe     .col
+        inc     bx
+        cmp     bx, DLG_R1
+        jbe     .row
+        pop     es
+        ret
+
+; pick the CP437 char for cell (bx=row, si=col) -> al
+dlg_cell:
+        cmp     bx, DLG_R0
+        je      .top
+        cmp     bx, DLG_R1
+        je      .bot
+        cmp     si, DLG_C0
+        je      .v
+        cmp     si, DLG_C1
+        je      .v
+        mov     al, ' '
+        ret
+.v:     mov     al, 0BAh            ; vertical
+        ret
+.top:
+        cmp     si, DLG_C0
+        je      .tl
+        cmp     si, DLG_C1
+        je      .tr
+        mov     al, 0CDh            ; horizontal
+        ret
+.tl:    mov     al, 0C9h
+        ret
+.tr:    mov     al, 0BBh
+        ret
+.bot:
+        cmp     si, DLG_C0
+        je      .bl
+        cmp     si, DLG_C1
+        je      .br
+        mov     al, 0CDh
+        ret
+.bl:    mov     al, 0C8h
+        ret
+.br:    mov     al, 0BCh
+        ret
+
+; write ASCIIZ ds:si at es:di (es set to VIDEO here), attribute ah; di advances
+putzstr:
+        push    es
+        push    ax
+        mov     ax, VIDEO
+        mov     es, ax
+        pop     ax
+.l:     mov     al, [si]
+        or      al, al
+        jz      .e
+        mov     [es:di], al
+        mov     [es:di+1], ah
+        inc     si
+        add     di, 2
+        jmp     .l
+.e:     pop     es
+        ret
+
+; input dialog: si=prompt. Text -> dlgbuf (NUL-term) + dlglen. CF=1 if cancelled.
+dlg_input:
+        mov     [dlg_prompt], si
+        call    dlg_box
+        mov     ax, DLG_R0+1
+        mov     bx, DLG_C0+2
+        call    rc_to_off
+        mov     si, [dlg_prompt]
+        mov     ah, A_DLG
+        call    putzstr
+        mov     word [dlglen], 0
+.loop:
+        call    dlg_field
+        call    get_key
+        cmp     al, 0Dh
+        je      .ok
+        cmp     al, 1Bh
+        je      .cancel
+        cmp     al, 08h
+        je      .bksp
+        cmp     al, 20h
+        jb      .loop
+        cmp     al, 7Eh
+        ja      .loop
+        mov     bx, [dlglen]
+        cmp     bx, 40
+        jae     .loop
+        mov     [dlgbuf+bx], al
+        inc     word [dlglen]
+        jmp     .loop
+.bksp:
+        cmp     word [dlglen], 0
+        je      .loop
+        dec     word [dlglen]
+        jmp     .loop
+.ok:
+        mov     bx, [dlglen]
+        mov     byte [dlgbuf+bx], 0
+        clc
+        ret
+.cancel:
+        mov     word [dlglen], 0
+        mov     byte [dlgbuf], 0
+        stc
+        ret
+
+; redraw the input field row with current dlgbuf + trailing cursor
+dlg_field:
+        push    es
+        mov     ax, VIDEO
+        mov     es, ax
+        mov     ax, DLG_R0+2
+        mov     bx, DLG_C0+2
+        call    rc_to_off
+        mov     cx, DLG_C1-DLG_C0-3
+        mov     ah, A_DLGF
+        push    di
+.clr:   mov     byte [es:di], ' '
+        mov     [es:di+1], ah
+        add     di, 2
+        loop    .clr
+        pop     di
+        mov     si, dlgbuf
+        mov     cx, [dlglen]
+        jcxz    .cur
+.wr:    mov     al, [si]
+        mov     [es:di], al
+        mov     [es:di+1], ah
+        inc     si
+        add     di, 2
+        loop    .wr
+.cur:
+        mov     byte [es:di], '_'
+        mov     [es:di+1], ah
+        pop     es
+        ret
+
+; confirm dialog: si=message. CF=0 if YES (Y/Enter), CF=1 if NO (N/Esc).
+dlg_confirm:
+        mov     [dlg_prompt], si
+        call    dlg_box
+        mov     ax, DLG_R0+1
+        mov     bx, DLG_C0+2
+        call    rc_to_off
+        mov     si, [dlg_prompt]
+        mov     ah, A_DLG
+        call    putzstr
+        mov     ax, DLG_R0+2
+        mov     bx, DLG_C0+2
+        call    rc_to_off
+        mov     si, s_yn
+        mov     ah, A_DLG
+        call    putzstr
+.k:
+        call    get_key
+        cmp     al, 'y'
+        je      .yes
+        cmp     al, 'Y'
+        je      .yes
+        cmp     al, 0Dh
+        je      .yes
+        cmp     al, 'n'
+        je      .no
+        cmp     al, 'N'
+        je      .no
+        cmp     al, 1Bh
+        je      .no
+        jmp     .k
+.yes:   clc
+        ret
+.no:    stc
+        ret
+
+; ============================================================================
+;  PATH BUILDERS for file ops
+;    targpath  = source / existing entry's full path
+;    targpath2 = destination / new name
+; ============================================================================
+; targpath = active-panel path + '\' + current entry name. si=entry (preserved).
+build_entry_path:
+        push    si
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        mov     di, targpath
+        call    bp_copy_dir
+        pop     si
+        push    si
+        lea     si, [si+E_NAME]
+        call    bp_copy_name
+        pop     si
+        ret
+
+; targpath2 = active-panel path + '\' + dlgbuf  (mkdir / rename target)
+build_target_path:
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        mov     di, targpath2
+        call    bp_copy_dir
+        mov     si, dlgbuf
+        call    bp_copy_name
+        ret
+
+; targpath2 = OTHER-panel path + '\' + current entry name. si=entry (preserved).
+build_other_path:
+        push    si
+        call    other_panel_ptr     ; -> bx
+        lea     si, [bx+P_PATH]
+        mov     di, targpath2
+        call    bp_copy_dir
+        pop     si
+        push    si
+        lea     si, [si+E_NAME]
+        call    bp_copy_name
+        pop     si
+        ret
+
+; copy ASCIIZ dir ds:si -> es?no, ds:di, ensure trailing '\'. di left past it.
+bp_copy_dir:
+.cp:    mov     al, [si]
+        or      al, al
+        jz      .e
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .cp
+.e:     cmp     byte [di-1], '\'
+        je      .done
+        mov     byte [di], '\'
+        inc     di
+.done:  ret
+
+; append ASCIIZ name ds:si -> ds:di (including terminator)
+bp_copy_name:
+.c:     mov     al, [si]
+        mov     [di], al
+        or      al, al
+        jz      .done
+        inc     di
+        inc     si
+        jmp     .c
+.done:  ret
+
+; bx = the panel that is NOT active
+other_panel_ptr:
+        mov     bx, [active]
+        cmp     bx, panelL
+        jne     .l
+        mov     bx, panelR
+        ret
+.l:     mov     bx, panelL
+        ret
+
+; ============================================================================
+;  FILE OPERATIONS
+; ============================================================================
+; re-read both panels (so a directory shown in both stays in sync after an op)
+refresh_panels:
+        mov     bx, panelL
+        call    read_dir
+        mov     bx, panelR
+        call    read_dir
+        ret
+
+; F7 -- make directory
+key_mkdir:
+        mov     si, s_mkdir
+        call    dlg_input
+        jc      .ret
+        cmp     word [dlglen], 0
+        je      .ret
+        call    build_target_path
+        mov     dx, targpath2
+        mov     ah, 39h
+        int     21h
+        call    refresh_panels
+.ret:   ret
+
+; F8 -- delete current entry (file or empty dir), with confirm
+key_delete:
+        mov     bx, [active]
+        mov     cx, [bx+P_COUNT]
+        jcxz    .ret
+        call    cur_entry_ptr       ; si=entry
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        jne     .ok
+        cmp     byte [si+E_NAME+1], '.'
+        je      .ret                ; never delete ".."
+.ok:
+        push    si
+        mov     si, s_delconf
+        call    dlg_confirm
+        pop     si
+        jc      .ret                ; user said No
+        call    build_entry_path    ; targpath = path\name (si preserved)
+        mov     dx, targpath
+        test    byte [si+E_ATTR], 10h
+        jz      .file
+        mov     ah, 3Ah             ; rmdir
+        int     21h
+        jmp     .reread
+.file:
+        mov     ah, 41h             ; delete file
+        int     21h
+.reread:
+        call    refresh_panels
+.ret:   ret
+
+; F5 -- copy current file to the other panel's directory, with confirm
+key_copy:
+        mov     bx, [active]
+        mov     cx, [bx+P_COUNT]
+        jcxz    .ret
+        call    cur_entry_ptr
+        test    byte [si+E_ATTR], 10h
+        jnz     .ret                ; v1: files only
+        push    si
+        mov     si, s_copyconf
+        call    dlg_confirm
+        pop     si
+        jc      .ret
+        call    build_entry_path    ; targpath  = src (si preserved)
+        call    build_other_path    ; targpath2 = dst (si preserved)
+        call    copy_file
+        call    refresh_panels
+.ret:   ret
+
+; F6 -- rename / move current entry to a name typed in a dialog
+key_rename:
+        mov     bx, [active]
+        mov     cx, [bx+P_COUNT]
+        jcxz    .ret
+        call    cur_entry_ptr
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        jne     .ok
+        cmp     byte [si+E_NAME+1], '.'
+        je      .ret
+.ok:
+        push    si
+        mov     si, s_rename
+        call    dlg_input
+        pop     si
+        jc      .ret
+        cmp     word [dlglen], 0
+        je      .ret
+        call    build_entry_path    ; targpath  = old full path
+        call    build_target_path   ; targpath2 = active\newname
+        push    ds
+        pop     es
+        mov     dx, targpath        ; ds:dx old
+        mov     di, targpath2       ; es:di new
+        mov     ah, 56h
+        int     21h
+        call    refresh_panels
+.ret:   ret
+
+; copy file targpath -> targpath2 (512-byte chunks)
+copy_file:
+        mov     ax, 3D00h           ; open src read-only
+        mov     dx, targpath
+        int     21h
+        jc      .ret
+        mov     [fh_src], ax
+        xor     cx, cx              ; create dst (normal attr)
+        mov     ah, 3Ch
+        mov     dx, targpath2
+        int     21h
+        jc      .closesrc
+        mov     [fh_dst], ax
+.loop:
+        mov     ah, 3Fh
+        mov     bx, [fh_src]
+        mov     cx, 512
+        mov     dx, copybuf
+        int     21h
+        jc      .closeall
+        or      ax, ax
+        jz      .closeall           ; EOF
+        mov     cx, ax
+        mov     ah, 40h
+        mov     bx, [fh_dst]
+        mov     dx, copybuf
+        int     21h
+        jmp     .loop
+.closeall:
+        mov     ah, 3Eh
+        mov     bx, [fh_dst]
+        int     21h
+.closesrc:
+        mov     ah, 3Eh
+        mov     bx, [fh_src]
+        int     21h
+.ret:   ret
+
+; Insert -- toggle tag on current entry, advance cursor
+key_tag:
+        mov     bx, [active]
+        mov     cx, [bx+P_COUNT]
+        jcxz    .ret
+        call    cur_entry_ptr
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        jne     .t
+        cmp     byte [si+E_NAME+1], '.'
+        je      .down               ; never tag ".."
+.t:     xor     byte [si+E_ATTR], 40h
+.down:
+        call    key_down
+.ret:   ret
+
+; Alt+F1 / Alt+F2 -- switch a panel's drive (prompt for a letter)
+key_drive_l:
+        mov     bx, panelL
+        jmp     set_panel_drive
+key_drive_r:
+        mov     bx, panelR
+        jmp     set_panel_drive
+set_panel_drive:
+        push    bx
+        mov     si, s_drive
+        call    dlg_input
+        pop     bx
+        jc      .ret
+        cmp     word [dlglen], 0
+        je      .ret
+        mov     al, [dlgbuf]
+        cmp     al, 'a'
+        jb      .u
+        cmp     al, 'z'
+        ja      .u
+        sub     al, 20h
+.u:
+        mov     [bx+P_PATH], al
+        mov     byte [bx+P_PATH+1], ':'
+        mov     byte [bx+P_PATH+2], '\'
+        mov     byte [bx+P_PATH+3], 0
+        mov     word [bx+P_CUR], 0
+        mov     word [bx+P_TOP], 0
+        call    read_dir
+.ret:   ret
+
+; ============================================================================
 ;  SELF-TEST (diagnostic): write panel counts + first names to dump
 ; ============================================================================
 selftest:
@@ -1716,6 +2209,12 @@ s_com       db 'COM'
 s_bat       db 'BAT'
 s_runmsg    db 0Dh,0Ah,'[Claude Commander] running command...',0Dh,0Ah,'$'
 s_anykey    db 0Dh,0Ah,'Press any key to return to Claude Commander...',0Dh,0Ah,'$'
+s_mkdir     db 'Create directory:',0
+s_rename    db 'Rename/move current entry to:',0
+s_drive     db 'Switch to drive (A-Z):',0
+s_delconf   db 'Delete the current entry?',0
+s_copyconf  db 'Copy this file to the other panel?',0
+s_yn        db '[ Y = Yes    N = No ]',0
 
 active      dw 0
 ppanel      dw 0
@@ -1753,6 +2252,14 @@ comspec_buf resb 80
 epb         resb 16
 save_sp     resw 1
 save_ss     resw 1
+dlgbuf      resb 44
+dlglen      resw 1
+dlg_prompt  resw 1
+targpath    resb 80
+targpath2   resb 80
+copybuf     resb 512
+fh_src      resw 1
+fh_dst      resw 1
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE
 stackspace  resb 2048
