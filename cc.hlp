@@ -20,6 +20,11 @@
     Ctrl-F7/F8 ...... tag / untag files by *.mask
     Ctrl-F9 ......... list archive contents (CCZIP)
 
+  DISPLAY (cont.)
+    Long names ...... the cursor file's long name shows on the command row
+                      when an LFN provider is active (Win9x DOS / DOSLFN);
+                      on plain DOS the 8.3 name is used.
+
   CONFIG
     cc.ini .......... set initial "sort" and "columns" options
     cc.lng .......... translate the F-key bar (copy da.lng to cc.lng)

@@ -136,9 +136,9 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_INI
   %define FEAT_HELP
   %define FEAT_LANG
-%endif
-%if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
+%endif
+%if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
 %endif
 
 ; ============================================================================
@@ -930,7 +930,12 @@ draw_cmdline:
         lodsb
         stosw
         loop    .cl
+        pop     es
+        ret
 .nocmd:
+%ifdef FEAT_LFN
+        call    lfn_draw_cursor         ; di still just past "path>"
+%endif
         pop     es
         ret
 
@@ -2620,6 +2625,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_LANG
 %include "mod/lang.inc"
 %endif
+%ifdef FEAT_LFN
+%include "mod/lfn.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2778,6 +2786,7 @@ ini_n       resw 1
 LNGMAX      equ 160
 lngbuf      resb LNGMAX     ; mod/lang.inc cc.lng label text (repointed in place)
 lng_n       resw 1
+lfn_di      resw 1          ; mod/lfn.inc saved CMD_ROW draw position
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE

@@ -30,6 +30,13 @@ TA.TXT
 TB.TXT
 # user's active language file (opt-in; da.lng is the tracked sample)
 cc.lng
+# LFN test scaffolding
+lfntest/
+keys_lfn.bin
+_lfn.conf
+_lfnx.conf
+_probe.conf
+run_lfn_x.ps1
 # scratch playgrounds for headless copy/delete tests
 AAASRC/
 AAADST/
