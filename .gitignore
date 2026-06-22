@@ -58,3 +58,5 @@ testrun/
 EXECTEST.TXT
 # third-party file manager dropped in for comparison
 SPARROW/
+# packaged distribution (rebuilt on demand by package.ps1)
+dist/
