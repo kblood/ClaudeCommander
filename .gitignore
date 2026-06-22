@@ -16,6 +16,11 @@ proof*.txt
 dirproof.txt
 harnesstest.txt
 keys_*.bin
+# editor (CCEDIT) test artifacts
+cce.key
+cce_keys.bin
+CCEDUMP.TXT
+TESTED.TXT
 # scratch playgrounds for headless copy/delete tests
 AAASRC/
 AAADST/

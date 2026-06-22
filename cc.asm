@@ -130,6 +130,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_COLS
   %define FEAT_MENU
   %define FEAT_MASK
+  %define FEAT_EDIT
 %endif
 %if _TIER >= 3               ; ---- FULL adds ----
   %define FEAT_LFN
@@ -2581,6 +2582,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_MASK
 %include "mod/mask.inc"
 %endif
+%ifdef FEAT_EDIT
+%include "mod/edit.inc"
+%endif
 
 ; ============================================================================
 ;  INITIALIZED DATA
@@ -2598,6 +2602,9 @@ keytab:
         KEYBIND_EXT 47h, key_home       ; Home
         KEYBIND_EXT 4Fh, key_end        ; End
         KEYBIND_EXT 3Dh, key_view       ; F3  View
+%ifdef FEAT_EDIT
+        KEYBIND_EXT 3Eh, key_edit       ; F4  Edit (launches CCEDIT.COM)
+%endif
         KEYBIND_EXT 3Fh, key_copy       ; F5  Copy
         KEYBIND_EXT 40h, key_rename     ; F6  Rename/Move
         KEYBIND_EXT 41h, key_mkdir      ; F7  MkDir
