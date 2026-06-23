@@ -102,6 +102,10 @@ PLAYDBG.TXT
 # external tools (CCDIFF/CCSPLIT/CCJOIN/CCREN) test scaffolding
 TT/
 _tooltest/
+# pack-bug reproduction scaffolding
+PKT/
+PKT2/
+PKT3/
 OUT.BIN
 OUT2.TXT
 *.BAK

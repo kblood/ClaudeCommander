@@ -379,6 +379,7 @@ key_pack:
         int     21h
         jc      .ret
         mov     [pack_fh], ax
+        mov     word [pack_n], 0
         call    count_tagged        ; cx = # tagged
         or      cx, cx
         jz      .single
@@ -404,6 +405,13 @@ key_pack:
         mov     bx, [pack_fh]
         mov     ah, 3Eh
         int     21h
+        ; nothing packable (only dirs / .. were selected)? warn, make no archive
+        cmp     word [pack_n], 0
+        jne     .havefiles
+        mov     si, s_packempty
+        call    dlg_confirm
+        jmp     .cleanup
+.havefiles:
         ; target = other P_PATH\<dlgbuf>
         call    other_panel_ptr
         lea     si, [bx+P_PATH]
@@ -439,10 +447,14 @@ key_pack:
 .ret:
         ret
 
-; append "<active P_PATH>\<E_NAME>\r\n" to pack_fh ; si = entry (skips . / ..)
+; append "<active P_PATH>\<E_NAME>\r\n" to pack_fh ; si = entry.
+; Skips the . / .. pseudo-entries AND real directories (the packers take a flat
+; file list, not a tree), counting each line actually written in pack_n.
 pack_write_line:
         cmp     byte [si+E_NAME], '.'
         je      .ret
+        test    byte [si+E_ATTR], 10h   ; directory? -> can't pack, skip
+        jnz     .ret
         push    si
         mov     bx, [active]
         lea     si, [bx+P_PATH]
@@ -467,6 +479,7 @@ pack_write_line:
         mov     ah, 40h
         mov     dx, cmdbuf
         int     21h
+        inc     word [pack_n]
 .ret:
         ret
 
@@ -501,5 +514,6 @@ s_vfs_a     db ' A ',0
 s_vfs_atl   db ' @',0
 s_vfs_sp    db ' ',0
 s_packto    db 'Pack tagged/cursor to archive:',0
+s_packempty db 'No files to pack - tag files with Ins (dirs are skipped)',0
 s_defzip    db 'ARCHIVE.ZIP',0
 s_packlst   db 'CCPACK.LST',0

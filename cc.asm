@@ -2887,6 +2887,7 @@ vfs_lpath   resb 96         ; full path of the CCVFS.LST scratch file
 vfs_cpath   resb 96         ; full path of the container being browsed
 vfs_idx     resw 1          ; member index to extract (F5)
 pack_fh     resw 1          ; scratch listfile handle (Alt-F5 pack)
+pack_n      resw 1          ; # packable (non-dir) entries written to the list
 packtarg    resb 96         ; full path of the archive being created
 %endif
 srchbuf     resb 80
