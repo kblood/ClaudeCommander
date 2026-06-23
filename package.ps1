@@ -23,7 +23,11 @@ $bins = @(
     @{ src = "carj.asm";  com = "CCARJ.COM"  },
     @{ src = "crar.asm";  com = "CCRAR.COM"  },
     @{ src = "cimg.asm";  com = "CCIMG.COM"  },
-    @{ src = "cwav.asm";  com = "CCWAV.COM"  }
+    @{ src = "cwav.asm";  com = "CCWAV.COM"  },
+    @{ src = "cdiff.asm"; com = "CCDIFF.COM" },
+    @{ src = "csplit.asm";com = "CCSPLIT.COM"},
+    @{ src = "cjoin.asm"; com = "CCJOIN.COM" },
+    @{ src = "cren.asm";  com = "CCREN.COM"  }
 )
 $data = @("cc.ini", "cc.hlp", "da.lng")
 
@@ -71,6 +75,10 @@ Files:
   CCRAR.COM   browse .rar 4.x   (Enter on a .rar; F5 extracts STORED)
   CCIMG.COM   view BMP/PCX/GIF  (F3 on a mapped image; VGA mode 13h)
   CCWAV.COM   play a PCM .wav   (F3 on a .wav; Sound Blaster, ESC stops)
+  CCDIFF.COM  byte-compare      (type CCDIFF <file1> <file2>)
+  CCSPLIT.COM split a file      (type CCSPLIT <file> <size>[K])
+  CCJOIN.COM  rejoin parts      (type CCJOIN <output> <base>)
+  CCREN.COM   wildcard rename   (type CCREN <srcmask> <dstmask>)
   cc.ini      startup options (sort=, columns=)
   cc.hlp      F1 help text
   da.lng      Danish F-key bar sample -- copy to cc.lng to use it

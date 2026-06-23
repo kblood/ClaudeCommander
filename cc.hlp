@@ -55,6 +55,10 @@
     CCGREP w d m .... search file contents (also Alt-F8)
     CCFIND p d ...... find files by name (also Alt-F7)
     CCZIP <zip> ..... list a ZIP archive (also Ctrl-F9)
+    CCDIFF f1 f2 .... byte-compare two files (offset of first difference)
+    CCSPLIT f n[K] .. split a file into f.001, f.002, ... of n bytes each
+    CCJOIN out base . rejoin base.001, base.002, ... into one file
+    CCREN src dst ... wildcard multi-rename, e.g. CCREN *.TXT *.BAK
 
   CONFIG
     cc.ini .......... set initial "sort" and "columns" options

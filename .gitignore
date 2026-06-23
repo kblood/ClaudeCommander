@@ -99,3 +99,14 @@ MIN.WAV
 WAVDBG.TXT
 MINDBG.TXT
 PLAYDBG.TXT
+# external tools (CCDIFF/CCSPLIT/CCJOIN/CCREN) test scaffolding
+TT/
+_tooltest/
+OUT.BIN
+OUT2.TXT
+*.BAK
+REDIR_RO.TXT
+REDIR_SU.TXT
+SENTINEL.TXT
+_dbg_out.txt
+_dbg_err.txt

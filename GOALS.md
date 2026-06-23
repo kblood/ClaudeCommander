@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1–G9 GREEN (5 archive plugins + [view]/F3 dispatch + CCIMG viewer + CCWAV player); CCMOD deferred; starting G10 (CCDIFF/CCREN/CCSPLIT/CCJOIN).
+Last updated: 2026-06-23 — G1–G10 ALL GREEN. Full backlog complete: 5 archive plugins + [view]/F3 dispatch + CCIMG viewer + CCWAV player + CCDIFF/CCSPLIT/CCJOIN/CCREN external tools. CCMOD deferred (optional, large unvalidatable-headlessly mixer).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -157,8 +157,27 @@ Last updated: 2026-06-23 — G1–G9 GREEN (5 archive plugins + [view]/F3 dispat
       no cc.asm change when it lands.
 
 ### External tools (free, no resident cost)
-- [ ] **G10 — CCDIFF / CCREN / CCSPLIT / CCJOIN.** File compare, multi-rename,
-      split/join. Same Layer-3 pattern as CCHEX/CCSUM.
+- [x] **G10 — CCDIFF / CCREN / CCSPLIT / CCJOIN.** DONE. Four standalone
+      Layer-3 `.COM` helpers (zero resident cost), house style from csum.asm.
+      **CCDIFF** (`cdiff.asm` -> 714 B) byte-compares two files block-wise:
+      "identical", "differ at offset N: AA vs BB" (first differing byte, decimal
+      offset + hex), or "differ: prefix matches up to offset N (lengths differ)".
+      **CCSPLIT** (`csplit.asm` -> 750 B) splits `<file>` into `<base>.001,.002…`
+      of `<size>[K]` bytes (32-bit part counter, decimal+K=×1024 size parse,
+      extension stripped for the base). **CCJOIN** (`cjoin.asm` -> 533 B)
+      concatenates `<base>.001,.002…` (stop at first missing) into `<output>` —
+      inverse of CCSPLIT. **CCREN** (`cren.asm` -> 699 B) wildcard multi-rename
+      `<srcmask> <dstmask>` with classic 8.3 mask rules per field (`*` copies the
+      rest of the source field, `?` one char, literal as-is); collects all
+      FindFirst/FindNext matches first (so the enumeration isn't disturbed), then
+      renames each, printing "old -> new". All registered in package.ps1 and
+      cc.hlp's EXTERNAL TOOLS list. Verified in DOSBox (`run_tools.ps1`): CCDIFF
+      all 3 verdicts correct (identical / offset 50 AA-vs-BB / length-mismatch at
+      50); CCSPLIT 1000 B -> 4 parts (300/300/300/100); CCJOIN rejoin byte-exact
+      to the original (1000 B round-trip); CCREN `*.QQQ *.ZZZ` renamed both files.
+      Gotcha hit: three reserved NASM identifiers can't be labels — `bpl`/`bits`/
+      `common` (renamed pcxbpl/wbits/cmnlen); and DOSBox needs 8.3-valid dir/file
+      names (a 9-char test dir silently broke `cd`).
 
 ## Done
 
