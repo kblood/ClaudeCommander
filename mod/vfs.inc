@@ -301,6 +301,175 @@ vfs_putdec:
         pop     bx
         ret
 
+; Alt-F9: extract EVERY member of the .zip under the cursor (real panel) into
+; the other panel via "<helper> XA <container> <destdir>".
+key_unpackall:
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        jne     .ret                ; cursor must be a real file (the archive)
+        mov     [vfs_pan], bx
+        call    cur_entry_ptr       ; si = cursor entry
+        cmp     byte [si+E_NAME], '.'
+        je      .ret
+        push    si
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_PATH]
+        mov     di, vfs_cpath
+        call    bp_copy_dir
+        pop     si
+        lea     si, [si+E_NAME]
+        call    bp_copy_name        ; vfs_cpath = P_PATH\name
+        mov     bx, [vfs_pan]
+        call    cur_entry_ptr
+        lea     si, [si+E_NAME]
+        call    open_lookup         ; di -> helper, CF=1 if found
+        jnc     .ret
+        mov     [vfs_helper], di
+        mov     di, cmdbuf
+        mov     si, [vfs_helper]
+        call    vfs_cat
+        mov     si, s_vfs_xa
+        call    vfs_cat
+        mov     si, vfs_cpath
+        call    vfs_cat
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        call    other_panel_ptr     ; bx = destination panel
+        lea     si, [bx+P_PATH]
+        call    vfs_cat
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_helper
+        mov     word [cmdlen], 0
+        call    refresh_panels
+.ret:
+        ret
+
+; Alt-F5: pack the tagged entries (or the cursor) of the active panel into a
+; new archive in the OTHER panel.  Prompts for the archive name; the target's
+; extension selects the packer via the [open] map (so ARCHIVE.ZIP -> CCZIP).
+; Files are listed (one full path per line) into a scratch CCPACK.LST that the
+; helper consumes as "<helper> A <target> @<listfile>".
+key_pack:
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        jne     .ret                ; can't pack from inside a container
+        mov     si, s_defzip
+        mov     di, dlgbuf
+        call    vfs_cat
+        mov     ax, di
+        sub     ax, dlgbuf
+        mov     [dlglen], ax
+        mov     si, s_packto
+        call    dlg_input_pre
+        jc      .ret
+        cmp     word [dlglen], 0
+        je      .ret
+        ; listpath = active P_PATH\CCPACK.LST  (reuses vfs_lpath storage)
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        mov     di, vfs_lpath
+        call    bp_copy_dir
+        mov     si, s_packlst
+        call    bp_copy_name
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, vfs_lpath
+        int     21h
+        jc      .ret
+        mov     [pack_fh], ax
+        call    count_tagged        ; cx = # tagged
+        or      cx, cx
+        jz      .single
+        mov     word [iter_i], 0
+.tl:
+        mov     bx, [active]
+        mov     ax, [iter_i]
+        cmp     ax, [bx+P_COUNT]
+        jae     .wdone
+        mov     [ppanel], bx
+        call    entry_ptr           ; si = entry[ax]
+        test    byte [si+E_ATTR], 40h
+        jz      .tnext
+        call    pack_write_line
+.tnext:
+        inc     word [iter_i]
+        jmp     .tl
+.single:
+        mov     bx, [active]
+        call    cur_entry_ptr
+        call    pack_write_line
+.wdone:
+        mov     bx, [pack_fh]
+        mov     ah, 3Eh
+        int     21h
+        ; target = other P_PATH\<dlgbuf>
+        call    other_panel_ptr
+        lea     si, [bx+P_PATH]
+        mov     di, packtarg
+        call    bp_copy_dir
+        mov     si, dlgbuf
+        call    bp_copy_name
+        mov     si, packtarg
+        call    open_lookup         ; helper from the target extension
+        jnc     .cleanup
+        mov     [vfs_helper], di
+        mov     di, cmdbuf
+        mov     si, [vfs_helper]
+        call    vfs_cat
+        mov     si, s_vfs_a
+        call    vfs_cat
+        mov     si, packtarg
+        call    vfs_cat
+        mov     si, s_vfs_atl
+        call    vfs_cat
+        mov     si, vfs_lpath
+        call    vfs_cat
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_helper
+        mov     word [cmdlen], 0
+.cleanup:
+        mov     ah, 41h             ; delete the scratch listfile
+        mov     dx, vfs_lpath
+        int     21h
+        call    refresh_panels
+.ret:
+        ret
+
+; append "<active P_PATH>\<E_NAME>\r\n" to pack_fh ; si = entry (skips . / ..)
+pack_write_line:
+        cmp     byte [si+E_NAME], '.'
+        je      .ret
+        push    si
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        mov     di, cmdbuf          ; scratch line (reused before the command)
+        call    bp_copy_dir
+        pop     si
+        lea     si, [si+E_NAME]
+        call    bp_copy_name        ; cmdbuf = path\name + NUL
+        mov     di, cmdbuf
+.fe:
+        cmp     byte [di], 0
+        je      .fd
+        inc     di
+        jmp     .fe
+.fd:
+        mov     byte [di], 0Dh
+        mov     byte [di+1], 0Ah
+        mov     cx, di
+        sub     cx, cmdbuf
+        add     cx, 2
+        mov     bx, [pack_fh]
+        mov     ah, 40h
+        mov     dx, cmdbuf
+        int     21h
+.ret:
+        ret
+
 ; copy ASCIIZ ds:si -> ds:di INCLUDING the NUL (di left at the NUL).
 vfs_cpz:
         mov     al, [si]
@@ -327,4 +496,10 @@ s_vfslst    db 'CCVFS.LST',0
 s_vfs_l     db ' L ',0
 s_vfs_redir db ' >',0
 s_vfs_x     db ' X ',0
+s_vfs_xa    db ' XA ',0
+s_vfs_a     db ' A ',0
+s_vfs_atl   db ' @',0
 s_vfs_sp    db ' ',0
+s_packto    db 'Pack tagged/cursor to archive:',0
+s_defzip    db 'ARCHIVE.ZIP',0
+s_packlst   db 'CCPACK.LST',0

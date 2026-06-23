@@ -38,10 +38,17 @@ Last updated: 2026-06-23 — framework + ZIP browse done; starting G1 (extract).
       run_helper, then refresh_panels. Verified: standalone DOSBox extract of a
       stored + a deflated member byte-exact (SHA1); cc /T harness F5 extracted
       HELLO.TXT into the other panel. resident 62,105 B.
-- [ ] **G2 — ZIP pack (Alt-F5).** NC-style: add the cursor/tagged files to a
-      `.zip` (prompt for the archive name; STORED method = a valid zip, no
-      compressor needed). CCZIP gains `A` (add). Also wire **Alt-F9** =
-      extract-all the archive under the cursor to the other panel.
+- [x] **G2 — ZIP pack (Alt-F5) + extract-all (Alt-F9).** DONE. CCZIP gained
+      `A <zip> @<list>` (create a fresh STORED zip with real CRC-32s, local
+      headers, central dir + EOCD) and `XA <zip> <dest>` (extract every
+      member). cc: Alt-F5 prompts a name, writes the tagged/cursor full paths
+      to a scratch CCPACK.LST, runs `<helper> A <other\name> @<list>`;
+      Alt-F9 runs `<helper> XA <cursor-zip> <other-path>`. Both pick the
+      helper from the target extension via the [open] map. Fixed a real
+      DOS .COM bug: stale .bss mode flags survived between EXECs (X then XA
+      mis-dispatched) — all flags now zeroed at startup. Verified: cc Alt-F5
+      makes a .NET-valid zip (byte-exact round-trip); cc Alt-F9 extracts a
+      stored + a deflated member. resident 62,756 B.
 - [ ] **G3 — CCD64 (C64 1541 disk image).** `[open]` `d64=CCD64`. Browse the
       track-18 directory; extract a file as `.PRG`. No decompression.
 - [ ] **G4 — CCT64 (C64 tape archive).** `[open]` `t64=CCT64`. Browse the T64

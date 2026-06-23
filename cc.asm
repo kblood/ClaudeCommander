@@ -2723,6 +2723,10 @@ keytab:
 %ifdef FEAT_GREP
         KEYBIND_EXT 6Fh, key_grep       ; Alt+F8  grep file contents (CCGREP.COM)
 %endif
+%ifdef FEAT_VFS
+        KEYBIND_EXT 6Ch, key_pack       ; Alt+F5  pack tagged/cursor into archive
+        KEYBIND_EXT 70h, key_unpackall  ; Alt+F9  extract-all the cursor archive
+%endif
         KEYBIND_EXT 44h, key_quit       ; F10
         ; ---- ascii keys (al!=0, match ascii in al) ----
         KEYBIND_ASC 09h, key_tab        ; Tab
@@ -2873,13 +2877,15 @@ vfs_end     resw 1          ; end of the listing text in viewbuf
 vfs_lpath   resb 96         ; full path of the CCVFS.LST scratch file
 vfs_cpath   resb 96         ; full path of the container being browsed
 vfs_idx     resw 1          ; member index to extract (F5)
+pack_fh     resw 1          ; scratch listfile handle (Alt-F5 pack)
+packtarg    resb 96         ; full path of the archive being created
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE
 linebuf     resb 84
 keybuf      resb KEYBUF_MAX
 dta_buf     resb 64
-cmdbuf      resb 130
+cmdbuf      resb 192
 cmdlen      resw 1
 cmdtail     resb 132
 comspec_buf resb 80
