@@ -18,6 +18,7 @@ vfs_enter:
         call    vfs_cpz             ; P_CNAME = container filename
         mov     bx, [active]
         mov     byte [bx+P_VFS], 1
+        mov     byte [bx+P_CPATH], 0    ; start at the archive root
         call    vfs_relist          ; bx = panel
         ret
 
@@ -72,6 +73,7 @@ vfs_relist:
 ; Parse vfs_lpath ("<size> <name>" lines) into the panel entries, ".." first.
 vfs_load:
         call    vfs_load_empty      ; seed ".." and count=1
+        mov     word [vfs_fidx], 0  ; global file index (matches the helper's X order)
         mov     ax, 3D00h
         mov     dx, vfs_lpath
         int     21h
@@ -136,8 +138,14 @@ vfs_load_empty:
         mov     word [bx+P_CUR], 0
         ret
 
-; si -> start of a "<decimal-size> <name>\r\n" line. Adds an entry; leaves si
-; at the line's CR/LF/NUL terminator.
+; si -> start of a "<decimal-size> <name>\r\n" line (one per FILE; the helper
+; already skipped directory members). The member name may carry sub-folders as
+; "a/b/c.txt". We show only the level given by the panel's P_CPATH prefix:
+; members directly at this level become file entries (their global file index
+; is stashed in E_TIME for F5 extraction); a member deeper than this level
+; contributes its first sub-component as a synthetic directory entry (deduped).
+; Every line advances vfs_fidx so the stored index matches the helper's X order.
+; Leaves si at the line's CR/LF/NUL terminator.
 vfs_parse_line:
         xor     ax, ax              ; dx:ax = running size
         xor     dx, dx
@@ -167,62 +175,265 @@ vfs_parse_line:
         inc     si
         jmp     .num
 .numd:
-        push    ax                  ; stash size (low, high)
-        push    dx
+        mov     [vfs_lsize], ax
+        mov     [vfs_lsize+2], dx
 .sp:
         cmp     byte [si], ' '
-        jne     .name
+        jne     .pfx
         inc     si
         jmp     .sp
-.name:
-        mov     cx, [_count]
-        cmp     cx, MAX_FILES
-        jae     .full
-        push    si                  ; save read cursor
-        mov     ax, cx
-        call    entry_ptr           ; si = dest entry
-        mov     di, si
-        pop     si                  ; restore read cursor
-        pop     dx                  ; size high
-        pop     ax                  ; size low
-        mov     [di+E_SIZE], ax
-        mov     [di+E_SIZE+2], dx
-        mov     byte [di+E_ATTR], 20h   ; archive bit = plain file
-        push    di
-        lea     di, [di+E_NAME]
-        mov     cx, 13
-.cn:
+.pfx:
+        ; match the panel's P_CPATH prefix against the member name
+        mov     bx, [vfs_pan]
+        lea     di, [bx+P_CPATH]
+.pl:
+        mov     ah, [di]            ; prefix char
+        or      ah, ah
+        jz      .matched            ; whole prefix consumed -> at our level
+        mov     al, [si]            ; name char
+        or      al, al
+        jz      .endline            ; name shorter than prefix -> not here
+        cmp     al, 0Dh
+        je      .endline
+        cmp     al, 0Ah
+        je      .endline
+        call    vfs_norm_al         ; al -> upper, '\'->'/'
+        xchg    al, ah              ; normalize prefix char too
+        call    vfs_norm_al
+        xchg    al, ah              ; al=name(norm), ah=prefix(norm)
+        cmp     al, ah
+        jne     .endline
+        inc     si
+        inc     di
+        jmp     .pl
+.matched:
+        ; si = remainder start. Scan to the line terminator, remembering the
+        ; first '/' or '\' (the sub-folder boundary). The add helpers clobber si
+        ; via entry_ptr, so stash the resume cursor first and restore it after.
+        mov     bx, si              ; bx = remainder start
+        xor     dx, dx              ; dx = first separator pos (0 = none)
+.scan:
         mov     al, [si]
         or      al, al
-        jz      .cne
+        jz      .scend
         cmp     al, 0Dh
-        je      .cne
+        je      .scend
         cmp     al, 0Ah
-        je      .cne
-        jcxz    .cna
+        je      .scend
+        cmp     al, '/'
+        je      .sep
+        cmp     al, '\'
+        je      .sep
+        inc     si
+        jmp     .scan
+.sep:
+        or      dx, dx
+        jnz     .sepskip            ; only the FIRST separator marks the level
+        mov     dx, si
+.sepskip:
+        inc     si
+        jmp     .scan
+.scend:
+        mov     [vfs_rcur], si      ; resume cursor = the line terminator
+        or      dx, dx
+        jz      .mkfile
+        ; deeper member -> first component is a sub-folder
+        mov     si, dx              ; vfs_copy_comp copies [bx..si) = component
+        call    vfs_copy_comp
+        call    vfs_add_dir
+        jmp     .et
+.mkfile:
+        mov     si, [vfs_rcur]      ; file at this level: name = [bx..terminator)
+        call    vfs_copy_comp
+        call    vfs_add_file
+        jmp     .et
+.endline:
+        ; (prefix mismatch) advance the still-valid listing cursor to the
+        ; terminator so the caller resumes on the next line.
+        mov     al, [si]
+        or      al, al
+        jz      .et2
+        cmp     al, 0Dh
+        je      .et2
+        cmp     al, 0Ah
+        je      .et2
+        inc     si
+        jmp     .endline
+.et2:
+        inc     word [vfs_fidx]
+        ret
+.et:
+        mov     si, [vfs_rcur]      ; restore the listing cursor (helpers used si)
+        inc     word [vfs_fidx]
+        ret
+
+; al -> uppercase, with '\' mapped to '/'.
+vfs_norm_al:
+        cmp     al, '\'
+        jne     .nb
+        mov     al, '/'
+        ret
+.nb:
+        cmp     al, 'a'
+        jb      .d
+        cmp     al, 'z'
+        ja      .d
+        sub     al, 20h
+.d:     ret
+
+; copy [bx..si) into vfs_comp, truncated to 13 chars, NUL-terminated. si/bx kept.
+vfs_copy_comp:
+        push    si
+        push    bx
+        mov     di, vfs_comp
+        mov     cx, 13
+.cp:
+        cmp     bx, si
+        jae     .d
+        jcxz    .d
+        mov     al, [bx]
         mov     [di], al
+        inc     bx
         inc     di
         dec     cx
-.cna:
-        inc     si
-        jmp     .cn
-.cne:
+        jmp     .cp
+.d:
         mov     byte [di], 0
-        pop     di
-        inc     word [_count]
+        pop     bx
+        pop     si
         ret
-.full:
-        pop     dx                  ; discard stashed size
-        pop     ax
-.fsk:
+
+; Add a synthetic sub-directory entry named vfs_comp, unless one already exists
+; at this level (members of the same sub-folder share the first component).
+vfs_add_dir:
+        mov     cx, [_count]
+        mov     dx, 1               ; entry 0 is ".."
+.dl:
+        cmp     dx, cx
+        jae     .add
+        push    cx
+        push    dx
+        mov     ax, dx
+        call    entry_ptr           ; si = entry (ppanel = vfs_pan)
+        test    byte [si+E_ATTR], 10h
+        jz      .next
+        lea     di, [si+E_NAME]
+        mov     si, vfs_comp
+        call    streqi              ; CF=1 if equal (ci); si/di preserved
+        jc      .dup
+.next:
+        pop     dx
+        pop     cx
+        inc     dx
+        jmp     .dl
+.dup:
+        pop     dx
+        pop     cx
+        ret
+.add:
+        mov     cx, [_count]
+        cmp     cx, MAX_FILES
+        jae     .ret
+        mov     ax, cx
+        call    entry_ptr
+        mov     byte [si+E_ATTR], 10h
+        mov     word [si+E_SIZE], 0
+        mov     word [si+E_SIZE+2], 0
+        mov     word [si+E_TIME], 0
+        lea     di, [si+E_NAME]
+        mov     si, vfs_comp
+        call    vfs_cpz
+        inc     word [_count]
+.ret:
+        ret
+
+; Add a file entry named vfs_comp with vfs_lsize as its size and vfs_fidx as the
+; stashed global file index (used by F5 extract).
+vfs_add_file:
+        mov     cx, [_count]
+        cmp     cx, MAX_FILES
+        jae     .ret
+        mov     ax, cx
+        call    entry_ptr
+        mov     ax, [vfs_lsize]
+        mov     [si+E_SIZE], ax
+        mov     ax, [vfs_lsize+2]
+        mov     [si+E_SIZE+2], ax
+        mov     byte [si+E_ATTR], 20h
+        mov     ax, [vfs_fidx]
+        mov     [si+E_TIME], ax
+        lea     di, [si+E_NAME]
+        mov     si, vfs_comp
+        call    vfs_cpz
+        inc     word [_count]
+.ret:
+        ret
+
+; Enter on a synthetic sub-folder (si = cursor entry): append "<name>/" to the
+; active panel's internal archive path, then relist at the new level.
+vfs_descend:
+        mov     bx, [active]
+        lea     di, [bx+P_CPATH]
+.fin:
+        cmp     byte [di], 0
+        je      .at
+        inc     di
+        jmp     .fin
+.at:
+        ; guard against overflowing the 64-byte P_CPATH buffer
+        mov     ax, di
+        sub     ax, bx
+        sub     ax, P_CPATH
+        cmp     ax, 48
+        jae     .ret                ; too deep -> ignore (rare)
+        lea     si, [si+E_NAME]
+.cp:
         mov     al, [si]
         or      al, al
-        jz      .fd
-        cmp     al, 0Ah
-        je      .fd
+        jz      .done
+        mov     [di], al
         inc     si
-        jmp     .fsk
-.fd:
+        inc     di
+        jmp     .cp
+.done:
+        mov     byte [di], '/'
+        inc     di
+        mov     byte [di], 0
+        mov     bx, [active]
+        call    vfs_relist
+.ret:
+        ret
+
+; ".." inside a container: drop the last component of P_CPATH and relist. If
+; already at the archive root (P_CPATH empty), leave the container entirely.
+vfs_go_up:
+        mov     bx, [active]
+        lea     di, [bx+P_CPATH]
+        cmp     byte [di], 0
+        jne     .pop
+        jmp     go_parent           ; at root -> clear P_VFS, re-read real dir
+.pop:
+        mov     si, di              ; find the NUL
+.fe:
+        cmp     byte [si], 0
+        je      .fnd
+        inc     si
+        jmp     .fe
+.fnd:
+        dec     si                  ; -> trailing '/'
+.bk:
+        cmp     si, di
+        jbe     .root
+        dec     si
+        cmp     byte [si], '/'
+        jne     .bk
+        mov     byte [si+1], 0      ; keep up to and including the previous '/'
+        jmp     .relist
+.root:
+        mov     byte [di], 0
+.relist:
+        mov     bx, [active]
+        call    vfs_relist
         ret
 
 ; F5 on a container panel: extract the cursor member into the OTHER panel's
@@ -231,10 +442,10 @@ vfs_parse_line:
 ; cursor index minus one.
 vfs_extract:
         mov     bx, [active]
-        mov     ax, [bx+P_CUR]
-        or      ax, ax
-        jz      .ret                ; cursor on ".." -> nothing to extract
-        dec     ax
+        call    cur_entry_ptr       ; si = cursor entry
+        test    byte [si+E_ATTR], 10h
+        jnz     .ret                ; ".." or a sub-folder -> nothing to extract
+        mov     ax, [si+E_TIME]     ; stashed global file index (matches helper X)
         mov     [vfs_idx], ax
         mov     [vfs_pan], bx
         ; vfs_cpath = P_PATH + '\' + P_CNAME

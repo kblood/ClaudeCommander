@@ -68,7 +68,9 @@ P_TOP       equ 70         ; word: first visible entry index
 P_CUR       equ 72         ; word: cursor entry index (absolute)
 P_VFS       equ 74         ; byte: 1 = this panel is a container (virtual) view
 P_CNAME     equ 76         ; 14 bytes: container filename when P_VFS=1
-P_ENTRIES   equ 90         ; entry array
+P_CPATH     equ 90         ; 64 bytes: path WITHIN the container ('/'-terminated
+                           ;   or empty at the archive root) when P_VFS=1
+P_ENTRIES   equ 154        ; entry array
 MAX_FILES   equ 512         ; per panel (keeps the whole .COM within one 64KB segment)
 ENTSIZE     equ 24
 PANELSIZE   equ P_ENTRIES + MAX_FILES*ENTSIZE
@@ -499,6 +501,24 @@ key_enter:
         call    cur_entry_ptr       ; -> si = entry ptr
         test    byte [si+E_ATTR], 10h
         jz      .file               ; not a directory -> maybe run it
+%ifdef FEAT_VFS
+        ; inside a container, directory entries are virtual (synthetic sub-folders
+        ; or ".."). Navigate within the archive instead of touching the real FS.
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        je      .realdir
+        mov     al, [si+E_NAME]
+        cmp     al, '.'
+        jne     .vfsdescend
+        cmp     byte [si+E_NAME+1], '.'
+        jne     .vfsdescend
+        call    vfs_go_up           ; ".." -> up one archive level (or leave)
+        ret
+.vfsdescend:
+        call    vfs_descend         ; sub-folder -> deeper into the archive
+        ret
+.realdir:
+%endif
         ; directory: is it ".."?
         mov     al, [si+E_NAME]
         cmp     al, '.'
@@ -2892,6 +2912,10 @@ vfs_end     resw 1          ; end of the listing text in viewbuf
 vfs_lpath   resb 96         ; full path of the CCVFS.LST scratch file
 vfs_cpath   resb 96         ; full path of the container being browsed
 vfs_idx     resw 1          ; member index to extract (F5)
+vfs_fidx    resw 1          ; running global file index while filtering a level
+vfs_lsize   resd 1          ; size of the listing line being parsed
+vfs_rcur    resw 1          ; listing read-cursor preserved across add helpers
+vfs_comp    resb 16         ; one path component (file/sub-folder name) scratch
 pack_fh     resw 1          ; scratch listfile handle (Alt-F5 pack)
 pack_n      resw 1          ; # packable (non-dir) entries written to the list
 packtarg    resb 96         ; full path of the archive being created
