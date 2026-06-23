@@ -24,7 +24,21 @@ OBUF_SZ equ 4096                ; INFLATE output flush chunk
 start:
         cld
         mov     sp, stacktop
+        ; DOS does not clear .bss for a .COM and we load at the same address
+        ; each run, so stale mode flags from a previous invocation survive.
+        ; Zero them before dispatch (a real bug under cc's repeated EXECs).
+        mov     byte [lmode], 0
+        mov     byte [xmode], 0
+        mov     byte [xallmode], 0
+        mov     byte [amode], 0
+        mov     byte [fname], 0
         call    parse_args          ; -> fname (+ lmode if "L" prefix)
+        cmp     byte [amode], 0     ; "A" add mode creates a fresh archive
+        je      .noadd
+        call    do_add
+        mov     ax, 4C00h
+        int     21h
+.noadd:
         cmp     byte [fname], 0
         je      .usage
         mov     ax, 3D00h
@@ -115,9 +129,11 @@ start:
         int     21h
         mov     [cdgot], ax
 
-        ; extract mode keeps the file open (needs the member data later)
+        ; extract modes keep the file open (need the member data later)
         cmp     byte [xmode], 0
         jne     .extract
+        cmp     byte [xallmode], 0
+        jne     .extractall
 
         mov     ah, 3Eh             ; close the zip
         mov     bx, [fh]
@@ -154,6 +170,14 @@ start:
 .extract:
         call    extract_member
         mov     bx, [fh]            ; close the zip
+        mov     ah, 3Eh
+        int     21h
+        mov     ax, 4C00h
+        int     21h
+
+.extractall:
+        call    extract_all
+        mov     bx, [fh]
         mov     ah, 3Eh
         int     21h
         mov     ax, 4C00h
@@ -381,18 +405,52 @@ parse_args:
         call    skip_sp
         mov     di, tok1            ; first token
         call    read_tok
-        ; single-char "L"/"l" -> list mode, real file is the next token
+        ; mode token:  L=list  X=extract-one  XA=extract-all  A=add  else file
         cmp     byte [tok1], 0
         je      .none
-        cmp     byte [tok1+1], 0
-        jne     .firstfile
         mov     al, [tok1]
         and     al, 0DFh
+        mov     ah, [tok1+1]
+        or      ah, ah
+        jnz     .twochar
         cmp     al, 'L'
         je      .islist
         cmp     al, 'X'
         je      .isextract
+        cmp     al, 'A'
+        je      .isadd
         jmp     .firstfile
+.twochar:
+        cmp     byte [tok1+2], 0
+        jne     .firstfile
+        and     ah, 0DFh
+        cmp     al, 'X'
+        jne     .firstfile
+        cmp     ah, 'A'
+        jne     .firstfile
+        jmp     .isxall
+.isxall:
+        mov     byte [xallmode], 1
+        call    skip_sp
+        mov     di, fname
+        call    read_tok            ; archive
+        call    skip_sp
+        mov     di, destdir
+        call    read_tok            ; destination directory
+        ret
+.isadd:
+        mov     byte [amode], 1
+        call    skip_sp
+        mov     di, fname
+        call    read_tok            ; archive to create
+        call    skip_sp
+        cmp     byte [si], '@'      ; "@listfile" -> drop the '@'
+        jne     .addtok
+        inc     si
+.addtok:
+        mov     di, addlist
+        call    read_tok            ; list-of-files path
+        ret
 .islist:
         mov     byte [lmode], 1
         call    skip_sp
@@ -693,6 +751,344 @@ copy_stored:
         sbb     word [e_csize+2], 0
         jmp     .lp
 .done:
+        ret
+
+; extract EVERY file member (XA mode) into destdir
+extract_all:
+        mov     si, cdbuf
+        mov     bp, [zcount]
+.w:
+        or      bp, bp
+        jz      .done
+        mov     ax, si
+        sub     ax, cdbuf
+        add     ax, 46
+        cmp     ax, [cdgot]
+        ja      .done
+        cmp     byte [si], 050h
+        jne     .done
+        cmp     byte [si+1], 04Bh
+        jne     .done
+        cmp     byte [si+2], 001h
+        jne     .done
+        cmp     byte [si+3], 002h
+        jne     .done
+        mov     cx, [si+28]
+        jcxz    .adv
+        lea     bx, [si+46]
+        add     bx, cx
+        dec     bx
+        mov     al, [bx]
+        cmp     al, '/'
+        je      .adv
+        cmp     al, '\'
+        je      .adv
+        push    si
+        push    bp
+        call    do_extract          ; clobbers si
+        pop     bp
+        pop     si
+.adv:
+        mov     ax, 46
+        add     ax, [si+28]
+        add     ax, [si+30]
+        add     ax, [si+32]
+        add     si, ax
+        dec     bp
+        jmp     .w
+.done:
+        ret
+
+; ----------------------------------------------------------------------------
+;  ADD  --  CCZIP A <zip> @<listfile>  : create a fresh STORED zip whose
+;  members are the files named (one full path per line) in <listfile>.
+; ----------------------------------------------------------------------------
+
+; write cx bytes at ds:dx -> ofh; a_outpos += written
+emit:
+        push    ax
+        push    bx
+        mov     bx, [ofh]
+        mov     ah, 40h
+        int     21h
+        add     [a_outpos], ax
+        adc     word [a_outpos+2], 0
+        pop     bx
+        pop     ax
+        ret
+
+; CRC-32 (poly 0xEDB88320) of cx bytes at ds:di, folded into [a_crc]
+; (caller seeds a_crc = 0xFFFFFFFF and inverts at the end)
+crc_block:
+        mov     eax, [a_crc]
+.byte:
+        jcxz    .done
+        movzx   ebx, byte [di]
+        xor     al, bl
+        push    cx
+        mov     cx, 8
+.bit:
+        shr     eax, 1
+        jnc     .nb
+        xor     eax, 0EDB88320h
+.nb:
+        loop    .bit
+        pop     cx
+        inc     di
+        dec     cx
+        jmp     .byte
+.done:
+        mov     [a_crc], eax
+        ret
+
+do_add:
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, fname
+        int     21h
+        jc      .ret
+        mov     [ofh], ax
+        mov     dword [a_outpos], 0
+        mov     word [a_count], 0
+        mov     word [a_cdptr], cdbuf
+        mov     ax, 3D00h
+        mov     dx, addlist
+        int     21h
+        jc      .finish
+        mov     bx, ax
+        push    bx
+        mov     ah, 3Fh
+        mov     cx, TAILMAX-1
+        mov     dx, tailbuf
+        int     21h
+        mov     [lgot], ax
+        pop     bx
+        mov     ah, 3Eh
+        int     21h
+        mov     si, tailbuf
+        mov     ax, [lgot]
+        add     ax, si
+        mov     [lend], ax
+.nl:
+        cmp     si, [lend]
+        jae     .finish
+        mov     al, [si]
+        or      al, al
+        jz      .finish
+        cmp     al, 0Dh
+        je      .sk
+        cmp     al, 0Ah
+        je      .sk
+        cmp     al, ' '
+        je      .sk
+        mov     di, srcpath
+.cp:
+        mov     al, [si]
+        or      al, al
+        jz      .pe
+        cmp     al, 0Dh
+        je      .pe
+        cmp     al, 0Ah
+        je      .pe
+        mov     [di], al
+        inc     si
+        inc     di
+        jmp     .cp
+.pe:
+        mov     byte [di], 0
+        push    si
+        call    add_one_file        ; clobbers si (basename_src)
+        pop     si
+        jmp     .nl
+.sk:
+        inc     si
+        jmp     .nl
+.finish:
+        call    write_central_and_eocd
+        mov     bx, [ofh]
+        mov     ah, 3Eh
+        int     21h
+.ret:
+        ret
+
+; add the file named in srcpath to the open output zip
+add_one_file:
+        mov     ax, 3D00h
+        mov     dx, srcpath
+        int     21h
+        jc      .ret
+        mov     [sfh], ax
+        mov     dword [a_crc], 0FFFFFFFFh
+        mov     dword [a_size], 0
+.p1:
+        mov     bx, [sfh]
+        mov     ah, 3Fh
+        mov     cx, IBUF_SZ
+        mov     dx, iobuf
+        int     21h
+        or      ax, ax
+        jz      .p1d
+        add     [a_size], ax
+        adc     word [a_size+2], 0
+        mov     cx, ax
+        mov     di, iobuf
+        call    crc_block
+        jmp     .p1
+.p1d:
+        mov     eax, [a_crc]
+        xor     eax, 0FFFFFFFFh
+        mov     [a_crc], eax
+        mov     eax, [a_outpos]
+        mov     [a_lhoff], eax
+        call    basename_src
+        call    write_local_header
+        mov     bx, [sfh]
+        mov     ax, 4200h           ; rewind for the data copy
+        xor     cx, cx
+        xor     dx, dx
+        int     21h
+.p2:
+        mov     bx, [sfh]
+        mov     ah, 3Fh
+        mov     cx, IBUF_SZ
+        mov     dx, iobuf
+        int     21h
+        or      ax, ax
+        jz      .p2d
+        mov     cx, ax
+        mov     dx, iobuf
+        call    emit
+        jmp     .p2
+.p2d:
+        mov     bx, [sfh]
+        mov     ah, 3Eh
+        int     21h
+        call    append_central
+        inc     word [a_count]
+.ret:
+        ret
+
+; a_baseptr = basename of srcpath; a_namelen = its length
+basename_src:
+        mov     si, srcpath
+        mov     [a_baseptr], si
+.fb:
+        mov     al, [si]
+        or      al, al
+        jz      .fe
+        cmp     al, '\'
+        je      .adv
+        cmp     al, '/'
+        je      .adv
+        cmp     al, ':'
+        je      .adv
+        jmp     .nx
+.adv:
+        lea     bx, [si+1]
+        mov     [a_baseptr], bx
+.nx:
+        inc     si
+        jmp     .fb
+.fe:
+        mov     si, [a_baseptr]
+        xor     cx, cx
+.sl:
+        mov     al, [si]
+        or      al, al
+        jz      .sd
+        inc     si
+        inc     cx
+        jmp     .sl
+.sd:
+        mov     [a_namelen], cx
+        ret
+
+write_local_header:
+        mov     di, lhdr
+        mov     dword [di], 04034B50h
+        mov     word [di+4], 0014h
+        mov     word [di+6], 0
+        mov     word [di+8], 0
+        mov     word [di+10], 0
+        mov     word [di+12], 0021h
+        mov     eax, [a_crc]
+        mov     [di+14], eax
+        mov     eax, [a_size]
+        mov     [di+18], eax
+        mov     [di+22], eax
+        mov     ax, [a_namelen]
+        mov     [di+26], ax
+        mov     word [di+28], 0
+        mov     dx, lhdr
+        mov     cx, 30
+        call    emit
+        mov     dx, [a_baseptr]
+        mov     cx, [a_namelen]
+        call    emit
+        ret
+
+append_central:
+        mov     di, [a_cdptr]
+        mov     dword [di], 02014B50h
+        mov     word [di+4], 0014h
+        mov     word [di+6], 0014h
+        mov     word [di+8], 0
+        mov     word [di+10], 0
+        mov     word [di+12], 0
+        mov     word [di+14], 0021h
+        mov     eax, [a_crc]
+        mov     [di+16], eax
+        mov     eax, [a_size]
+        mov     [di+20], eax
+        mov     [di+24], eax
+        mov     ax, [a_namelen]
+        mov     [di+28], ax
+        mov     word [di+30], 0
+        mov     word [di+32], 0
+        mov     word [di+34], 0
+        mov     word [di+36], 0
+        mov     dword [di+38], 0
+        mov     eax, [a_lhoff]
+        mov     [di+42], eax
+        add     di, 46
+        mov     si, [a_baseptr]
+        mov     cx, [a_namelen]
+.cn:
+        jcxz    .cd
+        mov     al, [si]
+        mov     [di], al
+        inc     si
+        inc     di
+        dec     cx
+        jmp     .cn
+.cd:
+        mov     [a_cdptr], di
+        ret
+
+write_central_and_eocd:
+        mov     eax, [a_outpos]
+        mov     [a_cdstart], eax
+        mov     cx, [a_cdptr]
+        sub     cx, cdbuf
+        mov     [a_cdsize], cx
+        mov     dx, cdbuf
+        call    emit
+        mov     di, lhdr
+        mov     dword [di], 06054B50h
+        mov     word [di+4], 0
+        mov     word [di+6], 0
+        mov     ax, [a_count]
+        mov     [di+8], ax
+        mov     [di+10], ax
+        mov     ax, [a_cdsize]
+        mov     [di+12], ax
+        mov     word [di+14], 0
+        mov     eax, [a_cdstart]
+        mov     [di+16], eax
+        mov     word [di+20], 0
+        mov     dx, lhdr
+        mov     cx, 22
+        call    emit
         ret
 
 ; ----------------------------------------------------------------------------
@@ -1186,8 +1582,25 @@ section .bss
 align 2
 lmode       resb 1
 xmode       resb 1
+xallmode    resb 1
+amode       resb 1
 xindex      resw 1
 destdir     resb 128
+addlist     resb 128
+srcpath     resb 128
+sfh         resw 1
+lgot        resw 1
+lend        resw 1
+a_crc       resd 1
+a_size      resd 1
+a_outpos    resd 1
+a_lhoff     resd 1
+a_cdstart   resd 1
+a_cdsize    resw 1
+a_count     resw 1
+a_cdptr     resw 1
+a_baseptr   resw 1
+a_namelen   resw 1
 tok1        resb 128
 fname       resb 128
 fh          resw 1
