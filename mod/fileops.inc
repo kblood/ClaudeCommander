@@ -94,6 +94,13 @@ delete_one:
 ; F5 -- copy: all tagged entries if any, else the cursor entry. Recurses into
 ; directory trees. One confirm for the whole batch.
 key_copy:
+%ifdef FEAT_VFS
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        je      .notvfs
+        jmp     vfs_extract         ; F5 on a container -> extract member
+.notvfs:
+%endif
         mov     byte [ow_mode], 0   ; reset overwrite policy for this operation
         mov     byte [ow_cancel], 0
         mov     bx, [active]

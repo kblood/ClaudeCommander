@@ -29,11 +29,15 @@ Last updated: 2026-06-23 — framework + ZIP browse done; starting G1 (extract).
 ## Goals
 
 ### Packer plugins
-- [ ] **G1 — ZIP extract (F5 from a zip panel).** When the active panel is a
-      container, F5 runs `CCZIP X <zip> <member-index> <destdir>` (→ other
-      panel) instead of copy_one. CCZIP gains `X`: STORED = copy bytes at the
-      local-header data offset; DEFLATED = a small INFLATE. Index matches `L`
-      (dirs skipped). *This finishes the explicit "copy files out of a zip" ask.*
+- [x] **G1 — ZIP extract (F5 from a zip panel).** DONE. CCZIP gained an `X`
+      mode: walks the central dir to the Nth FILE member, resolves the local
+      header data offset, writes `<destdir>\<basename>` — STORED = byte copy,
+      DEFLATE = a full streaming RFC-1951 INFLATE (fixed + dynamic Huffman,
+      32 KB circular window reusing cdbuf). cc's F5 in a P_VFS panel calls
+      `vfs_extract` → `<helper> X <container> <cursor-1> <other-path>` via
+      run_helper, then refresh_panels. Verified: standalone DOSBox extract of a
+      stored + a deflated member byte-exact (SHA1); cc /T harness F5 extracted
+      HELLO.TXT into the other panel. resident 62,105 B.
 - [ ] **G2 — ZIP pack (Alt-F5).** NC-style: add the cursor/tagged files to a
       `.zip` (prompt for the archive name; STORED method = a valid zip, no
       compressor needed). CCZIP gains `A` (add). Also wire **Alt-F9** =

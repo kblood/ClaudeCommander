@@ -2872,6 +2872,7 @@ vfs_helper  resw 1          ; -> helper name within openmap
 vfs_end     resw 1          ; end of the listing text in viewbuf
 vfs_lpath   resb 96         ; full path of the CCVFS.LST scratch file
 vfs_cpath   resb 96         ; full path of the container being browsed
+vfs_idx     resw 1          ; member index to extract (F5)
 %endif
 srchbuf     resb 80
 sort_tmp    resb ENTSIZE

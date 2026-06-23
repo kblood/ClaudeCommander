@@ -225,6 +225,82 @@ vfs_parse_line:
 .fd:
         ret
 
+; F5 on a container panel: extract the cursor member into the OTHER panel's
+; directory via "<helper> X <container> <member-index> <destdir>". The member
+; index matches the L listing (entry 0 is the synthetic ".."), so it is the
+; cursor index minus one.
+vfs_extract:
+        mov     bx, [active]
+        mov     ax, [bx+P_CUR]
+        or      ax, ax
+        jz      .ret                ; cursor on ".." -> nothing to extract
+        dec     ax
+        mov     [vfs_idx], ax
+        mov     [vfs_pan], bx
+        ; vfs_cpath = P_PATH + '\' + P_CNAME
+        lea     si, [bx+P_PATH]
+        mov     di, vfs_cpath
+        call    bp_copy_dir
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_CNAME]
+        call    bp_copy_name
+        ; helper for this container's extension
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_CNAME]
+        call    open_lookup         ; di -> helper, CF=1 if found
+        jnc     .ret
+        mov     [vfs_helper], di
+        ; cmdbuf = helper + " X " + vfs_cpath + " " + idx + " " + destdir
+        mov     di, cmdbuf
+        mov     si, [vfs_helper]
+        call    vfs_cat
+        mov     si, s_vfs_x
+        call    vfs_cat
+        mov     si, vfs_cpath
+        call    vfs_cat
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        mov     ax, [vfs_idx]
+        call    vfs_putdec
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        call    other_panel_ptr     ; bx = destination (real) panel
+        lea     si, [bx+P_PATH]
+        call    vfs_cat
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_helper          ; silent EXEC
+        mov     word [cmdlen], 0
+        call    refresh_panels      ; show the extracted file in the other panel
+.ret:
+        ret
+
+; append the decimal representation of ax at [di]; di advanced.
+vfs_putdec:
+        push    bx
+        push    cx
+        push    dx
+        mov     bx, 10
+        xor     cx, cx
+.dv:
+        xor     dx, dx
+        div     bx
+        push    dx
+        inc     cx
+        or      ax, ax
+        jnz     .dv
+.pp:
+        pop     dx
+        add     dl, '0'
+        mov     [di], dl
+        inc     di
+        loop    .pp
+        pop     dx
+        pop     cx
+        pop     bx
+        ret
+
 ; copy ASCIIZ ds:si -> ds:di INCLUDING the NUL (di left at the NUL).
 vfs_cpz:
         mov     al, [si]
@@ -250,3 +326,5 @@ vfs_cat:
 s_vfslst    db 'CCVFS.LST',0
 s_vfs_l     db ' L ',0
 s_vfs_redir db ' >',0
+s_vfs_x     db ' X ',0
+s_vfs_sp    db ' ',0
