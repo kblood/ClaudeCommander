@@ -71,6 +71,8 @@ _packtest2/
 _packtest3/
 _d64test/
 _d64cc/
+_t64test/
+_t64cc/
 CCVFS.LST
 CCPACK.LST
 LST.TXT

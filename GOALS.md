@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1/G2/G3 GREEN (ZIP extract/pack/all, D64 browse+extract); starting G4 (CCT64).
+Last updated: 2026-06-23 — G1–G4 GREEN (ZIP extract/pack/all, D64 + T64 browse/extract); starting G5 (CCARJ).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -61,8 +61,17 @@ Last updated: 2026-06-23 — G1/G2/G3 GREEN (ZIP extract/pack/all, D64 browse+ex
       (a 2-sector chained file + a 1-sector file): standalone L/X/XA all
       byte-exact (SHA1), and the cc /T harness browsed the image (members
       listed) and F5-extracted HELLO.PRG into the other panel byte-exact.
-- [ ] **G4 — CCT64 (C64 tape archive).** `[open]` `t64=CCT64`. Browse the T64
-      directory; extract entries as `.PRG`. No decompression.
+- [x] **G4 — CCT64 (C64 tape archive).** DONE. New helper `ct64.asm` →
+      `cct64.com` (1,006 B) with the L/X/XA contract. Parses the 64-byte T64
+      header (max/used entries), walks the 32-byte directory records (skipping
+      free slots), and extracts by absolute data offset. Because T64 data
+      streams omit the 2-byte load address, the helper prepends it from the
+      record (`+2`) so the output is a valid `.PRG`; the file length is
+      `end-addr − load-addr` clamped to end-of-file (guards the well-known
+      bad-end-addr T64 bug). `cc.ini` `[open]` gains `t64 = CCT64`. Verified
+      against a hand-built T64 (a $0801/300-byte file + a $C000/50-byte file):
+      standalone L/X/XA byte-exact, and cc /T browsed the archive and
+      F5-extracted GAME.PRG byte-exact.
 - [ ] **G5 — CCARJ (ARJ archive).** `[open]` `arj=CCARJ`. Browse + extract
       (STORED first; ARJ method-0). Decompress best-effort.
 - [ ] **G6 — CCRAR (RAR archive).** `[open]` `rar=CCRAR`. Browse the headers;

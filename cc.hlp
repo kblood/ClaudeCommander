@@ -23,6 +23,8 @@
                       member to the other panel; Backspace leaves.
     Enter on a .d64 . browse a C64 1541 disk image; F5 extracts a file
                       as <name>.PRG; Alt-F9 extracts every file.
+    Enter on a .t64 . browse a C64 tape archive; F5 / Alt-F9 extract
+                      entries as <name>.PRG (load address restored).
 
   DISPLAY / SELECT
     Ctrl-F1..F4 ..... sort by name / ext / size / date
