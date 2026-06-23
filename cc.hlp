@@ -21,6 +21,8 @@
   ARCHIVES (the [open] map in cc.ini selects a packer per extension)
     Enter on a .zip . browse it like a folder; F5 extracts the cursor
                       member to the other panel; Backspace leaves.
+    Enter on a .d64 . browse a C64 1541 disk image; F5 extracts a file
+                      as <name>.PRG; Alt-F9 extracts every file.
 
   DISPLAY / SELECT
     Ctrl-F1..F4 ..... sort by name / ext / size / date

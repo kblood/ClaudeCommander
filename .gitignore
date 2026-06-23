@@ -67,6 +67,10 @@ _vfstest/
 _ziptest/
 _ziptest2/
 _packtest/
+_packtest2/
+_packtest3/
+_d64test/
+_d64cc/
 CCVFS.LST
 CCPACK.LST
 LST.TXT

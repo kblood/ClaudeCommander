@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — framework + ZIP browse done; starting G1 (extract).
+Last updated: 2026-06-23 — G1/G2/G3 GREEN (ZIP extract/pack/all, D64 browse+extract); starting G4 (CCT64).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -49,8 +49,18 @@ Last updated: 2026-06-23 — framework + ZIP browse done; starting G1 (extract).
       mis-dispatched) — all flags now zeroed at startup. Verified: cc Alt-F5
       makes a .NET-valid zip (byte-exact round-trip); cc Alt-F9 extracts a
       stored + a deflated member. resident 62,756 B.
-- [ ] **G3 — CCD64 (C64 1541 disk image).** `[open]` `d64=CCD64`. Browse the
-      track-18 directory; extract a file as `.PRG`. No decompression.
+- [x] **G3 — CCD64 (C64 1541 disk image).** DONE. New helper `cd64.asm` →
+      `ccd64.com` (1,027 B) implements `L` (machine listing), `X <img> <n>
+      <dir>` (extract the Nth file) and `XA <img> <dir>` (extract all),
+      following the 1541 format: 35-track / 683-sector geometry, track-18
+      directory chain, per-file sector chains (254 data bytes per non-final
+      sector; final sector's byte 1 = last valid index). Names are sanitised
+      to `<NAME>.PRG`, load address preserved. `cc.ini` `[open]` gains
+      `d64 = CCD64` — no cc.asm change, the VFS framework drives browse/F5/
+      Alt-F9 generically. Verified against a hand-built canonical D64
+      (a 2-sector chained file + a 1-sector file): standalone L/X/XA all
+      byte-exact (SHA1), and the cc /T harness browsed the image (members
+      listed) and F5-extracted HELLO.PRG into the other panel byte-exact.
 - [ ] **G4 — CCT64 (C64 tape archive).** `[open]` `t64=CCT64`. Browse the T64
       directory; extract entries as `.PRG`. No decompression.
 - [ ] **G5 — CCARJ (ARJ archive).** `[open]` `arj=CCARJ`. Browse + extract
