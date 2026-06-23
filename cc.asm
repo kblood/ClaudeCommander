@@ -121,39 +121,72 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
 ; --- build profile -> feature set ---------------------------------------------
 ; build.ps1 passes -dFEAT_MIN / -dFEAT_STD / -dFEAT_FULL. A bare `nasm cc.asm`
 ; (no flag) builds as STD. Tiers are cumulative: FULL = STD + heavy features.
-%ifdef FEAT_FULL
-  %define _TIER 3
-%elifdef FEAT_STD
-  %define _TIER 2
-%elifdef FEAT_MIN
-  %define _TIER 1
-%else
-  %define _TIER 2            ; default bare build == STD
+;
+; configure.ps1 instead passes -dFEAT_CUSTOM plus an explicit -dFEAT_X per
+; widget the user picked (a-la-carte). In that mode we skip the tier defaults
+; and only resolve hard dependencies below, so the binary contains exactly the
+; chosen set and its size scales with it.
+%ifndef FEAT_CUSTOM
+  %ifdef FEAT_FULL
+    %define _TIER 3
+  %elifdef FEAT_STD
+    %define _TIER 2
+  %elifdef FEAT_MIN
+    %define _TIER 1
+  %else
+    %define _TIER 2          ; default bare build == STD
+  %endif
+
+  %if _TIER >= 2             ; ---- STD feature set ----
+    %define FEAT_CLOCK
+    %define FEAT_WIDGETS
+    %define FEAT_SORT
+    %define FEAT_SEARCH
+    %define FEAT_FREE
+    %define FEAT_COLS
+    %define FEAT_MENU
+    %define FEAT_MASK
+    %define FEAT_EDIT
+    %define FEAT_FIND
+    %define FEAT_ZIP
+    %define FEAT_INI
+    %define FEAT_HELP
+    %define FEAT_LANG
+    %define FEAT_LFN
+    %define FEAT_GREP
+    %define FEAT_ATTR
+    %define FEAT_VFS
+    %define FEAT_VIEW
+    %define FEAT_VIEWS
+  %endif
+  %if _TIER >= 3             ; ---- FULL adds (reserved for heavy features) ----
+  %endif
 %endif
 
-%if _TIER >= 2               ; ---- STD feature set ----
-  %define FEAT_CLOCK
+; --- hard dependency closure (applies to every build mode) -------------------
+; A widget that draws through the widgets seam needs that seam; the cc.ini-fed
+; features need the ini parser (which owns their bss scratch). Auto-pull them
+; so an a-la-carte set can never half-wire itself into an assemble error.
+%ifdef FEAT_CLOCK
   %define FEAT_WIDGETS
-  %define FEAT_SORT
-  %define FEAT_SEARCH
-  %define FEAT_FREE
-  %define FEAT_COLS
-  %define FEAT_MENU
-  %define FEAT_MASK
-  %define FEAT_EDIT
-  %define FEAT_FIND
-  %define FEAT_ZIP
-  %define FEAT_INI
-  %define FEAT_HELP
-  %define FEAT_LANG
-  %define FEAT_LFN
-  %define FEAT_GREP
-  %define FEAT_ATTR
-  %define FEAT_VFS
-  %define FEAT_VIEW
-  %define FEAT_VIEWS
 %endif
-%if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
+%ifdef FEAT_FREE
+  %define FEAT_WIDGETS
+%endif
+%ifdef FEAT_VFS
+  %define FEAT_INI
+%endif
+%ifdef FEAT_VIEW
+  %define FEAT_INI
+%endif
+%ifdef FEAT_LANG
+  %define FEAT_INI
+%endif
+%ifdef FEAT_LFN
+  %define FEAT_INI
+%endif
+%ifdef FEAT_ATTR
+  %define FEAT_INI
 %endif
 
 ; ============================================================================
