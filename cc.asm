@@ -435,7 +435,8 @@ key_down:
 key_pgup:
         mov     bx, [active]
 %ifdef FEAT_VIEWS
-        call    view_pagestep       ; ax = entries per page for this view
+        mov     cl, VD_PAGE
+        call    view_word           ; ax = entries per page for this view
         mov     cx, ax
         mov     ax, [bx+P_CUR]
         sub     ax, cx
@@ -455,7 +456,8 @@ key_pgdn:
         mov     cx, [bx+P_COUNT]
         jcxz    .done
 %ifdef FEAT_VIEWS
-        call    view_pagestep       ; ax = entries per page for this view
+        mov     cl, VD_PAGE
+        call    view_word           ; ax = entries per page for this view
         mov     dx, ax
         mov     ax, [bx+P_CUR]
         add     ax, dx
@@ -492,8 +494,8 @@ key_end:
 ; keep cursor visible: adjust P_TOP (bx = panel) -----------------------------
 fix_scroll:
 %ifdef FEAT_VIEWS
-        cmp     byte [bx+P_VIEW], 1
-        je      fix_scroll_brief    ; column-aligned scroll (mod/views.inc)
+        jmp     view_fixscroll      ; table dispatch by P_VIEW (mod/views.inc)
+fix_scroll_full:                    ; registered scroll for P_VIEW=0
 %endif
         mov     ax, [bx+P_CUR]
         ; if cur < top -> top = cur
@@ -871,11 +873,11 @@ one_title:
 ; ---------------------------------------------------------------------------
 ; draw one panel's file list. bx=panel ptr, [pcx]=content x, [pcw]=content w
 draw_panel:
-        mov     [ppanel], bx
 %ifdef FEAT_VIEWS
-        cmp     byte [bx+P_VIEW], 1
-        je      draw_panel_brief    ; brief 3-column renderer (mod/views.inc)
+        jmp     view_render         ; table dispatch by P_VIEW (mod/views.inc)
+draw_panel_full:                    ; registered renderer for P_VIEW=0
 %endif
+        mov     [ppanel], bx
         ; for row i in 0..VIS_ROWS-1
         xor     bp, bp              ; bp = visible row index
 .row:

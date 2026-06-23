@@ -1,29 +1,111 @@
 ; mod/views.inc  --  FEAT_VIEWS
-; Panel BODY view modes. The panel body is treated as a swappable "body widget"
-; selected by P_VIEW (0 = full list, 1 = brief 3-column names-only). The contract
-; a body view implements is two things: a RENDERER (draw_panel dispatches here for
-; brief) and NAVIGATION (the page/column step + scroll-to-keep-cursor-visible).
-; Up/Down stay +/-1 in every view; only the page/column steps and the scroll
-; window differ, so the core nav handlers query view_pagestep / view_winspan and
-; defer cursor-visibility to fix_scroll (which trampolines to fix_scroll_brief).
+; Panel BODY view modes, as a small REGISTRY of body widgets. The panel body is
+; a swappable widget selected by P_VIEW; each view registers one row in view_tab
+; giving its renderer, its scroll-keep-visible routine, and two nav step sizes.
+; The core list/nav code (draw_panel, fix_scroll, key_pgup/pgdn/left/right) holds
+; NO per-view logic -- it dispatches through the table. Adding a view (the coming
+; tree-view, or any future one) = add a row here + its two routines; core never
+; changes. Up/Down stay +/-1 in every view (no table entry needed).
 ;
-; This is the keystone the future tree-view reuses: another P_VIEW value with its
-; own renderer + nav step, behind this same draw+nav seam -- the core list code
-; never special-cases a view beyond the P_VIEW dispatch points.
+;   view_tab row (VDSIZE bytes):
+;     VD_RENDER  dw  renderer(bx=panel)      -- draw the body
+;     VD_SCROLL  dw  fixscroll(bx=panel)     -- keep the cursor visible
+;     VD_PAGE    dw  entries moved by PgUp/PgDn
+;     VD_HSTEP   dw  entries moved by Left/Right
 ;
-; Toggle: Ctrl-F10 (key_view_toggle). Default view is full (set in init_panel_cwd).
+; Toggle: Ctrl-F10 (key_view_toggle) cycles through the registered views.
+; Default view is full / P_VIEW=0 (set in init_panel_cwd).
+
+VD_RENDER   equ 0
+VD_SCROLL   equ 2
+VD_PAGE     equ 4
+VD_HSTEP    equ 6
+VDSIZE      equ 8
+VIEW_COUNT  equ 2              ; full(0), brief(1)   [tree(2) registers later]
 
 BRIEF_COLS  equ 3              ; columns in the brief view
 BRIEF_PITCH equ 13             ; column-to-column step; cells tile (no gutter gap)
 
-; bx = panel -> ax = entries the Page keys move. Full view keeps the classic
-; one-row overlap; brief view pages a whole 3-column screen. (Clobbers ax only.)
-view_pagestep:
-        mov     ax, VIS_ROWS-1
-        cmp     byte [bx+P_VIEW], 1
-        jne     .ret
-        mov     ax, VIS_ROWS*BRIEF_COLS
-.ret:
+; --- the registry -----------------------------------------------------------
+view_tab:
+        ; P_VIEW=0 : full single-column list
+        dw      draw_panel_full, fix_scroll_full, VIS_ROWS-1, VIS_ROWS-1
+        ; P_VIEW=1 : brief 3-column names-only
+        dw      draw_panel_brief, fix_scroll_brief, VIS_ROWS*BRIEF_COLS, VIS_ROWS
+
+; --- dispatch helpers --------------------------------------------------------
+; bx = panel, cl = VD_* field -> ax = that descriptor word (value or fn ptr).
+; Preserves bx; clobbers ax.
+view_word:
+        push    bx
+        mov     al, [bx+P_VIEW]
+        mov     ah, VDSIZE
+        mul     ah                  ; ax = P_VIEW * VDSIZE
+        movzx   bx, cl
+        add     bx, ax              ; + field offset
+        mov     ax, [view_tab+bx]
+        pop     bx
+        ret
+
+; bx = panel : tail-call the active view's renderer (entered from draw_panel).
+view_render:
+        mov     cl, VD_RENDER
+        call    view_word
+        jmp     ax
+
+; bx = panel : tail-call the active view's scroll routine (from fix_scroll).
+view_fixscroll:
+        mov     cl, VD_SCROLL
+        call    view_word
+        jmp     ax
+
+; --- table-driven Left/Right -------------------------------------------------
+; Left/Right move by VD_HSTEP entries (full view: a page; brief: one column).
+key_left:
+        mov     bx, [active]
+        mov     cl, VD_HSTEP
+        call    view_word           ; ax = horizontal step
+        mov     cx, ax
+        mov     ax, [bx+P_CUR]
+        sub     ax, cx
+        jns     .ok
+        xor     ax, ax
+.ok:
+        mov     [bx+P_CUR], ax
+        call    fix_scroll
+        ret
+
+key_right:
+        mov     bx, [active]
+        mov     cx, [bx+P_COUNT]
+        jcxz    .done
+        mov     cl, VD_HSTEP
+        call    view_word           ; ax = horizontal step
+        mov     dx, ax
+        mov     ax, [bx+P_CUR]
+        add     ax, dx
+        mov     cx, [bx+P_COUNT]
+        cmp     ax, cx
+        jb      .ok
+        mov     ax, cx
+        dec     ax
+.ok:
+        mov     [bx+P_CUR], ax
+        call    fix_scroll
+.done:
+        ret
+
+; --- Ctrl-F10: cycle the active panel through the registered views ----------
+key_view_toggle:
+        mov     bx, [active]
+        mov     al, [bx+P_VIEW]
+        inc     al
+        cmp     al, VIEW_COUNT
+        jb      .set
+        xor     al, al
+.set:
+        mov     [bx+P_VIEW], al
+        call    fix_scroll          ; let the new view re-snap P_TOP
         ret
 
 ; ---------------------------------------------------------------------------
@@ -65,49 +147,6 @@ fix_scroll_brief:
         pop     dx
         pop     cx
         pop     ax
-        ret
-
-; ---------------------------------------------------------------------------
-; Left/Right become view-aware: a column move in brief, a page move in full.
-key_left:
-        mov     bx, [active]
-        cmp     byte [bx+P_VIEW], 1
-        jne     key_pgup            ; full view: Left = page up
-        mov     ax, [bx+P_CUR]
-        sub     ax, VIS_ROWS        ; brief: one column left
-        jns     .ok
-        xor     ax, ax
-.ok:
-        mov     [bx+P_CUR], ax
-        call    fix_scroll
-        ret
-
-key_right:
-        mov     bx, [active]
-        cmp     byte [bx+P_VIEW], 1
-        jne     key_pgdn            ; full view: Right = page down
-        mov     cx, [bx+P_COUNT]
-        jcxz    .done
-        mov     ax, [bx+P_CUR]
-        add     ax, VIS_ROWS        ; brief: one column right
-        cmp     ax, cx
-        jb      .ok
-        mov     ax, cx
-        dec     ax
-.ok:
-        mov     [bx+P_CUR], ax
-        call    fix_scroll
-.done:
-        ret
-
-; ---------------------------------------------------------------------------
-; Ctrl-F10: flip the active panel between full and brief, then re-snap scroll.
-key_view_toggle:
-        mov     bx, [active]
-        mov     al, [bx+P_VIEW]
-        xor     al, 1
-        mov     [bx+P_VIEW], al
-        call    fix_scroll          ; brief snaps P_TOP to a column block
         ret
 
 ; ---------------------------------------------------------------------------
