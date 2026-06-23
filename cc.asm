@@ -158,6 +158,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
     %define FEAT_VFS
     %define FEAT_VIEW
     %define FEAT_VIEWS
+    %define FEAT_TREE
   %endif
   %if _TIER >= 3             ; ---- FULL adds (reserved for heavy features) ----
   %endif
@@ -2757,6 +2758,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_VIEWS
 %include "mod/views.inc"
 %endif
+%ifdef FEAT_TREE
+%include "mod/tree.inc"
+%endif
 %ifdef FEAT_SEARCH
 %include "mod/search.inc"
 %endif
@@ -2877,6 +2881,9 @@ keytab:
 %endif
 %ifdef FEAT_VIEWS
         KEYBIND_EXT 67h, key_view_toggle ; Ctrl-F10 toggle full / brief body view
+%endif
+%ifdef FEAT_TREE
+        KEYBIND_EXT 71h, key_tree       ; Alt-F10  modal directory-tree browser
 %endif
         KEYBIND_END                     ; sentinel
 
@@ -3016,6 +3023,13 @@ srchbuf     resb 80
 brief_col   resw 1          ; mod/views.inc brief renderer scratch
 brief_row   resw 1
 brief_cw    resw 1
+%endif
+%ifdef FEAT_TREE
+t_count     resw 1          ; mod/tree.inc modal-browser state
+t_cur       resw 1
+t_top       resw 1
+t_depth     resw 1
+tree_comp   resw MAX_DEPTH  ; ancestor name ptrs for cursor-path reconstruction
 %endif
 sort_tmp    resb ENTSIZE
 linebuf     resb 84

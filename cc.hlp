@@ -18,6 +18,10 @@
     Alt-F7 .......... find files by name (CCFIND)
     Alt-F8 .......... search file contents / grep (CCGREP)
     Alt-F9 .......... extract a whole archive to the other panel
+    Alt-F10 ......... directory-tree browser: a full-screen list of every
+                      sub-folder under the active panel's path. Up/Dn/PgUp/
+                      PgDn/Home/End move; Enter jumps the panel into the
+                      highlighted folder; Esc closes without changing.
 
   VIEWERS (the [view] map in cc.ini selects a viewer per extension)
     F3 on a mapped file runs "<viewer> <file>"; unmapped files use the

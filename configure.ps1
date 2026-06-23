@@ -48,6 +48,7 @@ $catalog = [ordered]@{
     CLOCK   = "live HH:MM:SS clock on the command row"
     FREE    = "panel footer: file count / free space / tagged size"
     VIEWS   = "panel body view modes (brief 3-column; Ctrl-F10)"
+    TREE    = "Alt-F10 modal directory-tree browser"
     SORT    = "sort by name/ext/size/date (Ctrl-F1..F4)"
     COLS    = "cycle the right column: size/date/time/attrs (Ctrl-F5)"
     SEARCH  = "incremental quick-search (Ctrl-F6)"

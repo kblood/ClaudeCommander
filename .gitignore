@@ -9,6 +9,9 @@ CCSNAP.BIN
 _snap*.txt
 cc.key
 views*.key
+tree*.key
+# tree-view (FEAT_TREE) modal-browser test fixture
+_treetst/
 *.png
 *.conf
 dbxlog.txt
