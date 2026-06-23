@@ -54,6 +54,7 @@ $catalog = [ordered]@{
     SEARCH  = "incremental quick-search (Ctrl-F6)"
     MASK    = "tag/untag files by *.mask (Ctrl-F7/F8)"
     MENU    = "pop-up command menu (F9)"
+    MENUBAR = "NC-style pull-down menu bar (F9; supersedes the MENU pop-up)"
     HELP    = "built-in help pager (F1, reads cc.hlp)"
     EDIT    = "F4 launches the CCEDIT external editor"
     FIND    = "Alt-F7 find files (CCFIND)"

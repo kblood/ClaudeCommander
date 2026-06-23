@@ -2764,7 +2764,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_SEARCH
 %include "mod/search.inc"
 %endif
-%ifdef FEAT_MENU
+%ifdef FEAT_MENUBAR
+%include "mod/menubar.inc"
+%elifdef FEAT_MENU
 %include "mod/menu.inc"
 %endif
 %ifdef FEAT_MASK
@@ -2869,7 +2871,9 @@ keytab:
 %ifdef FEAT_SEARCH
         KEYBIND_EXT 63h, key_qsearch    ; Ctrl-F6  incremental quick-search
 %endif
-%ifdef FEAT_MENU
+%ifdef FEAT_MENUBAR
+        KEYBIND_EXT 43h, key_menubar    ; F9  pull-down menu bar (supersedes pop-up)
+%elifdef FEAT_MENU
         KEYBIND_EXT 43h, key_menu       ; F9  pop-up command menu
 %endif
 %ifdef FEAT_MASK
@@ -3030,6 +3034,13 @@ t_cur       resw 1
 t_top       resw 1
 t_depth     resw 1
 tree_comp   resw MAX_DEPTH  ; ancestor name ptrs for cursor-path reconstruction
+%endif
+%ifdef FEAT_MENUBAR
+mb_cur      resw 1          ; mod/menubar.inc pull-down state
+mb_sel      resw 1
+mb_n        resw 1
+mb_col      resw 1
+mb_items    resw 1
 %endif
 sort_tmp    resb ENTSIZE
 linebuf     resb 84
