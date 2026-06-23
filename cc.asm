@@ -132,6 +132,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
 
 %if _TIER >= 2               ; ---- STD feature set ----
   %define FEAT_CLOCK
+  %define FEAT_WIDGETS
   %define FEAT_SORT
   %define FEAT_SEARCH
   %define FEAT_FREE
@@ -665,13 +666,17 @@ render_all:
         mov     byte [pcw], R_CONW
         call    draw_panel
         call    draw_frames
+        call    draw_cmdline
+        call    draw_fkeys
+%ifdef FEAT_WIDGETS
+        call    widgets_draw        ; status widgets (footer, clock) -- drawn last
+%else
 %ifdef FEAT_FREE
         call    draw_foot
 %endif
-        call    draw_cmdline
-        call    draw_fkeys
 %ifdef FEAT_CLOCK
         call    draw_clock
+%endif
 %endif
         ret
 
@@ -1877,8 +1882,12 @@ get_key:
         ret
 .live:
 .poll:
+%ifdef FEAT_WIDGETS
+        call    widgets_tick        ; idle refresh (clock ticks once a second)
+%else
 %ifdef FEAT_CLOCK
-        call    clock_tick          ; refresh HH:MM:SS once a second while idle
+        call    clock_tick
+%endif
 %endif
         mov     ah, 1               ; keystroke waiting?
         int     16h
@@ -2676,6 +2685,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %endif
 %ifdef FEAT_FREE
 %include "mod/free.inc"
+%endif
+%ifdef FEAT_WIDGETS
+%include "mod/widgets.inc"
 %endif
 %ifdef FEAT_SEARCH
 %include "mod/search.inc"
