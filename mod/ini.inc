@@ -9,6 +9,9 @@
 
 ini_load:
         mov     word [open_n], 0
+%ifdef FEAT_VIEW
+        mov     word [view_n], 0
+%endif
         mov     byte [cur_sect], 0
         mov     ax, 3D00h
         mov     dx, s_ininame
@@ -53,10 +56,10 @@ ini_load:
         je      .skip
         cmp     al, '['
         je      .section
-        ; inside an [open] section, every "ext = helper" line is a mapping
-        cmp     byte [cur_sect], 1
-        jne     .keys
-        call    openmap_add
+        ; inside a map section ([open] / [view]) every "ext = helper" maps
+        cmp     byte [cur_sect], 0
+        je      .keys
+        call    map_add
         jmp     .skip
 .keys:
         ; try recognised keys
@@ -80,17 +83,34 @@ ini_load:
         call    set_cols_val
         jmp     .skip
 .section:
+        mov     byte [cur_sect], 0
         push    si
         inc     si                  ; past '['
         mov     di, k_open
         call    sect_is             ; CF=1 if section name is "open"
         pop     si
-        mov     byte [cur_sect], 0
         jc      .secopen
+%ifdef FEAT_VIEW
+        push    si
+        inc     si
+        mov     di, k_view
+        call    sect_is             ; CF=1 if section name is "view"
+        pop     si
+        jc      .secview
+%endif
         jmp     .skip
 .secopen:
         mov     byte [cur_sect], 1
+        mov     word [cur_map_base], openmap
+        mov     word [cur_map_n], open_n
         jmp     .skip
+%ifdef FEAT_VIEW
+.secview:
+        mov     byte [cur_sect], 2
+        mov     word [cur_map_base], viewmap
+        mov     word [cur_map_n], view_n
+        jmp     .skip
+%endif
 .skip:
         mov     al, [si]
         or      al, al
@@ -254,14 +274,16 @@ sect_is:
         clc
         ret
 
-; si -> "ext = helper" line. Parse one [open] mapping into openmap.
-openmap_add:
-        mov     ax, [open_n]
+; si -> "ext = helper" line. Parse one mapping into the current section's map
+; (base [cur_map_base], count word at [cur_map_n]).
+map_add:
+        mov     bx, [cur_map_n]
+        mov     ax, [bx]
         cmp     ax, OPENMAX
         jae     .done
         mov     bx, OPENROW
-        mul     bx                  ; ax = open_n * OPENROW
-        mov     bp, openmap
+        mul     bx                  ; ax = count * OPENROW
+        mov     bp, [cur_map_base]
         add     bp, ax
         mov     byte [bp], 0        ; clear the 4-byte ext field
         mov     byte [bp+1], 0
@@ -330,15 +352,31 @@ openmap_add:
         je      .done
         cmp     byte [bp+4], 0
         je      .done
-        inc     word [open_n]
+        mov     bx, [cur_map_n]
+        inc     word [bx]
 .done:
         ret
 .bad:
         ret
 
-; si -> a filename ASCIIZ. If its extension is in openmap, CF=1 and di -> the
-; helper name; otherwise CF=0. si preserved.
+; si -> a filename ASCIIZ. If its extension is in the [open] map, CF=1 and
+; di -> the helper name; otherwise CF=0. si preserved.
 open_lookup:
+        mov     ax, [open_n]
+        mov     [ml_cnt], ax
+        mov     word [ml_base], openmap
+        jmp     map_lookup
+%ifdef FEAT_VIEW
+; as open_lookup but against the [view] map.
+view_lookup:
+        mov     ax, [view_n]
+        mov     [ml_cnt], ax
+        mov     word [ml_base], viewmap
+        jmp     map_lookup
+%endif
+; si -> filename. Looks up the extension in the map at [ml_base] (count
+; [ml_cnt]); CF=1 + di -> helper on a hit, else CF=0. si preserved.
+map_lookup:
         push    si
         xor     bx, bx              ; bx -> char after last '.', 0 if none
 .fe:    mov     al, [si]
@@ -374,9 +412,9 @@ open_lookup:
         dec     cx
         jmp     .uc
 .ucd:
-        mov     cx, [open_n]
+        mov     cx, [ml_cnt]
         jcxz    .no
-        mov     bx, openmap
+        mov     bx, [ml_base]
 .row:
         mov     si, ext_tmp
         mov     di, bx
@@ -407,6 +445,9 @@ s_ininame   db 'cc.ini',0
 k_sort      db 'sort',0
 k_cols      db 'columns',0
 k_open      db 'open',0
+%ifdef FEAT_VIEW
+k_view      db 'view',0
+%endif
 v_name      db 'name',0
 v_ext       db 'ext',0
 v_size      db 'size',0

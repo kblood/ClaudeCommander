@@ -146,6 +146,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_GREP
   %define FEAT_ATTR
   %define FEAT_VFS
+  %define FEAT_VIEW
 %endif
 %if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
 %endif
@@ -2867,8 +2868,16 @@ lfn_di      resw 1          ; mod/lfn.inc saved CMD_ROW draw position
 attr_cur    resb 1          ; mod/attr.inc working attribute bits
 openmap     resb OPENMAX*OPENROW ; [open] ext->helper map (ini.inc / vfs.inc)
 open_n      resw 1
-cur_sect    resb 1          ; ini parser: 1 while inside an [open] section
+cur_sect    resb 1          ; ini parser: 0 none, 1 [open], 2 [view]
 ext_tmp     resb 4
+cur_map_base resw 1         ; ini parser: map being filled this section
+cur_map_n   resw 1          ; ini parser: -> count word for that map
+ml_base     resw 1          ; map_lookup: map base
+ml_cnt      resw 1          ; map_lookup: entry count
+%ifdef FEAT_VIEW
+viewmap     resb OPENMAX*OPENROW ; [view] ext->viewer map (ini.inc / viewer.inc)
+view_n      resw 1
+%endif
 %endif
 %ifdef FEAT_VFS
 vfs_pan     resw 1          ; the panel being (re)listed

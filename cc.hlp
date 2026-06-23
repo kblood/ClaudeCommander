@@ -18,6 +18,10 @@
     Alt-F8 .......... search file contents / grep (CCGREP)
     Alt-F9 .......... extract a whole archive to the other panel
 
+  VIEWERS (the [view] map in cc.ini selects a viewer per extension)
+    F3 on a mapped file runs "<viewer> <file>"; unmapped files use the
+    built-in text pager. e.g.  [view]  gif = CCIMG
+
   ARCHIVES (the [open] map in cc.ini selects a packer per extension)
     Enter on a .zip . browse it like a folder; F5 extracts the cursor
                       member to the other panel; Backspace leaves.

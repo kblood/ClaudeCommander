@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1–G6 GREEN (ZIP, D64, T64, ARJ, RAR browse/extract); starting G7 ([view] framework).
+Last updated: 2026-06-23 — G1–G7 GREEN (5 archive plugins + [view]/F3 viewer dispatch); starting G8 (CCIMG).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -102,9 +102,19 @@ Last updated: 2026-06-23 — G1–G6 GREEN (ZIP, D64, T64, ARJ, RAR browse/extra
       and cc /T browsed + F5-extracted ALPHA.TXT byte-exact.
 
 ### Lister plugins
-- [ ] **G7 — `[view]` framework + F3 dispatch.** Parse a cc.ini `[view]`
-      section (ext→viewer). On F3, if the cursor file's ext is mapped, run that
-      viewer instead of the built-in text viewer.
+- [x] **G7 — `[view]` framework + F3 dispatch.** DONE. Generalised the ini
+      map parser: the `[open]` reader (`openmap_add`/`open_lookup`) became a
+      map-agnostic `map_add`/`map_lookup` driven by `cur_map_base`/`cur_map_n`
+      and `ml_base`/`ml_cnt`, so a second `[view]` section now fills a parallel
+      `viewmap` (`view_lookup`). `key_view` (F3) first checks the cursor file's
+      extension against the `[view]` map (skipped for virtual container
+      panels); a hit runs `<viewer> <fullpath>` via `run_view_helper`
+      (`run_command`, visible), a miss falls through to the built-in text
+      pager unchanged. `cc.ini` documents `[view]`. resident 63,131 B (< wall).
+      Verified via /T: a mapped ext ran the viewer with the right path
+      (CCVTEST wrote `C:\SAMPLE.VT`), an unmapped ext opened the built-in
+      pager (rendered the file), and the refactor left `[open]` browse+F5
+      byte-exact (d64 regression).
 - [ ] **G8 — CCIMG image viewer.** Render GIF/PCX/BMP in a VGA graphics mode,
       any-key to return. `[view]` `gif=CCIMG pcx=CCIMG bmp=CCIMG`.
 - [ ] **G9 — audio/music players.** CCWAV (PCM via Sound Blaster) and/or CCMOD

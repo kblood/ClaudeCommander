@@ -9,6 +9,20 @@ key_view:
         test    byte [si+E_ATTR], 10h
         jnz     .ret                ; do not view directories
         call    build_entry_path    ; targpath = full path (si preserved)
+%ifdef FEAT_VIEW
+        ; if the cursor file's extension is in the [view] map, run that viewer
+        ; instead of the built-in text pager (skip for virtual container panels).
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        jne     .builtin
+        call    cur_entry_ptr
+        lea     si, [si+E_NAME]
+        call    view_lookup         ; CF=1 -> di = viewer helper
+        jnc     .builtin
+        call    run_view_helper
+        ret
+.builtin:
+%endif
         mov     ax, 3D00h
         mov     dx, targpath
         int     21h
@@ -38,6 +52,24 @@ key_view:
         mov     byte [mouse_mode], MM_BROWSER
 .ret:
         ret
+
+%ifdef FEAT_VIEW
+; di -> viewer helper name (in viewmap). Build "<helper> <targpath>" into cmdbuf
+; and run it visibly (the viewer owns the screen), then redraw the panels.
+run_view_helper:
+        mov     si, di
+        mov     di, cmdbuf
+        call    vfs_cat             ; helper name (no NUL), di advances
+        mov     byte [di], ' '
+        inc     di
+        mov     si, targpath
+        call    vfs_cat             ; full file path
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_command         ; clears screen, EXECs, waits, re-reads dirs
+        ret
+%endif
 
 ; view_move: al=ascii, ah=scan -> adjust [vtop]; returns CF=1 to close viewer
 view_move:
