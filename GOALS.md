@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1–G4 GREEN (ZIP extract/pack/all, D64 + T64 browse/extract); starting G5 (CCARJ).
+Last updated: 2026-06-23 — G1–G5 GREEN (ZIP, D64, T64, ARJ browse/extract); starting G6 (CCRAR).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -72,8 +72,20 @@ Last updated: 2026-06-23 — G1–G4 GREEN (ZIP extract/pack/all, D64 + T64 brow
       against a hand-built T64 (a $0801/300-byte file + a $C000/50-byte file):
       standalone L/X/XA byte-exact, and cc /T browsed the archive and
       F5-extracted GAME.PRG byte-exact.
-- [ ] **G5 — CCARJ (ARJ archive).** `[open]` `arj=CCARJ`. Browse + extract
-      (STORED first; ARJ method-0). Decompress best-effort.
+- [x] **G5 — CCARJ (ARJ archive).** DONE. New helper `carj.asm` →
+      `ccarj.com` (1,067 B), L/X/XA contract. Walks the ARJ block chain
+      (0x60 0xEA magic + basic-header size; skips the main header and any
+      extended headers; stops at the size-0 end marker). Lists EVERY entry
+      (original size + base name from header `+30`). Extracts method-0
+      (STORED) members byte-for-byte; compressed members (ARJ's own
+      LZ77+Huffman, methods 1–4) are listed but skipped on extract
+      ("decompress best-effort" per the goal) — the walk stays aligned by
+      skipping `compressed-size` (`+12`) bytes. `cc.ini` `[open]` gains
+      `arj = CCARJ`. Verified against hand-built spec-valid ARJs (correct
+      CRC-32s): standalone L/X/XA byte-exact, a mixed stored/compressed
+      archive browses all 3 entries and extracts only the 2 stored ones with
+      the parser staying aligned, and cc /T browsed + F5-extracted READ.ME
+      byte-exact.
 - [ ] **G6 — CCRAR (RAR archive).** `[open]` `rar=CCRAR`. Browse the headers;
       extract STORED entries (RAR compression is proprietary — browse-first).
 
