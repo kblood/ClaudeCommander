@@ -44,6 +44,20 @@ foreach ($b in $bins) {
     "{0,-12} {1,7:N0} B  <- {2}" -f $b.com, $sz, $b.src | Write-Host
 }
 
+# Alternate build: the classic single pop-up command menu instead of the
+# always-on pull-down bar (= the std feature set minus FEAT_MENUBAR).
+Write-Host "`nAlternate pop-up-menu build (CCPOP.COM)"
+$popDefs = @(
+    "-dFEAT_CUSTOM","-dFEAT_WIDGETS","-dFEAT_CLOCK","-dFEAT_FREE","-dFEAT_VIEWS",
+    "-dFEAT_TREE","-dFEAT_SORT","-dFEAT_COLS","-dFEAT_SEARCH","-dFEAT_MASK",
+    "-dFEAT_MENU","-dFEAT_HELP","-dFEAT_EDIT","-dFEAT_FIND","-dFEAT_GREP",
+    "-dFEAT_ZIP","-dFEAT_ATTR","-dFEAT_VFS","-dFEAT_VIEW","-dFEAT_INI",
+    "-dFEAT_LANG","-dFEAT_LFN"
+)
+& $nasm -f bin @popDefs "$dir\cc.asm" -o "$out\CCPOP.COM" 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: CCPOP.COM"; exit 1 }
+"{0,-12} {1,7:N0} B  <- cc.asm (pop-up menu)" -f "CCPOP.COM", (Get-Item "$out\CCPOP.COM").Length | Write-Host
+
 Write-Host "`nCopying data files"
 foreach ($d in $data) {
     if (Test-Path "$dir\$d") {
@@ -61,8 +75,14 @@ Claude Commander (cc) -- portable distribution
 
 Run CC.COM to start the file manager. Press F1 inside for the key reference.
 
+CC.COM shows a Norton-style pull-down MENU BAR across the top row
+(Files / Commands / Options) -- press F9 to drop a menu down, Left/Right to
+switch menus, Up/Down + Enter to run an item, Esc to close. If you'd rather
+have the classic single pop-up menu (and one extra file row), run CCPOP.COM.
+
 Files:
-  CC.COM      the file manager (run this)
+  CC.COM      the file manager (run this) -- top pull-down menu bar on F9
+  CCPOP.COM   same, but with the classic single pop-up menu on F9
   CCEDIT.COM  text editor       (F4, or type CCEDIT <file>)
   CCFIND.COM  find by name      (Alt-F7, or CCFIND <pattern> [dir])
   CCZIP.COM   list a ZIP        (Ctrl-F9, or CCZIP <zip>)

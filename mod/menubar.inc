@@ -21,14 +21,18 @@ MB_TOP    equ 1            ; drop-down top-border row (row 0 is the bar)
 A_MB      equ 030h         ; bar / box: black on cyan
 A_MBSEL   equ 070h         ; active title + selected item: black on white
 
-; --- modal entry point (F9) -------------------------------------------------
+; --- F9: drop a menu down from the (already-visible) bar --------------------
+; The bar itself is drawn every frame by mb_bar_draw (the widget seam); this
+; just sets mb_active so the bar highlights the current menu, then renders the
+; drop-down and runs the 2D key loop.
 key_menubar:
         mov     word [mb_cur], 0
+        mov     byte [mb_active], 1
         call    mb_recount              ; -> mb_n, mb_sel=0, mb_col, mb_items
 .loop:
         call    mouse_hide
-        call    render_all
-        call    mb_render
+        call    render_all              ; redraws panels + bar (highlights mb_cur)
+        call    mb_drop_draw            ; the drop-down for the active menu
         call    mouse_show
         cmp     byte [test_mode], 0
         je      .live
@@ -89,14 +93,16 @@ key_menubar:
         mov     cx, [mb_n]
         jcxz    .close                  ; empty menu -> nothing to run
         call    mb_handler              ; -> bx = handler
+        mov     byte [mb_active], 0
         call    mouse_hide
         push    bx
-        call    render_all              ; wipe bar/dropdown before the action
+        call    render_all              ; close the drop-down before the action
         pop     bx
         call    mouse_show
         call    bx
         ret
 .close:
+        mov     byte [mb_active], 0     ; bar stays visible, just not dropped down
         call    mouse_hide
         call    render_all
         call    mouse_show
@@ -143,13 +149,15 @@ mb_handler:
         ret
 
 ; --- rendering --------------------------------------------------------------
-mb_render:
+; Persistent bar on row MENUBAR_ROW. Called every frame from the widget seam
+; (widgets_draw). When a menu is open (mb_active) the current title is
+; highlighted; otherwise all titles are plain.
+mb_bar_draw:
         push    es
         push    bp
         mov     ax, VIDEO
         mov     es, ax
-        ; bar row 0: fill, then titles
-        xor     di, di
+        mov     di, MENUBAR_ROW*ROW_BYTES
         mov     cx, SCR_W
         mov     ah, A_MB
         mov     al, ' '
@@ -161,14 +169,17 @@ mb_render:
         xor     bx, bx                  ; menu index
 .titles:
         cmp     bx, MB_MENUS
-        jae     .drop
+        jae     .done
         push    bx
         mov     ax, bx
         call    mb_menu_ptr             ; si -> row
         mov     ax, [si+4]              ; anchor col
         shl     ax, 1
-        mov     di, ax                  ; row-0 byte offset
+        mov     di, ax
+        add     di, MENUBAR_ROW*ROW_BYTES
         mov     ah, A_MB
+        cmp     byte [mb_active], 0
+        je      .ta                     ; bar idle -> no highlight
         cmp     bx, [mb_cur]
         jne     .ta
         mov     ah, A_MBSEL
@@ -178,9 +189,18 @@ mb_render:
         pop     bx
         inc     bx
         jmp     .titles
-.drop:
-        ; top border at row MB_TOP, col mb_col, width MB_DROPW
-        mov     bp, MB_TOP
+.done:
+        pop     bp
+        pop     es
+        ret
+
+; The drop-down for the active menu (drawn over the panels while mb_active).
+mb_drop_draw:
+        push    es
+        push    bp
+        mov     ax, VIDEO
+        mov     es, ax
+        mov     bp, MB_TOP              ; top border just under the bar
         mov     bx, [mb_col]
         mov     cx, MB_DROPW
         xor     dl, dl

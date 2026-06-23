@@ -17,6 +17,9 @@ widgets_draw:
 %ifdef FEAT_CLOCK
         call    draw_clock
 %endif
+%ifdef FEAT_MENUBAR
+        call    mb_bar_draw         ; persistent pull-down bar on the top row
+%endif
         ret
 
 ; Idle refresh: called repeatedly while waiting for a key, so widgets that track

@@ -29,12 +29,10 @@ L_CONX      equ 1
 L_CONW      equ 38
 R_CONX      equ 40
 R_CONW      equ 39
-TOP_ROW     equ 0          ; top frame
-FIRST_ROW   equ 1          ; first file row
-VIS_ROWS    equ 21         ; visible file rows (rows 1..21)
-BOT_ROW     equ 22         ; bottom frame
-CMD_ROW     equ 23         ; command line
-FKEY_ROW    equ 24         ; function-key bar
+; Panel row geometry. With the persistent menu bar (FEAT_MENUBAR) the whole
+; panel block slides down one row so the bar can own row 0; the actual equs are
+; defined after the FEAT-resolution block (see "panel geometry" below) so they
+; can see FEAT_MENUBAR however it was set (command line or tier).
 
 ; attributes (bg<<4 | fg)
 A_NORM      equ 017h       ; light grey on blue (files)
@@ -145,6 +143,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
     %define FEAT_FREE
     %define FEAT_COLS
     %define FEAT_MENU
+    %define FEAT_MENUBAR        ; persistent pull-down bar (supersedes the pop-up)
     %define FEAT_MASK
     %define FEAT_EDIT
     %define FEAT_FIND
@@ -189,6 +188,26 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
 %ifdef FEAT_ATTR
   %define FEAT_INI
 %endif
+%ifdef FEAT_MENUBAR
+  %define FEAT_WIDGETS          ; the persistent bar draws through the widget seam
+%endif
+
+; --- panel row geometry (depends on the resolved FEAT set) -------------------
+; FKEY_ROW (24) and CMD_ROW (23) are fixed at the bottom; the menu bar steals a
+; row from the top, so the file-list block is one row shorter when it is on.
+%ifdef FEAT_MENUBAR
+MENUBAR_ROW equ 0          ; persistent pull-down bar
+TOP_ROW     equ 1          ; top frame
+FIRST_ROW   equ 2          ; first file row
+VIS_ROWS    equ 20         ; visible file rows (rows 2..21)
+%else
+TOP_ROW     equ 0          ; top frame
+FIRST_ROW   equ 1          ; first file row
+VIS_ROWS    equ 21         ; visible file rows (rows 1..21)
+%endif
+BOT_ROW     equ 22         ; bottom frame
+CMD_ROW     equ 23         ; command line
+FKEY_ROW    equ 24         ; function-key bar
 
 ; ============================================================================
 start:
@@ -884,9 +903,10 @@ one_title:
         shr     bx, 1
         add     ax, bx              ; ax = start col
         push    ax
-        ; di = row0 offset
+        ; di = (TOP_ROW, start col) offset
         mov     di, ax
-        shl     di, 1               ; col*2 (row 0)
+        shl     di, 1               ; col*2
+        add     di, TOP_ROW*ROW_BYTES
         mov     ah, [tattr]
         ; leading space
         mov     al, ' '
@@ -3041,6 +3061,7 @@ mb_sel      resw 1
 mb_n        resw 1
 mb_col      resw 1
 mb_items    resw 1
+mb_active   resb 1          ; 1 while a menu is dropped down (bar highlights it)
 %endif
 sort_tmp    resb ENTSIZE
 linebuf     resb 84

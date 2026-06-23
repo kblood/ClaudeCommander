@@ -12,6 +12,10 @@
     F8 .. delete             F9 .. menu           F10 . quit
     *F5/F6 copy/move to the OTHER panel; the dialog lets you rename in
      flight. Shift-F6 renames the file in place (same folder).
+    F9 / menu bar: the top row shows a pull-down menu bar (Files / Commands /
+     Options). Press F9 to drop the current menu down; Left/Right switch menus,
+     Up/Down pick an item, Enter runs it, Esc closes. (The classic single
+     pop-up menu is available instead in the CCPOP.COM build.)
     Alt-F1/F2 ....... change drive (left / right panel)
     Alt-F5 .......... pack tagged/cursor into an archive (other panel);
                       tagged folders are packed recursively
