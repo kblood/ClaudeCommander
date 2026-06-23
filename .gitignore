@@ -8,6 +8,7 @@ CCDUMP.TXT
 CCSNAP.BIN
 _snap*.txt
 cc.key
+views*.key
 *.png
 *.conf
 dbxlog.txt

@@ -70,7 +70,8 @@ P_VFS       equ 74         ; byte: 1 = this panel is a container (virtual) view
 P_CNAME     equ 76         ; 14 bytes: container filename when P_VFS=1
 P_CPATH     equ 90         ; 64 bytes: path WITHIN the container ('/'-terminated
                            ;   or empty at the archive root) when P_VFS=1
-P_ENTRIES   equ 154        ; entry array
+P_VIEW      equ 154        ; byte: body view mode (0 = full list, 1 = brief 3-col)
+P_ENTRIES   equ 156        ; entry array
 MAX_FILES   equ 512         ; per panel (keeps the whole .COM within one 64KB segment)
 ENTSIZE     equ 24
 PANELSIZE   equ P_ENTRIES + MAX_FILES*ENTSIZE
@@ -150,6 +151,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_ATTR
   %define FEAT_VFS
   %define FEAT_VIEW
+  %define FEAT_VIEWS
 %endif
 %if _TIER >= 3               ; ---- FULL adds (reserved for heavy features) ----
 %endif
@@ -432,8 +434,15 @@ key_down:
 
 key_pgup:
         mov     bx, [active]
+%ifdef FEAT_VIEWS
+        call    view_pagestep       ; ax = entries per page for this view
+        mov     cx, ax
+        mov     ax, [bx+P_CUR]
+        sub     ax, cx
+%else
         mov     ax, [bx+P_CUR]
         sub     ax, VIS_ROWS-1
+%endif
         jns     .ok
         xor     ax, ax
 .ok:
@@ -445,8 +454,15 @@ key_pgdn:
         mov     bx, [active]
         mov     cx, [bx+P_COUNT]
         jcxz    .done
+%ifdef FEAT_VIEWS
+        call    view_pagestep       ; ax = entries per page for this view
+        mov     dx, ax
+        mov     ax, [bx+P_CUR]
+        add     ax, dx
+%else
         mov     ax, [bx+P_CUR]
         add     ax, VIS_ROWS-1
+%endif
         cmp     ax, cx
         jb      .ok
         mov     ax, cx
@@ -475,6 +491,10 @@ key_end:
 
 ; keep cursor visible: adjust P_TOP (bx = panel) -----------------------------
 fix_scroll:
+%ifdef FEAT_VIEWS
+        cmp     byte [bx+P_VIEW], 1
+        je      fix_scroll_brief    ; column-aligned scroll (mod/views.inc)
+%endif
         mov     ax, [bx+P_CUR]
         ; if cur < top -> top = cur
         cmp     ax, [bx+P_TOP]
@@ -852,6 +872,10 @@ one_title:
 ; draw one panel's file list. bx=panel ptr, [pcx]=content x, [pcw]=content w
 draw_panel:
         mov     [ppanel], bx
+%ifdef FEAT_VIEWS
+        cmp     byte [bx+P_VIEW], 1
+        je      draw_panel_brief    ; brief 3-column renderer (mod/views.inc)
+%endif
         ; for row i in 0..VIS_ROWS-1
         xor     bp, bp              ; bp = visible row index
 .row:
@@ -1074,6 +1098,9 @@ init_panel_cwd:
         mov     word [di+P_TOP], 0
         mov     word [di+P_CUR], 0
         mov     byte [di+P_VFS], 0
+%ifdef FEAT_VIEWS
+        mov     byte [di+P_VIEW], 0     ; default to the full list view
+%endif
         mov     bx, di
         call    read_dir
         pop     di
@@ -2664,7 +2691,10 @@ set_panel_drive:
 ; ============================================================================
 ;  F3 -- FILE VIEWER  (reads up to VIEW_MAX bytes, scrolls by line)
 ; ============================================================================
-VIEW_MAX    equ 16384
+VIEW_MAX    equ 14336           ; built-in pager byte cap (14 KB; larger files
+                                ;   truncate, as before -- external [view] tools
+                                ;   handle big files). Trimmed from 16 KB to keep
+                                ;   the resident image under the std 63 KB wall.
 MAX_VLINES  equ 1024
 VIEW_ROWS   equ 23             ; text rows 1..23 (row 0 header, row 24 bar)
 A_VHDR      equ 030h           ; black on cyan header
@@ -2688,6 +2718,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %endif
 %ifdef FEAT_WIDGETS
 %include "mod/widgets.inc"
+%endif
+%ifdef FEAT_VIEWS
+%include "mod/views.inc"
 %endif
 %ifdef FEAT_SEARCH
 %include "mod/search.inc"
@@ -2739,9 +2772,14 @@ keytab:
         KEYBIND_EXT 48h, key_up         ; Up
         KEYBIND_EXT 50h, key_down       ; Down
         KEYBIND_EXT 49h, key_pgup       ; PgUp
-        KEYBIND_EXT 4Bh, key_pgup       ; Left  -> page up   (alias)
         KEYBIND_EXT 51h, key_pgdn       ; PgDn
+%ifdef FEAT_VIEWS
+        KEYBIND_EXT 4Bh, key_left       ; Left  -> col left (brief) / page up
+        KEYBIND_EXT 4Dh, key_right      ; Right -> col right (brief) / page down
+%else
+        KEYBIND_EXT 4Bh, key_pgup       ; Left  -> page up   (alias)
         KEYBIND_EXT 4Dh, key_pgdn       ; Right -> page down (alias)
+%endif
         KEYBIND_EXT 47h, key_home       ; Home
         KEYBIND_EXT 4Fh, key_end        ; End
 %ifdef FEAT_HELP
@@ -2801,6 +2839,9 @@ keytab:
 %endif
 %ifdef FEAT_ZIP
         KEYBIND_EXT 66h, key_zip        ; Ctrl-F9  list archive (CCZIP.COM)
+%endif
+%ifdef FEAT_VIEWS
+        KEYBIND_EXT 67h, key_view_toggle ; Ctrl-F10 toggle full / brief body view
 %endif
         KEYBIND_END                     ; sentinel
 
@@ -2936,6 +2977,11 @@ pack_n      resw 1          ; # packable (non-dir) entries written to the list
 packtarg    resb 96         ; full path of the archive being created
 %endif
 srchbuf     resb 80
+%ifdef FEAT_VIEWS
+brief_col   resw 1          ; mod/views.inc brief renderer scratch
+brief_row   resw 1
+brief_cw    resw 1
+%endif
 sort_tmp    resb ENTSIZE
 linebuf     resb 84
 keybuf      resb KEYBUF_MAX

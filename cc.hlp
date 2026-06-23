@@ -51,6 +51,9 @@
                       (command row, right) ticks once a second on its own.
     Ctrl-A .......... edit file attributes (Read-only/Hidden/System/Archive)
     Ctrl-F9 ......... list archive contents (CCZIP)
+    Ctrl-F10 ........ toggle the panel body between the full list and a brief
+                      3-column names-only view. In brief view Left/Right move
+                      between columns (they page in the full view).
 
   DISPLAY (cont.)
     Long names ...... the cursor file's long name shows on the command row
