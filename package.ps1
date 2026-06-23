@@ -22,7 +22,8 @@ $bins = @(
     @{ src = "ct64.asm";  com = "CCT64.COM"  },
     @{ src = "carj.asm";  com = "CCARJ.COM"  },
     @{ src = "crar.asm";  com = "CCRAR.COM"  },
-    @{ src = "cimg.asm";  com = "CCIMG.COM"  }
+    @{ src = "cimg.asm";  com = "CCIMG.COM"  },
+    @{ src = "cwav.asm";  com = "CCWAV.COM"  }
 )
 $data = @("cc.ini", "cc.hlp", "da.lng")
 
@@ -69,6 +70,7 @@ Files:
   CCARJ.COM   browse .arj       (Enter on a .arj; F5 extracts STORED)
   CCRAR.COM   browse .rar 4.x   (Enter on a .rar; F5 extracts STORED)
   CCIMG.COM   view BMP/PCX/GIF  (F3 on a mapped image; VGA mode 13h)
+  CCWAV.COM   play a PCM .wav   (F3 on a .wav; Sound Blaster, ESC stops)
   cc.ini      startup options (sort=, columns=)
   cc.hlp      F1 help text
   da.lng      Danish F-key bar sample -- copy to cc.lng to use it

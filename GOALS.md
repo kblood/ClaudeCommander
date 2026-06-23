@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1–G8 GREEN (5 archive plugins + [view]/F3 dispatch + CCIMG BMP/PCX/GIF viewer); starting G9 (CCWAV/CCMOD).
+Last updated: 2026-06-23 — G1–G9 GREEN (5 archive plugins + [view]/F3 dispatch + CCIMG viewer + CCWAV player); CCMOD deferred; starting G10 (CCDIFF/CCREN/CCSPLIT/CCJOIN).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -135,8 +135,26 @@ Last updated: 2026-06-23 — G1–G8 GREEN (5 archive plugins + [view]/F3 dispat
       with the active `[view]` map (no regression). Graphics display itself is
       validated on-target, not headlessly. resident unchanged (cc.asm same as
       G7, 63,131 B).
-- [ ] **G9 — audio/music players.** CCWAV (PCM via Sound Blaster) and/or CCMOD
-      (tracker). `[view]` `wav=CCWAV mod=CCMOD`. Hardware-dependent; test on rig.
+- [x] **G9 — audio/music players.** DONE (CCWAV; CCMOD deferred). New helper
+      `cwav.asm` -> `ccwav.com` (1,791 B) plays PCM WAV via the Sound Blaster.
+      Walks the RIFF/WAVE chunk chain (skipping unknown chunks like LIST/fact,
+      honouring odd-size pad bytes), reads "fmt " + "data". Plays 8-bit or
+      16-bit, mono or stereo PCM by down-mixing to 8-bit unsigned mono and
+      streaming it to the SB's single-cycle 8-bit DMA in 64 KB-page-safe blocks
+      (DSP reset, time-constant rate, speaker on/off; base + DMA channel from
+      the BLASTER env var, default A220 D1; ESC aborts). A `/D` mode dumps
+      rate/channels/bits/datasize + the raw PCM to CCWAV.RAW for byte-exact
+      testing. `cc.ini` `[view]` gains `wav = CCWAV`. Fixed two real bugs found
+      in testing: getb let int 21h clobber CX/BX (same class as CCIMG), and
+      getdw accumulated the dword in EAX whose low byte getb overwrites on each
+      call -> now accumulates in EBX (getb preserves it). Verified: `CCWAV /D`
+      on an 8-bit-mono WAV (with skipped even+odd extra chunks) and a 16-bit
+      stereo WAV -> CCWAV.RAW byte-exact for both; playback runs to completion
+      and returns under DOSBox SB16 emulation (audio itself is validated on the
+      rig, not headlessly). CCMOD (4-channel tracker software mixer) is deferred
+      as a future helper: it needs a large unvalidatable-headlessly mixing
+      engine; the `[view]` framework already supports adding `mod = CCMOD` with
+      no cc.asm change when it lands.
 
 ### External tools (free, no resident cost)
 - [ ] **G10 — CCDIFF / CCREN / CCSPLIT / CCJOIN.** File compare, multi-rename,
