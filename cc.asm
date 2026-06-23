@@ -517,6 +517,12 @@ key_enter:
         ret
 .file:
 %ifdef FEAT_VFS
+        ; inside an archive view, members are virtual: they aren't real files on
+        ; disk, so don't try to browse them as nested containers or run them
+        ; (that corrupted the panel). Use F5 to extract, or ".." to leave.
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        jne     .ret
         ; container? (extension registered in cc.ini's [open] map)
         push    si
         lea     si, [si+E_NAME]

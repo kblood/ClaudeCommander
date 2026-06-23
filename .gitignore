@@ -106,6 +106,9 @@ _tooltest/
 PKT/
 PKT2/
 PKT3/
+PKT4/
+PKZ/
+cc_mapper.map
 OUT.BIN
 OUT2.TXT
 *.BAK
