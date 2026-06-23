@@ -454,6 +454,114 @@ key_pack:
 .ret:
         ret
 
+; F5 when the OTHER panel is inside a container: add the active panel's
+; tagged entries (or the cursor), files and folders recursively, INTO that
+; archive. Builds CCPACK.LST exactly like key_pack, then runs
+; "<helper> AP <archive> @<list> <root>" so the helper appends the members and
+; rewrites the central directory. Afterwards the container panel is relisted so
+; the new members appear. No name prompt -- the target archive is already open.
+vfs_addto:
+        ; build the file list in the active panel's dir (reuses vfs_lpath)
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        mov     di, vfs_lpath
+        call    bp_copy_dir
+        mov     si, s_packlst
+        call    bp_copy_name
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, vfs_lpath
+        int     21h
+        jc      .ret
+        mov     [pack_fh], ax
+        mov     word [pack_n], 0
+        call    count_tagged
+        or      cx, cx
+        jz      .single
+        mov     word [iter_i], 0
+.tl:
+        mov     bx, [active]
+        mov     ax, [iter_i]
+        cmp     ax, [bx+P_COUNT]
+        jae     .wdone
+        mov     [ppanel], bx
+        call    entry_ptr
+        test    byte [si+E_ATTR], 40h
+        jz      .tnext
+        call    pack_write_line
+.tnext:
+        inc     word [iter_i]
+        jmp     .tl
+.single:
+        mov     bx, [active]
+        call    cur_entry_ptr
+        call    pack_write_line
+.wdone:
+        mov     bx, [pack_fh]
+        mov     ah, 3Eh
+        int     21h
+        cmp     word [pack_n], 0
+        jne     .havefiles
+        mov     si, s_packempty
+        call    dlg_confirm
+        mov     ah, 41h
+        mov     dx, vfs_lpath
+        int     21h
+        call    refresh_panels
+        ret
+.havefiles:
+        ; target archive = other panel's P_PATH\P_CNAME
+        call    other_panel_ptr
+        mov     [vfs_pan], bx           ; remember it so we can relist after
+        lea     si, [bx+P_PATH]
+        mov     di, packtarg
+        call    bp_copy_dir
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_CNAME]
+        call    bp_copy_name            ; packtarg = full archive path
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_CNAME]
+        call    open_lookup             ; helper from the archive's extension
+        jnc     .done
+        mov     [vfs_helper], di
+        mov     di, cmdbuf
+        mov     si, [vfs_helper]
+        call    vfs_cat
+        mov     si, s_vfs_ap
+        call    vfs_cat
+        mov     si, packtarg
+        call    vfs_cat
+        mov     si, s_vfs_atl
+        call    vfs_cat
+        mov     si, vfs_lpath
+        call    vfs_cat
+        ; pass the active dir as the pack-root (relative stored names)
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        call    vfs_cat
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_helper
+        mov     word [cmdlen], 0
+        ; delete the scratch list BEFORE relisting (vfs_relist reuses vfs_lpath)
+        mov     ah, 41h
+        mov     dx, vfs_lpath
+        int     21h
+        mov     bx, [vfs_pan]
+        call    vfs_relist              ; rebuild the listing -> new members show
+        call    refresh_panels
+        ret
+.done:
+        mov     ah, 41h
+        mov     dx, vfs_lpath
+        int     21h
+        call    refresh_panels
+.ret:
+        ret
+
 ; Add one selected entry (si) to the pack list. Skips . / .. ; a plain file is
 ; written as one line; a directory is walked recursively (pack_tree) so the
 ; whole tree is packed (the packer stores paths relative to the active dir).
@@ -582,6 +690,7 @@ s_vfs_redir db ' >',0
 s_vfs_x     db ' X ',0
 s_vfs_xa    db ' XA ',0
 s_vfs_a     db ' A ',0
+s_vfs_ap    db ' AP ',0
 s_vfs_atl   db ' @',0
 s_vfs_sp    db ' ',0
 s_packto    db 'Pack tagged/cursor to archive:',0

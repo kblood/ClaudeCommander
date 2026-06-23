@@ -31,9 +31,16 @@ start:
         mov     byte [xmode], 0
         mov     byte [xallmode], 0
         mov     byte [amode], 0
+        mov     byte [apmode], 0
         mov     byte [fname], 0
         mov     byte [a_root], 0
         call    parse_args          ; -> fname (+ lmode if "L" prefix)
+        cmp     byte [apmode], 0    ; "AP" append mode adds to an existing zip
+        je      .noappend
+        call    do_append
+        mov     ax, 4C00h
+        int     21h
+.noappend:
         cmp     byte [amode], 0     ; "A" add mode creates a fresh archive
         je      .noadd
         call    do_add
@@ -426,10 +433,34 @@ parse_args:
         jne     .firstfile
         and     ah, 0DFh
         cmp     al, 'X'
-        jne     .firstfile
+        je      .maybexa
+        cmp     al, 'A'
+        je      .maybeap
+        jmp     .firstfile
+.maybexa:
         cmp     ah, 'A'
         jne     .firstfile
         jmp     .isxall
+.maybeap:
+        cmp     ah, 'P'
+        jne     .firstfile
+        jmp     .isappend
+.isappend:                          ; "AP <zip> @<list> [root]" -> append
+        mov     byte [apmode], 1
+        call    skip_sp
+        mov     di, fname
+        call    read_tok            ; archive to append to
+        call    skip_sp
+        cmp     byte [si], '@'
+        jne     .aptok
+        inc     si
+.aptok:
+        mov     di, addlist
+        call    read_tok            ; list-of-files path
+        call    skip_sp
+        mov     di, a_root
+        call    read_tok            ; optional pack-root
+        ret
 .isxall:
         mov     byte [xallmode], 1
         call    skip_sp
@@ -876,10 +907,22 @@ do_add:
         mov     dword [a_outpos], 0
         mov     word [a_count], 0
         mov     word [a_cdptr], cdbuf
+        call    add_list
+        call    write_central_and_eocd
+        mov     bx, [ofh]
+        mov     ah, 3Eh
+        int     21h
+.ret:
+        ret
+
+; Read addlist (one source path per line) and append each named file to the
+; already-open output zip (ofh). a_outpos / a_count / a_cdptr must be set up by
+; the caller (do_add starts fresh; do_append continues an existing archive).
+add_list:
         mov     ax, 3D00h
         mov     dx, addlist
         int     21h
-        jc      .finish
+        jc      .ret
         mov     bx, ax
         push    bx
         mov     ah, 3Fh
@@ -896,10 +939,10 @@ do_add:
         mov     [lend], ax
 .nl:
         cmp     si, [lend]
-        jae     .finish
+        jae     .ret
         mov     al, [si]
         or      al, al
-        jz      .finish
+        jz      .ret
         cmp     al, 0Dh
         je      .sk
         cmp     al, 0Ah
@@ -928,12 +971,136 @@ do_add:
 .sk:
         inc     si
         jmp     .nl
-.finish:
+.ret:
+        ret
+
+; ----------------------------------------------------------------------------
+;  APPEND  --  CCZIP AP <zip> @<listfile> [root] : add the listed files to an
+;  EXISTING archive.  The trick: a zip's member data and central directory are
+;  contiguous, so we overwrite the old central directory (its byte offset is in
+;  the EOCD) with the new members' local headers + data, then re-emit the old
+;  central records (preserved in cdbuf) followed by the new ones and a fresh
+;  EOCD.  If the target does not exist yet we fall back to do_add (create new).
+; ----------------------------------------------------------------------------
+do_append:
+        mov     ax, 3D00h           ; open existing archive read-only
+        mov     dx, fname
+        int     21h
+        jc      .fresh              ; no such file -> just create it
+        mov     [fh], ax
+        ; --- size via LSEEK to end ---
+        mov     bx, [fh]
+        mov     ax, 4202h
+        xor     cx, cx
+        xor     dx, dx
+        int     21h
+        mov     [fsize_lo], ax
+        mov     [fsize_hi], dx
+        ; --- tail start = size - min(size, TAILMAX) ---
+        mov     ax, [fsize_lo]
+        mov     dx, [fsize_hi]
+        or      dx, dx
+        jnz     .big
+        cmp     ax, TAILMAX
+        jae     .big
+        mov     [taillen], ax
+        xor     cx, cx
+        xor     dx, dx
+        jmp     .seek
+.big:
+        mov     word [taillen], TAILMAX
+        mov     ax, [fsize_lo]
+        mov     dx, [fsize_hi]
+        sub     ax, TAILMAX
+        sbb     dx, 0
+        mov     cx, dx
+        mov     dx, ax
+.seek:
+        mov     bx, [fh]
+        mov     ax, 4200h
+        int     21h
+        mov     bx, [fh]
+        mov     ah, 3Fh
+        mov     cx, [taillen]
+        mov     dx, tailbuf
+        int     21h
+        mov     [tailgot], ax
+        ; --- scan backward for the EOCD signature 50 4B 05 06 ---
+        mov     cx, [tailgot]
+        sub     cx, 4
+        jbe     .freshclose
+        mov     si, tailbuf
+        add     si, cx
+.scan:
+        cmp     byte [si], 050h
+        jne     .sdn
+        cmp     byte [si+1], 04Bh
+        jne     .sdn
+        cmp     byte [si+2], 005h
+        jne     .sdn
+        cmp     byte [si+3], 006h
+        je      .got
+.sdn:
+        dec     si
+        cmp     si, tailbuf
+        jae     .scan
+        jmp     .freshclose
+.got:
+        ; existing count=word[+10], cd size=dword[+12], cd offset=dword[+16]
+        mov     ax, [si+10]
+        mov     [a_count], ax
+        mov     ax, [si+12]
+        mov     [a_cdsize], ax
+        mov     ax, [si+16]
+        mov     [cdofs_lo], ax
+        mov     ax, [si+18]
+        mov     [cdofs_hi], ax
+        ; --- read the existing central directory into cdbuf ---
+        mov     bx, [fh]
+        mov     ax, 4200h
+        mov     cx, [cdofs_hi]
+        mov     dx, [cdofs_lo]
+        int     21h
+        mov     bx, [fh]
+        mov     ah, 3Fh
+        mov     cx, CDMAX
+        mov     dx, cdbuf
+        int     21h
+        mov     bx, [fh]            ; done with the read handle
+        mov     ah, 3Eh
+        int     21h
+        ; new central records go right after the preserved ones in cdbuf
+        mov     ax, cdbuf
+        add     ax, [a_cdsize]
+        mov     [a_cdptr], ax
+        ; --- reopen for writing, seek to the old cd start (we overwrite it) ---
+        mov     ax, 3D01h
+        mov     dx, fname
+        int     21h
+        jc      .fresh
+        mov     [ofh], ax
+        mov     bx, [ofh]
+        mov     ax, 4200h
+        mov     cx, [cdofs_hi]
+        mov     dx, [cdofs_lo]
+        int     21h
+        mov     ax, [cdofs_lo]
+        mov     [a_outpos], ax
+        mov     ax, [cdofs_hi]
+        mov     [a_outpos+2], ax
+        ; --- append the listed files, then rewrite directory + EOCD ---
+        call    add_list
         call    write_central_and_eocd
         mov     bx, [ofh]
         mov     ah, 3Eh
         int     21h
-.ret:
+        ret
+.freshclose:
+        mov     bx, [fh]            ; not a recognizable zip -> close, recreate
+        mov     ah, 3Eh
+        int     21h
+.fresh:
+        call    do_add
         ret
 
 ; add the file named in srcpath to the open output zip
@@ -1678,6 +1845,7 @@ lmode       resb 1
 xmode       resb 1
 xallmode    resb 1
 amode       resb 1
+apmode      resb 1
 xindex      resw 1
 destdir     resb 128
 addlist     resb 128

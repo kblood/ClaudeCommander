@@ -27,7 +27,9 @@
 
   ARCHIVES (the [open] map in cc.ini selects a packer per extension)
     Enter on a .zip . browse it like a folder; F5 extracts the cursor
-                      member to the other panel; Backspace leaves.
+                      member to the other panel; Backspace leaves. With the
+                      OTHER panel inside a .zip, F5 ADDS the tagged/cursor
+                      files (folders recurse) into that archive.
     Enter on a .d64 . browse a C64 1541 disk image; F5 extracts a file
                       as <name>.PRG; Alt-F9 extracts every file.
     Enter on a .t64 . browse a C64 tape archive; F5 / Alt-F9 extract

@@ -97,8 +97,15 @@ key_copy:
 %ifdef FEAT_VFS
         mov     bx, [active]
         cmp     byte [bx+P_VFS], 0
+        je      .activereal
+        jmp     vfs_extract         ; F5 inside a container -> extract member out
+.activereal:
+        ; active panel is real; if the OTHER panel is a container, copy the
+        ; tagged/cursor files INTO that archive instead of onto the filesystem.
+        call    other_panel_ptr
+        cmp     byte [bx+P_VFS], 0
         je      .notvfs
-        jmp     vfs_extract         ; F5 on a container -> extract member
+        jmp     vfs_addto           ; F5 -> add files into the other archive
 .notvfs:
 %endif
         mov     byte [ow_mode], 0   ; reset overwrite policy for this operation
