@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1–G7 GREEN (5 archive plugins + [view]/F3 viewer dispatch); starting G8 (CCIMG).
+Last updated: 2026-06-23 — G1–G8 GREEN (5 archive plugins + [view]/F3 dispatch + CCIMG BMP/PCX/GIF viewer); starting G9 (CCWAV/CCMOD).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -115,8 +115,26 @@ Last updated: 2026-06-23 — G1–G7 GREEN (5 archive plugins + [view]/F3 viewer
       (CCVTEST wrote `C:\SAMPLE.VT`), an unmapped ext opened the built-in
       pager (rendered the file), and the refactor left `[open]` browse+F5
       byte-exact (d64 regression).
-- [ ] **G8 — CCIMG image viewer.** Render GIF/PCX/BMP in a VGA graphics mode,
-      any-key to return. `[view]` `gif=CCIMG pcx=CCIMG bmp=CCIMG`.
+- [x] **G8 — CCIMG image viewer.** DONE. New helper `cimg.asm` -> `ccimg.com`
+      (1,882 B) renders 256-colour BMP / PCX / GIF in VGA mode 13h (loads the
+      DAC, blits a clipped 320x200 image, waits for a key, restores text mode).
+      Decoders: Windows BMP (BI_RGB, bottom-up, B,G,R,0 palette, 4-byte row
+      padding); ZSoft PCX (RLE, 768-byte VGA palette tail); GIF87a/89a (full
+      variable-width LZW with prefix/suffix string tables + KwKwK handling,
+      global or local colour table, interlaced or not). Decoded indices land in
+      a separate 64 KB segment (cs+0x1000). A `/D` diagnostic mode dumps the
+      decode to CCIMG.RAW (imgw,imgh,pixels,768-byte palette) for byte-exact
+      testing. `cc.ini` `[view]` gains `gif/pcx/bmp = CCIMG`; F3 on a mapped
+      image runs the viewer via the G7 dispatch. Fixed a real bug found in
+      testing: `getb` let `iorefill`'s `int 21h` clobber CX/BX, so every
+      `loop`-based reader (BMP header/palette) overran and corrupted bss -> now
+      getb preserves BX/CX/DX. Verified: `CCIMG /D` on hand-built BMP, PCX and
+      GIF fixtures (4x3 ramp AND a 17x5 image exercising BMP row padding, PCX
+      RLE runs incl. a >=0xC0 value, and GIF LZW dictionary reuse) -> CCIMG.RAW
+      byte-exact to the expected decode for all three formats; cc boots clean
+      with the active `[view]` map (no regression). Graphics display itself is
+      validated on-target, not headlessly. resident unchanged (cc.asm same as
+      G7, 63,131 B).
 - [ ] **G9 — audio/music players.** CCWAV (PCM via Sound Blaster) and/or CCMOD
       (tracker). `[view]` `wav=CCWAV mod=CCMOD`. Hardware-dependent; test on rig.
 

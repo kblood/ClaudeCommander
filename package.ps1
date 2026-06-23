@@ -17,7 +17,12 @@ $bins = @(
     @{ src = "czip.asm";  com = "CCZIP.COM"  },
     @{ src = "cgrep.asm"; com = "CCGREP.COM" },
     @{ src = "chex.asm";  com = "CCHEX.COM"  },
-    @{ src = "csum.asm";  com = "CCSUM.COM"  }
+    @{ src = "csum.asm";  com = "CCSUM.COM"  },
+    @{ src = "cd64.asm";  com = "CCD64.COM"  },
+    @{ src = "ct64.asm";  com = "CCT64.COM"  },
+    @{ src = "carj.asm";  com = "CCARJ.COM"  },
+    @{ src = "crar.asm";  com = "CCRAR.COM"  },
+    @{ src = "cimg.asm";  com = "CCIMG.COM"  }
 )
 $data = @("cc.ini", "cc.hlp", "da.lng")
 
@@ -59,6 +64,11 @@ Files:
   CCGREP.COM  search contents   (Alt-F8, or CCGREP <word> [dir] [mask])
   CCHEX.COM   hex dump a file   (type CCHEX <file>)
   CCSUM.COM   CRC-32 + size     (type CCSUM <file>)
+  CCD64.COM   browse C64 .d64   (Enter on a .d64; F5 extracts a file)
+  CCT64.COM   browse C64 .t64   (Enter on a .t64; F5 extracts a file)
+  CCARJ.COM   browse .arj       (Enter on a .arj; F5 extracts STORED)
+  CCRAR.COM   browse .rar 4.x   (Enter on a .rar; F5 extracts STORED)
+  CCIMG.COM   view BMP/PCX/GIF  (F3 on a mapped image; VGA mode 13h)
   cc.ini      startup options (sort=, columns=)
   cc.hlp      F1 help text
   da.lng      Danish F-key bar sample -- copy to cc.lng to use it
