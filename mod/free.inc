@@ -30,30 +30,41 @@ foot_one:
         mov     di, footbuf
         mov     byte [di], ' '      ; leading pad against the frame line
         inc     di
-        mov     ax, [bx+P_COUNT]    ; entry count
-        xor     dx, dx
-        push    bx                  ; foot_freekb needs the panel ptr again
-        call    foot_num
-        mov     si, txt_files
-        call    foot_str
-        pop     bx
-        ; optional " <n> tagged " segment (makes the tag flag visible)
+        ; When files are tagged, the total SIZE of the selection is more useful
+        ; than free space, so show "<n> selected  <bytes> bytes" instead.
         push    bx
         call    foot_tagged         ; ax = count of E_ATTR bit-0x40 entries
         pop     bx
         or      ax, ax
-        jz      .notag
-        push    bx
+        jnz     .selected
+        ; ---- default: "<count> Files  <free>K free" ----
+        mov     ax, [bx+P_COUNT]
         xor     dx, dx
+        push    bx
         call    foot_num
-        mov     si, txt_tagw
+        mov     si, txt_files
         call    foot_str
         pop     bx
-.notag:
         call    foot_freekb         ; dx:ax = free KB on this panel's drive
         call    foot_num
         mov     si, txt_kfree
         call    foot_str            ; ends with a trailing pad space
+        jmp     .center
+.selected:
+        ; ---- "<n> selected  <bytes> bytes" ----
+        xor     dx, dx              ; ax still = tagged count
+        push    bx
+        call    foot_num
+        mov     si, txt_seld
+        call    foot_str
+        pop     bx
+        push    bx
+        call    foot_taggedsize     ; dx:ax = summed E_SIZE of tagged entries
+        call    foot_num
+        mov     si, txt_bytes
+        call    foot_str            ; ends with a trailing pad space
+        pop     bx
+.center:
         ; ---- center it in the bottom border ----
         mov     ax, di
         sub     ax, footbuf         ; ax = length
@@ -137,6 +148,30 @@ foot_freekb:
         pop     bx
         ret
 
+; bx = panel ptr -> dx:ax = summed E_SIZE (bytes) of all tagged entries.
+foot_taggedsize:
+        push    bx
+        push    cx
+        push    si
+        mov     cx, [bx+P_COUNT]
+        xor     ax, ax
+        xor     dx, dx
+        jcxz    .d
+        lea     si, [bx+P_ENTRIES]
+.l:
+        test    byte [si+E_ATTR], 40h
+        jz      .n
+        add     ax, [si+E_SIZE]
+        adc     dx, [si+E_SIZE+2]
+.n:
+        add     si, ENTSIZE
+        loop    .l
+.d:
+        pop     si
+        pop     cx
+        pop     bx
+        ret
+
 ; bx = panel ptr -> ax = number of tagged entries (E_ATTR bit 0x40).
 foot_tagged:
         push    bx
@@ -160,5 +195,6 @@ foot_tagged:
         ret
 
 txt_files   db ' Files  ',0
-txt_tagw    db ' tagged  ',0
+txt_seld    db ' selected  ',0
+txt_bytes   db ' bytes ',0
 txt_kfree   db 'K free ',0

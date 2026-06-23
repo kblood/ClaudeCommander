@@ -1876,12 +1876,15 @@ get_key:
         mov     ah, 44h             ; simulate F10
         ret
 .live:
-        cmp     byte [mouse_ok], 0
-        je      .kbonly
 .poll:
+%ifdef FEAT_CLOCK
+        call    clock_tick          ; refresh HH:MM:SS once a second while idle
+%endif
         mov     ah, 1               ; keystroke waiting?
         int     16h
         jnz     .kbonly
+        cmp     byte [mouse_ok], 0
+        je      .poll               ; no mouse -> keep polling (key / clock)
         call    mouse_poll          ; CF=1 -> ax = synthetic key
         jc      .mret
         jmp     .poll

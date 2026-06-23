@@ -46,6 +46,9 @@
     Ctrl-F5 ......... cycle column: size / date / time / attributes
     Ctrl-F6 ......... incremental quick-search
     Ctrl-F7/F8 ...... tag / untag files by *.mask
+    Panel footer .... shows "<n> Files <free>K free"; once you tag files it
+                      shows "<n> selected  <total> bytes" instead. The clock
+                      (command row, right) ticks once a second on its own.
     Ctrl-A .......... edit file attributes (Read-only/Hidden/System/Archive)
     Ctrl-F9 ......... list archive contents (CCZIP)
 

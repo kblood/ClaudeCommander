@@ -5,6 +5,24 @@
 
 A_CLK   equ 00Fh                ; bright white on black (command row bg)
 
+; Idle refresh: called from get_key's poll loop. Redraws the clock only when
+; the second actually changes, so it ticks ~once a second between keystrokes
+; without the cost of redrawing every poll. clk_last seeds to an impossible
+; second so the first idle poll always paints.
+clock_tick:
+        push    ax
+        push    dx
+        mov     ah, 2Ch
+        int     21h                 ; dh = seconds
+        cmp     dh, [clk_last]
+        je      .done
+        mov     [clk_last], dh
+        call    draw_clock
+.done:
+        pop     dx
+        pop     ax
+        ret
+
 draw_clock:
         push    es
         push    ax
@@ -48,3 +66,5 @@ clk_2dig:
         mov     ah, A_CLK
         stosw
         ret
+
+clk_last db 0FFh                ; last second drawn (0FFh = force first paint)
