@@ -75,6 +75,8 @@ _t64test/
 _t64cc/
 _arjtest/
 _arjcc/
+_rartest/
+_rarcc/
 CCVFS.LST
 CCPACK.LST
 LST.TXT

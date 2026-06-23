@@ -27,6 +27,8 @@
                       entries as <name>.PRG (load address restored).
     Enter on a .arj . browse an ARJ archive; F5 / Alt-F9 extract STORED
                       members (compressed members are listed, not yet decoded).
+    Enter on a .rar . browse a RAR 4.x archive; F5 / Alt-F9 extract STORED
+                      members (RAR compression is proprietary -- browse-first).
 
   DISPLAY / SELECT
     Ctrl-F1..F4 ..... sort by name / ext / size / date

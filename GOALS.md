@@ -15,7 +15,7 @@ session (or a scheduled wake-up) continues from here.
 5. Continue to the next goal. Only stop to ask the user if a decision is
    genuinely ambiguous or irreversible.
 
-Last updated: 2026-06-23 — G1–G5 GREEN (ZIP, D64, T64, ARJ browse/extract); starting G6 (CCRAR).
+Last updated: 2026-06-23 — G1–G6 GREEN (ZIP, D64, T64, ARJ, RAR browse/extract); starting G7 ([view] framework).
 
 ## Architecture recap (so each goal stays cheap)
 
@@ -86,8 +86,20 @@ Last updated: 2026-06-23 — G1–G5 GREEN (ZIP, D64, T64, ARJ browse/extract); 
       archive browses all 3 entries and extracts only the 2 stored ones with
       the parser staying aligned, and cc /T browsed + F5-extracted READ.ME
       byte-exact.
-- [ ] **G6 — CCRAR (RAR archive).** `[open]` `rar=CCRAR`. Browse the headers;
-      extract STORED entries (RAR compression is proprietary — browse-first).
+- [x] **G6 — CCRAR (RAR archive).** DONE. New helper `crar.asm` →
+      `ccrar.com` (1,164 B), L/X/XA contract. Validates the RAR 4.x marker
+      ("Rar!\x1a\x07\x00"), declines RAR5 (marker byte 6 = 0x01), then walks
+      the block chain by base header (HEAD_TYPE/FLAGS/SIZE + optional
+      LONG_BLOCK ADD_SIZE). Lists every FILE_HEAD (0x74) using UNP_SIZE and
+      the path-stripped name (NAME_SIZE @+26, name @+32, +40 if LARGE); skips
+      directory dict entries; stops at the end block (0x7b). Extracts METHOD
+      0x30 (STORED, non-encrypted) members byte-for-byte; compressed methods
+      are listed but skipped on extract (RAR LZ is proprietary). `cc.ini`
+      `[open]` gains `rar = CCRAR`. Verified against a hand-built spec-valid
+      RAR4 (correct header CRC-16 + file CRC-32): standalone L/X/XA byte-exact,
+      a mixed stored/compressed archive lists all 3 entries and extracts the 2
+      stored ones (parser staying aligned past the skipped compressed entry),
+      and cc /T browsed + F5-extracted ALPHA.TXT byte-exact.
 
 ### Lister plugins
 - [ ] **G7 — `[view]` framework + F3 dispatch.** Parse a cc.ini `[view]`
