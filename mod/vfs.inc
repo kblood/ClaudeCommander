@@ -434,6 +434,13 @@ key_pack:
         call    vfs_cat
         mov     si, vfs_lpath
         call    vfs_cat
+        ; pass the active dir as the pack-root so members are stored relative to
+        ; it (a packed sub-folder keeps its structure; flat files stay flat)
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        mov     bx, [active]
+        lea     si, [bx+P_PATH]
+        call    vfs_cat
         mov     ax, di
         sub     ax, cmdbuf
         mov     [cmdlen], ax
@@ -447,29 +454,93 @@ key_pack:
 .ret:
         ret
 
-; append "<active P_PATH>\<E_NAME>\r\n" to pack_fh ; si = entry.
-; Skips the . / .. pseudo-entries AND real directories (the packers take a flat
-; file list, not a tree), counting each line actually written in pack_n.
+; Add one selected entry (si) to the pack list. Skips . / .. ; a plain file is
+; written as one line; a directory is walked recursively (pack_tree) so the
+; whole tree is packed (the packer stores paths relative to the active dir).
 pack_write_line:
         cmp     byte [si+E_NAME], '.'
         je      .ret
-        test    byte [si+E_ATTR], 10h   ; directory? -> can't pack, skip
-        jnz     .ret
+        ; rsrc = active P_PATH \ E_NAME  (full path of the entry)
         push    si
         mov     bx, [active]
         lea     si, [bx+P_PATH]
-        mov     di, cmdbuf          ; scratch line (reused before the command)
+        mov     di, rsrc
         call    bp_copy_dir
         pop     si
+        push    si
         lea     si, [si+E_NAME]
-        call    bp_copy_name        ; cmdbuf = path\name + NUL
-        mov     di, cmdbuf
-.fe:
-        cmp     byte [di], 0
-        je      .fd
+        call    bp_copy_name        ; rsrc = full path + NUL
+        pop     si
+        test    byte [si+E_ATTR], 10h
+        jz      .file
+        mov     word [rdepth], 0    ; directory -> recurse
+        call    pack_tree
+        ret
+.file:
+        mov     si, rsrc
+        call    pack_emit
+.ret:
+        ret
+
+; Walk the directory whose ASCIIZ path is in rsrc, writing every file within
+; (recursively) to the pack list. Uses the shared rdepth/dta_stack walker.
+pack_tree:
+        mov     ax, [rdepth]
+        cmp     ax, MAX_DEPTH
+        jae     .ret
+        call    set_dta_cur
+        call    make_findpat        ; findpat = rsrc + "\*.*"
+        mov     ah, 4Eh
+        mov     cx, 37h
+        mov     dx, findpat
+        int     21h
+        jc      .ret
+.loop:
+        call    cur_dta_ptr
+        cmp     byte [bx+1Eh], '.'
+        je      .next               ; '.' or '..'
+        mov     di, rsrc
+        call    strlen_di           ; di -> NUL of rsrc
+        push    di                  ; truncation point
+        mov     byte [di], '\'
         inc     di
-        jmp     .fe
-.fd:
+        call    cur_dta_ptr
+        lea     si, [bx+1Eh]
+        call    bp_copy_name        ; rsrc = child full path
+        call    cur_dta_ptr
+        test    byte [bx+15h], 10h
+        jz      .file
+        inc     word [rdepth]       ; subdirectory -> recurse
+        call    pack_tree
+        dec     word [rdepth]
+        jmp     .after
+.file:
+        mov     si, rsrc
+        call    pack_emit
+.after:
+        pop     di
+        mov     byte [di], 0        ; truncate rsrc back
+.next:
+        call    set_dta_cur         ; recursion changed the DTA -> restore ours
+        mov     ah, 4Fh
+        int     21h
+        jnc     .loop
+.ret:
+        ret
+
+; Append "<ASCIIZ path in si>\r\n" to pack_fh, counting it in pack_n.
+pack_emit:
+        push    si
+        mov     di, cmdbuf
+.cp:
+        mov     al, [si]
+        or      al, al
+        jz      .ce
+        mov     [di], al
+        inc     si
+        inc     di
+        jmp     .cp
+.ce:
         mov     byte [di], 0Dh
         mov     byte [di+1], 0Ah
         mov     cx, di
@@ -480,7 +551,7 @@ pack_write_line:
         mov     dx, cmdbuf
         int     21h
         inc     word [pack_n]
-.ret:
+        pop     si
         ret
 
 ; copy ASCIIZ ds:si -> ds:di INCLUDING the NUL (di left at the NUL).
@@ -514,6 +585,6 @@ s_vfs_a     db ' A ',0
 s_vfs_atl   db ' @',0
 s_vfs_sp    db ' ',0
 s_packto    db 'Pack tagged/cursor to archive:',0
-s_packempty db 'No files to pack - tag files with Ins (dirs are skipped)',0
+s_packempty db 'No files to pack - tag files or folders with Ins',0
 s_defzip    db 'ARCHIVE.ZIP',0
 s_packlst   db 'CCPACK.LST',0

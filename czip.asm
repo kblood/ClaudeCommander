@@ -32,6 +32,7 @@ start:
         mov     byte [xallmode], 0
         mov     byte [amode], 0
         mov     byte [fname], 0
+        mov     byte [a_root], 0
         call    parse_args          ; -> fname (+ lmode if "L" prefix)
         cmp     byte [amode], 0     ; "A" add mode creates a fresh archive
         je      .noadd
@@ -450,6 +451,9 @@ parse_args:
 .addtok:
         mov     di, addlist
         call    read_tok            ; list-of-files path
+        call    skip_sp             ; optional pack-root (strip -> rel sub-paths)
+        mov     di, a_root
+        call    read_tok
         ret
 .islist:
         mov     byte [lmode], 1
@@ -602,6 +606,30 @@ extract_member:
 .nf:
         ret
 
+; Create every intermediate directory along outpath (ignoring "already exists"
+; / invalid-root errors). The final path component (the file) has no trailing
+; separator, so it is never mkdir'd.
+make_dirs:
+        mov     si, outpath
+.md:
+        mov     al, [si]
+        or      al, al
+        jz      .done
+        cmp     al, '\'
+        jne     .adv
+        mov     byte [si], 0        ; terminate at this separator
+        push    si
+        mov     ah, 39h             ; mkdir (errors ignored)
+        mov     dx, outpath
+        int     21h
+        pop     si
+        mov     byte [si], '\'      ; restore
+.adv:
+        inc     si
+        jmp     .md
+.done:
+        ret
+
 ; si -> the target central-directory header
 do_extract:
         mov     cx, [si+28]         ; namelen
@@ -631,25 +659,9 @@ do_extract:
         mov     [e_loff], ax
         mov     ax, [si+44]
         mov     [e_loff+2], ax
-        ; basename = after the last '/' or '\'
-        mov     si, e_name
-        mov     di, e_name
-.fb:
-        mov     al, [si]
-        or      al, al
-        jz      .fbe
-        cmp     al, '/'
-        jne     .fb1
-        lea     di, [si+1]
-.fb1:
-        cmp     al, '\'
-        jne     .fb2
-        lea     di, [si+1]
-.fb2:
-        inc     si
-        jmp     .fb
-.fbe:
-        push    di                  ; basename ptr
+        ; outpath = destdir + '\' + e_name, preserving sub-dirs ('/'->'\') so a
+        ; packed folder tree is recreated. Flat members (no separator) land
+        ; directly in destdir exactly as before.
         mov     si, destdir
         mov     di, outpath
         call    apz
@@ -660,9 +672,22 @@ do_extract:
         mov     byte [di], '\'
         inc     di
 .nos:
-        pop     si                  ; basename
-        call    apz
+        mov     si, e_name
+.cpx:
+        mov     al, [si]
+        or      al, al
+        jz      .cpxe
+        cmp     al, '/'
+        jne     .cpx1
+        mov     al, '\'
+.cpx1:
+        mov     [di], al
+        inc     si
+        inc     di
+        jmp     .cpx
+.cpxe:
         mov     byte [di], 0
+        call    make_dirs           ; create any intermediate sub-directories
         ; read 30-byte local header to resolve data offset
         mov     bx, [fh]
         mov     ax, 4200h
@@ -940,7 +965,7 @@ add_one_file:
         mov     [a_crc], eax
         mov     eax, [a_outpos]
         mov     [a_lhoff], eax
-        call    basename_src
+        call    store_name
         call    write_local_header
         mov     bx, [sfh]
         mov     ax, 4200h           ; rewind for the data copy
@@ -1001,6 +1026,75 @@ basename_src:
         jmp     .sl
 .sd:
         mov     [a_namelen], cx
+        ret
+
+; Decide the name stored in the zip for srcpath.
+; Default = basename. If a_root is set AND srcpath begins with a_root (case-
+; insensitive), store the remainder relative to a_root, with '\' -> '/', so a
+; packed folder tree keeps its sub-directory structure. Sets a_baseptr/a_namelen.
+store_name:
+        call    basename_src        ; fallback = basename
+        cmp     byte [a_root], 0
+        je      .done               ; no root -> flat basename
+        mov     si, srcpath
+        mov     di, a_root
+.pfx:
+        mov     bl, [di]
+        or      bl, bl
+        jz      .matched            ; consumed all of a_root -> prefix matches
+        mov     al, [si]
+        or      al, al
+        jz      .done               ; srcpath shorter than root -> no match
+        ; case-insensitive compare al vs bl
+        cmp     al, 'a'
+        jb      .ua
+        cmp     al, 'z'
+        ja      .ua
+        sub     al, 20h
+.ua:
+        cmp     bl, 'a'
+        jb      .ub
+        cmp     bl, 'z'
+        ja      .ub
+        sub     bl, 20h
+.ub:
+        cmp     al, bl
+        jne     .done               ; mismatch -> keep basename
+        inc     si
+        inc     di
+        jmp     .pfx
+.matched:
+        cmp     byte [si], '\'
+        je      .skipsep
+        cmp     byte [si], '/'
+        jne     .build
+.skipsep:
+        inc     si
+.build:
+        cmp     byte [si], 0        ; empty remainder? (root itself) keep basename
+        je      .done
+        mov     di, storebuf
+        xor     cx, cx
+.cb:
+        mov     al, [si]
+        or      al, al
+        jz      .cbd
+        cmp     al, '\'
+        jne     .nb
+        mov     al, '/'
+.nb:
+        mov     [di], al
+        inc     si
+        inc     di
+        inc     cx
+        cmp     cx, 140
+        jae     .cbd
+        jmp     .cb
+.cbd:
+        mov     byte [di], 0
+        mov     word [a_baseptr], storebuf
+        mov     [a_namelen], cx
+.done:
         ret
 
 write_local_header:
@@ -1601,6 +1695,8 @@ a_count     resw 1
 a_cdptr     resw 1
 a_baseptr   resw 1
 a_namelen   resw 1
+a_root      resb 128                ; optional pack-root to strip -> rel sub-paths
+storebuf    resb 144                ; built relative store name ('/'-separated)
 tok1        resb 128
 fname       resb 128
 fh          resw 1
