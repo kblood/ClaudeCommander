@@ -382,6 +382,10 @@ main_loop:
 ; against KB_ASC rows. No row + printable ascii -> cmd_addchar fallthrough.
 ; AL/AH are preserved into the handler (scratch is DL/DH/CL/SI/BX only).
 dispatch:
+%ifdef FEAT_WIDGETS
+        call    widgets_key         ; input-owning widgets get first refusal
+        jc      .ret                ; a widget claimed (and handled) the key
+%endif
         mov     dl, KB_ASC          ; assume ascii key
         mov     dh, al              ; code to match = al (ascii)
         or      al, al
@@ -2905,7 +2909,8 @@ keytab:
         KEYBIND_EXT 63h, key_qsearch    ; Ctrl-F6  incremental quick-search
 %endif
 %ifdef FEAT_MENUBAR
-        KEYBIND_EXT 43h, key_menubar    ; F9  pull-down menu bar (supersedes pop-up)
+        ; F9 (the pull-down bar) is owned by the menu-bar widget itself --
+        ; see mb_key, claimed through the widgets_key seam. No keytab row.
 %elifdef FEAT_MENU
         KEYBIND_EXT 43h, key_menu       ; F9  pop-up command menu
 %endif

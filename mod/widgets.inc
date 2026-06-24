@@ -30,3 +30,18 @@ widgets_tick:
         call    clock_tick
 %endif
         ret
+
+; Input seam: dispatch offers each keystroke (al=ascii, ah=scan) to every
+; input-owning widget BEFORE walking the keytab, so a modal widget (the
+; pull-down menu) can own its hotkey without a hard-coded row in cc.asm. Each
+; widget exposes an X_key hook that either claims the key -- handling it and
+; returning CF=1 -- or declines with CF=0 (leaving al/ah untouched so dispatch
+; can carry on). Add a widget's key the same way you add its draw: one line.
+widgets_key:
+%ifdef FEAT_MENUBAR
+        call    mb_key              ; the menu bar owns F9 (open the pull-down)
+        jc      .done
+%endif
+        clc                         ; no widget claimed it -> keytab handles it
+.done:
+        ret

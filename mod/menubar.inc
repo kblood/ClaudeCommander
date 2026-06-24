@@ -21,6 +21,24 @@ MB_TOP    equ 1            ; drop-down top-border row (row 0 is the bar)
 A_MB      equ 030h         ; bar / box: black on cyan
 A_MBSEL   equ 070h         ; active title + selected item: black on white
 
+; --- widget key hook --------------------------------------------------------
+; The menu bar is a self-contained widget: it draws through widgets_draw and
+; claims its hotkey through widgets_key. dispatch offers every key here first;
+; we take F9 (extended scan 43h, al=0) and decline everything else, so cc.asm
+; needs no keytab row for the bar -- including this module is all it takes.
+;   in:  al=ascii, ah=scan      out: CF=1 handled (key_menubar ran), else CF=0
+mb_key:
+        or      al, al                  ; F9 is an extended key (al==0)
+        jnz     .no
+        cmp     ah, 43h                 ; F9 scan code
+        jne     .no
+        call    key_menubar
+        stc
+        ret
+.no:
+        clc
+        ret
+
 ; --- F9: drop a menu down from the (already-visible) bar --------------------
 ; The bar itself is drawn every frame by mb_bar_draw (the widget seam); this
 ; just sets mb_active so the bar highlights the current menu, then renders the
