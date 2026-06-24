@@ -519,6 +519,35 @@ tools_add:
         shl     di, 1
         mov     [utool_lbl+di], bx
         mov     [utool_cmd+di], dx
+        mov     word [utool_key+di], 0  ; default: no hotkey
+        ; --- optional 3rd column: a key name (e.g. Alt-F3) -> utool_key ---
+.ksk:
+        mov     al, [si]                ; skip blanks before the key token
+        cmp     al, ' '
+        je      .ksa
+        cmp     al, 9
+        je      .ksa
+        jmp     .kchk
+.ksa:
+        inc     si
+        jmp     .ksk
+.kchk:
+        or      al, al                  ; end of line -> no key
+        jz      .krec
+        cmp     al, 0Dh
+        je      .krec
+        cmp     al, 0Ah
+        je      .krec
+        cmp     al, '-'                 ; the doc's "-" placeholder = no hotkey
+        je      .krec
+        call    parse_key               ; si->token; CF=1 -> dl=class, dh=code
+        jnc     .krec
+        mov     di, [utool_n]
+        shl     di, 1
+        mov     al, dl
+        mov     ah, dh
+        mov     [utool_key+di], ax      ; lo=class, hi=code
+.krec:
         inc     word [utool_n]
 .done:
         ret

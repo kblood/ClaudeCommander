@@ -1,8 +1,8 @@
 # Widget & plugin architecture — the unified component model
 
-Status: **W3a + W1 + W2 + W3 + W4 + W5 SHIPPED (commits e98abf2, e72ce71,
-dacc9b2, c4802ce, 0a97583, + W5 menu half); W5 hotkey-registration deferred.**
-Last updated 2026-06-24. Target: `cc.asm` +
+Status: **W3a + W1 + W2 + W3 + W4 + W5 ALL SHIPPED (commits e98abf2, e72ce71,
+dacc9b2, c4802ce, 0a97583, 993136e + W5b hotkeys). The W1–W5 sequence is
+complete.** Last updated 2026-06-24. Target: `cc.asm` +
 `mod/*.inc`. Extends ROADMAP.md (the four-layer hybrid) and the M1 dispatch seam
 (`plan/m1_dispatch.md`). This doc records the architecture for making *every*
 visible part of cc — clock, file panels, menu bar, and external tools — a
@@ -324,27 +324,38 @@ fires / absent⇒no-op-no-bad-command. NOTE: gating is at the action (handler),
 not yet visual dimming of absent menu rows — that's a cosmetic follow-on; the
 "no surprise" guarantee is delivered.
 
-**W5 — `[tools]` registry. ✅ SHIPPED (menu half; commit 993136e, 2026-06-24).**
-`FEAT_TOOLS_INI` (opt-in, the runtime half §8.7; closure pulls in TOOLS + INI):
-`mod/ini.inc`'s parser gains a `[tools]` section reading `label = program` lines
-into `utool_lbl[]/utool_cmd[]`; at startup `build_tools_menu` (mod/toolsini.inc)
-splices those user rows onto the end of the static built-in Tools drop-down into
-a runtime table `tools_menu_rt` (the menu-bar Tools row now points there). One
-shared handler `run_user_tool` maps the picked row back to its `utool` slot and
-EXECs `"<program> <cursor-path>"` through the existing built-in-Tools path
-(`tools_exec`→`run_command`) — the **action contract**. So dropping a `.COM` and
-adding one `cc.ini` line makes it a Tools-menu entry with no rebuild — the full
-"drop a `.COM`, get a feature" loop for the **menu surface**. Off (the default)
-STD/MIN/FULL are byte-unchanged. `run_toolsini.ps1` proves the user row appears
-alongside the built-ins (and an empty `[tools]` adds nothing).
-DEFERRED (a genuine design fork, not done here): binding a user tool to a
-**hotkey** needs dynamic keytab registration — runtime scan-code allocation +
-conflict policy against the static `keytab`. Left for a follow-on; the menu is
-the self-contained, no-fork surface. Trailing columns in the doc's `[tools]`
-format (`key`/`contract`/`menu`) are parsed-past for now; only `label`+`program`
-are honoured. Present-gating of user tools (hiding a row whose `.COM` is absent)
-is also a follow-on — user-declared tools are taken on faith; `run_command`
-surfaces a missing one the usual way.
+**W5 — `[tools]` registry. ✅ SHIPPED (menu + hotkey; commits 993136e + W5b,
+2026-06-24).** `FEAT_TOOLS_INI` (opt-in, the runtime half §8.7; closure pulls in
+TOOLS + INI; STD/MIN/FULL byte-unchanged — verified byte-identical). A user
+writes `label = program [key]` lines under `[tools]` in `cc.ini` and each one
+becomes BOTH a Tools-menu row AND (if a key is named) a live hotkey — no rebuild.
+The full "drop a `.COM`, get a feature" loop, on both seams.
+- **Parse** (`mod/ini.inc` `tools_add`): `[tools]` section → `label` (left of
+  `=`), `program` (first token right), and an optional 3rd-column key name
+  (`Alt-F3`, `Ctrl-F5`, `Ctrl-K`, …) parsed by `parse_key` into
+  `utool_lbl[]/utool_cmd[]/utool_key[]`. `-` or absent = no hotkey; trailing
+  `contract`/`menu` columns are parsed-past (action contract only).
+- **Menu** (`mod/toolsini.inc` `build_tools_menu`): splices the user rows onto
+  the static built-in Tools drop-down into a runtime table `tools_menu_rt` the
+  menu-bar Tools row points at; `run_user_tool` maps the picked row → its
+  `utool` slot.
+- **Hotkey** (`register_user_hotkeys` → `ukeytab`): each named key, if not
+  already bound, is appended to a small runtime keytab; `dispatch`'s `.nomatch`
+  path consults it via `ukey_dispatch` after the static `keytab` misses, so a
+  dropped-in tool can claim a free key but can **never shadow a core binding**
+  (`keybind_taken` rejects conflicts against both the static table and earlier
+  user keys). `parse_key` understands `[Alt-|Ctrl-|Shift-]Fn` (n=1..10) and
+  `Ctrl-<letter>` structurally (no big name table).
+- Both the menu pick and the hotkey funnel into `exec_user_tool`, which EXECs
+  `"<program> <cursor-path>"` through the built-in-Tools path (`tools_cur_path`
+  FIRST — it clobbers `di` — then build cmdbuf, `tools_exec`→`run_command`).
+`run_toolsini.ps1` is GREEN on all four: the user row shows alongside the
+built-ins; its `Alt-F3` hotkey actually fires (a marker-writing `HELLO.COM`
+proves the EXEC); an empty `[tools]` adds nothing.
+DEFERRED (follow-on, not forks): present-gating of user tools (hiding a row whose
+`.COM` is absent) — user-declared tools are taken on faith and `run_command`
+surfaces a missing one the usual way; and Alt-`<letter>` hotkeys (would need the
+26-entry alt-scan map).
 
 W1–W2 deliver the user's "search results panel" and the find/grep integration.
 W3 delivers "panels are widgets" and the minimal default. W4–W5 deliver "the

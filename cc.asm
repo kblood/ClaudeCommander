@@ -488,6 +488,12 @@ dispatch:
         call    bx                  ; handler ret returns to main_loop
         ret
 .nomatch:
+%ifdef FEAT_TOOLS_INI
+        ; no static binding -> offer the key to runtime [tools] hotkeys (dl=class,
+        ; dh=code still set). A match runs the tool and reports CF=1.
+        call    ukey_dispatch
+        jc      .ret
+%endif
         or      al, al              ; extended key, no binding -> nothing
         jz      .ret
         cmp     al, 20h             ; printable range -> append to cmd line
@@ -3265,10 +3271,13 @@ disc_spec   resb 128        ; FindFirst spec being built ("<dir>\CC*.COM")
 utool_n     resw 1          ; mod/toolsini.inc: cc.ini [tools] entry count
 utool_lbl   resw UTOOL_MAX  ; per-entry menu-label pointer (into utbuf)
 utool_cmd   resw UTOOL_MAX  ; per-entry program-name pointer (into utbuf)
+utool_key   resw UTOOL_MAX  ; per-entry parsed hotkey: lo=class, hi=code (0=none)
 ut_pp       resw 1          ; write cursor within utbuf
 utbuf       resb UTBUF_SZ   ; ASCIIZ storage for the labels + program names
 tools_builtin_n resw 1      ; rows copied from the static mb_tools template
 tools_menu_rt   resw (8+UTOOL_MAX+1)*2  ; runtime Tools drop-down (builtin + user)
+ukey_n      resw 1          ; dynamically-registered user hotkey count
+ukeytab     resb UTOOL_MAX*4 ; rows: db class, db code, dw utool-index (keytab-shaped)
 %endif
 %ifdef FEAT_INI
 INIMAX      equ 1024
