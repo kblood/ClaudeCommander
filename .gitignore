@@ -38,6 +38,9 @@ _hxtest/
 # configurable-editor (cc.ini editor=) test fixture
 _edtest/
 TEDOUT.TXT
+# hex-editor (CCHEXED) test fixture
+_hxedit/
+CCX.KEY
 # checksum (CCSUM) test artifacts
 sumout.txt
 SUMIN.TXT
