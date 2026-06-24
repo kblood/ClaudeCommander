@@ -96,17 +96,22 @@ delete_one:
 ; F5 -- copy: all tagged entries if any, else the cursor entry. Recurses into
 ; directory trees. One confirm for the whole batch.
 key_copy:
+%ifdef FEAT_RESULTS
+        mov     bx, [active]
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        je      .ret                ; copying from a results listing is disabled
+%endif
 %ifdef FEAT_VFS
         mov     bx, [active]
-        cmp     byte [bx+P_VFS], 0
-        je      .activereal
+        cmp     byte [bx+P_VFS], 1  ; only a real container (==1) extracts members
+        jne     .activereal
         jmp     vfs_extract         ; F5 inside a container -> extract member out
 .activereal:
         ; active panel is real; if the OTHER panel is a container, copy the
         ; tagged/cursor files INTO that archive instead of onto the filesystem.
         call    other_panel_ptr
-        cmp     byte [bx+P_VFS], 0
-        je      .notvfs
+        cmp     byte [bx+P_VFS], 1
+        jne     .notvfs
         jmp     vfs_addto           ; F5 -> add files into the other archive
 .notvfs:
 %endif

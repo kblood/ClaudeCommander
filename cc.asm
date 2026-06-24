@@ -65,6 +65,14 @@ P_COUNT     equ 68         ; word: number of entries
 P_TOP       equ 70         ; word: first visible entry index
 P_CUR       equ 72         ; word: cursor entry index (absolute)
 P_VFS       equ 74         ; byte: 1 = this panel is a container (virtual) view
+; P_VFS is really a panel-SOURCE enum (the FEAT_RESULTS work widened it):
+;   SRC_DIR=0 real directory, SRC_VFS=1 archive/container, SRC_RESULT=2 find list.
+; Old code that tested "P_VFS != 0 -> not a real dir" still behaves: a results
+; panel is also "not a real dir". Code that does container things now tests ==1.
+P_SRC       equ 74         ; alias of P_VFS, read as the source enum
+SRC_DIR     equ 0
+SRC_VFS     equ 1
+SRC_RESULT  equ 2
 P_CNAME     equ 76         ; 14 bytes: container filename when P_VFS=1
 P_CPATH     equ 90         ; 64 bytes: path WITHIN the container ('/'-terminated
                            ;   or empty at the archive root) when P_VFS=1
@@ -88,6 +96,14 @@ E_ATTR      equ 14
 E_SIZE      equ 16         ; dword
 E_TIME      equ 20         ; word
 E_DATE      equ 22         ; word
+; FEAT_RESULTS reuses two entry slots on a SRC_RESULT panel ONLY (fenced hard by
+; P_SRC==SRC_RESULT everywhere they are read). HAZARD: a future date/time column
+; feature must not read these on a results panel.
+E_RES_OFF   equ 20         ; (= E_TIME) near offset of the full path in res_heap
+E_RES_LINE  equ 22         ; (= E_DATE) line number (0 for find; used by W2 grep)
+E_ATTR_STATUS equ 08h      ; E_ATTR bit for a non-selectable status row
+                           ;   (unused by 10h dir / 20h archive / 40h tagged)
+RESHEAP_MAX equ 4096       ; packed full-path bytes for the results panel
 
 ; --- data-driven key dispatch -------------------------------------------------
 ; Each binding is a 4-byte row: db class, db code, dw handler. A module can
@@ -195,6 +211,9 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
 %endif
 %ifdef FEAT_MENUBAR
   %define FEAT_WIDGETS          ; the persistent bar draws through the widget seam
+%endif
+%ifdef FEAT_RESULTS
+  %define FEAT_FIND             ; the results panel is populated by Alt-F7 find
 %endif
 
 ; --- panel row geometry (depends on the resolved FEAT set) -------------------
@@ -584,6 +603,13 @@ key_enter:
         mov     cx, [bx+P_COUNT]
         jcxz    .ret
         call    cur_entry_ptr       ; -> si = entry ptr
+%ifdef FEAT_RESULTS
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        jne     .notresult
+        call    results_enter       ; jump to the found file's folder (or inert)
+        ret
+.notresult:
+%endif
         test    byte [si+E_ATTR], 10h
         jz      .file               ; not a directory -> maybe run it
 %ifdef FEAT_VFS
@@ -883,8 +909,8 @@ one_title:
         ; compute strlen(path) -- or the container name when browsing one
         lea     si, [bx+P_PATH]
 %ifdef FEAT_VFS
-        cmp     byte [bx+P_VFS], 0
-        je      .src
+        cmp     byte [bx+P_VFS], 1  ; only a real container shows its archive name;
+        jne     .src                ; SRC_DIR(0) and SRC_RESULT(2) show P_PATH
         lea     si, [bx+P_CNAME]
 .src:
 %endif
@@ -1174,6 +1200,13 @@ init_panel_cwd:
 ; read directory for panel bx into its entry array, then sort -----------------
 read_dir:
         mov     [ppanel], bx
+%ifdef FEAT_RESULTS
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        jne     .notresult
+        ret                         ; synthetic results: nothing on disk to re-read
+                                    ; (refresh_panels must not wipe the list)
+.notresult:
+%endif
 %ifdef FEAT_VFS
         cmp     byte [bx+P_VFS], 0
         je      .notvfs
@@ -1346,6 +1379,15 @@ path_up:
 
 ; go up a folder in the active panel, leaving the cursor on the child we left
 go_parent:
+%ifdef FEAT_RESULTS
+        mov     bx, [active]
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        jne     .notresult_gp
+        mov     byte [bx+P_SRC], SRC_DIR    ; leave results -> the searched folder
+        call    read_dir
+        ret
+.notresult_gp:
+%endif
 %ifdef FEAT_VFS
         mov     bx, [active]
         cmp     byte [bx+P_VFS], 0
@@ -2816,6 +2858,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_FIND
 %include "mod/find.inc"
 %endif
+%ifdef FEAT_RESULTS
+%include "mod/results.inc"
+%endif
 %ifdef FEAT_GREP
 %include "mod/grep.inc"
 %endif
@@ -3139,6 +3184,13 @@ viewbuf     resb VIEW_MAX
 lineoff     resw MAX_VLINES
 %ifdef FEAT_SNAP
 snapbuf     resb 4000
+%endif
+%ifdef FEAT_RESULTS
+rl_end      resw 1             ; bytes read from FINDOUT.TXT into viewbuf
+rl_path     resw 1             ; res_heap ptr of the path currently being parsed
+rl_panel    resw 1             ; the panel being turned into a results list
+rl_namebuf  resb 14            ; basename to land the cursor on after a jump
+res_heap    resb RESHEAP_MAX   ; packed ASCIIZ full paths, one per result row
 %endif
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE

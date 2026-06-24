@@ -55,8 +55,9 @@ function Say($m) { if (-not $Quiet) { Write-Host $m } }
 $catalog = [ordered]@{}
 $deps    = @{}
 $cost    = @{}
+$optin   = @{}
 foreach ($f in (Get-ChildItem (Join-Path $dir "mod") -Filter *.inc | Sort-Object Name)) {
-    $name = $null; $title = ""; $need = @(); $c = 0; $have = $false
+    $name = $null; $title = ""; $need = @(); $c = 0; $opt = $false; $have = $false
     foreach ($ln in [System.IO.File]::ReadLines($f.FullName)) {
         if ($ln -match '^\s*;\s*@feature\s+(\S+)')   { $name = $matches[1].ToUpper(); $have = $true; continue }
         if (-not $have) {
@@ -67,23 +68,28 @@ foreach ($f in (Get-ChildItem (Join-Path $dir "mod") -Filter *.inc | Sort-Object
         if ($ln -match '^\s*;\s*@title\s+(.+?)\s*$') { $title = $matches[1] }
         elseif ($ln -match '^\s*;\s*@needs\s+(.+?)\s*$') { $need = ($matches[1] -split '\s+') | ForEach-Object { $_.ToUpper() } }
         elseif ($ln -match '^\s*;\s*@cost\s+(\d+)')  { $c = [int]$matches[1] }
+        elseif ($ln -match '^\s*;\s*@optin\b')       { $opt = $true }
         elseif ($ln -notmatch '^\s*;' -and $ln -notmatch '^\s*$') { break }   # end of manifest block
     }
     if ($have) {
         $catalog[$name] = $title
         if ($need.Count -gt 0) { $deps[$name] = $need }
         $cost[$name] = $c
+        $optin[$name] = $opt
     }
 }
 if ($catalog.Count -eq 0) { Write-Host "ERROR: no @feature manifests found under mod/."; exit 1 }
 
-$stdSet = @($catalog.Keys)     # STD = every selectable feature; MIN = none.
+# STD = every NON-opt-in feature (mirrors cc.asm's _TIER>=2 block); MIN = none.
+# Opt-in widgets (e.g. RESULTS) stay out of -Base std and must be -Add/-Only'd.
+$stdSet = @($catalog.Keys | Where-Object { -not $optin[$_] })
 
 if ($List) {
     Write-Host "Claude Commander widget catalog (scanned from mod/*.inc):`n"
     foreach ($k in $catalog.Keys) {
         $d = if ($deps.ContainsKey($k)) { "  (needs: " + ($deps[$k] -join ", ") + ")" } else { "" }
-        Write-Host ("  {0,-8} ~{1,5} B  {2}{3}" -f $k, $cost[$k], $catalog[$k], $d)
+        $o = if ($optin[$k]) { "  [opt-in]" } else { "" }
+        Write-Host ("  {0,-8} ~{1,5} B  {2}{3}{4}" -f $k, $cost[$k], $catalog[$k], $d, $o)
     }
     Write-Host "`nExample: .\configure.ps1 -Base min -Add SORT,COLS,VIEWS,HELP -Out cc-tiny.com"
     exit 0

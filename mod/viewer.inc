@@ -17,6 +17,27 @@ key_view:
 .skip:
         ret
 .ok:
+%ifdef FEAT_RESULTS
+        ; on a results panel, view the real found file (its full path), not
+        ; P_PATH+name (the file may live in a subdirectory of the searched dir).
+        mov     bx, [active]
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        jne     .notres
+        call    cur_entry_ptr
+        test    byte [si+E_ATTR], E_ATTR_STATUS
+        jnz     .skip               ; status row -> nothing to view
+        mov     si, [si+E_RES_OFF]  ; full path in res_heap
+        mov     di, targpath
+.rcp:
+        mov     al, [si]
+        mov     [di], al
+        inc     si
+        inc     di
+        or      al, al
+        jnz     .rcp
+        jmp     view_open_builtin
+.notres:
+%endif
         call    build_entry_path    ; targpath = full path (si preserved)
 %ifdef FEAT_VIEW
         ; if the cursor file's extension is in the [view] map, run that viewer

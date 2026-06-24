@@ -25,10 +25,20 @@ key_find:
         mov     bx, [active]
         lea     si, [bx+P_PATH]
         call    find_catz
+%ifdef FEAT_RESULTS
+        mov     si, s_findredir         ; ' >FINDOUT.TXT' (results.inc)
+        call    find_catz
+%endif
         mov     ax, di
         sub     ax, cmdbuf
         mov     [cmdlen], ax
+%ifdef FEAT_RESULTS
+        call    run_helper              ; silent EXEC; matches -> FINDOUT.TXT
+        mov     word [cmdlen], 0
+        call    results_show            ; load them into the other panel + focus it
+%else
         call    run_command
+%endif
 .ret:
         ret
 
