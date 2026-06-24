@@ -1,7 +1,7 @@
 # Widget & plugin architecture — the unified component model
 
-Status: **W3a + W1 + W2 SHIPPED (commits e98abf2, e72ce71, dacc9b2); W3–W5
-pending.** Last updated 2026-06-24. Target: `cc.asm` +
+Status: **W3a + W1 + W2 + W3 SHIPPED (commits e98abf2, e72ce71, dacc9b2,
+c4802ce); W4–W5 pending.** Last updated 2026-06-24. Target: `cc.asm` +
 `mod/*.inc`. Extends ROADMAP.md (the four-layer hybrid) and the M1 dispatch seam
 (`plan/m1_dispatch.md`). This doc records the architecture for making *every*
 visible part of cc — clock, file panels, menu bar, and external tools — a
@@ -296,11 +296,19 @@ assemble is cwd-independent. GREEN: `-Only GREP,RESULTS,VIEW` fits (63,496 B);
 `run_grepresults.ps1` witnesses text+line# in the panel and the viewer landing on
 the line; `run_results.ps1` + the configurator self-test still pass.
 
-**W3 — Widget descriptor table.** Convert `widgets_draw/tick/key` to a single
-`wtab` walker (§2); move footer/clock/menubar to rows; **make the two panels
-widget rows**. Acceptance: behaviourally identical (the `/T` dumps unchanged),
-`FEAT_MIN` table = 2 panel rows only. Mirrors the M1 dispatch refactor's
-"behaviourally identical" bar.
+**W3 — Widget descriptor table. ✅ SHIPPED (commit c4802ce, 2026-06-24).**
+`widgets_draw/tick/key` are now one walker each over a single 8-byte-per-row
+`wtab` (draw_fn, tick_fn, key_fn, region, flags), listed in draw order so the
+table *is* the render sequence; `render_all` = `clear_bg` + `widgets_draw`. The
+two panels are ordinary rows (`draw_panelL/draw_panelR`), and — to reproduce the
+exact old order with a single walker (frames must paint *after* the panels) —
+the frame/command/fkey chrome are core rows too. That makes the seam core: even
+a `FEAT_MIN` build renders through `wtab`, so the `FEAT_MIN` table is the panel
+rows + chrome (not literally "2 rows", but the same observable bare browser).
+`FEAT_WIDGETS` keeps only its dependency/catalog role; `mod/widgets.inc` is a
+code-free stub. Acceptance met: `run_w3_diff.ps1` proves the post-W3 `/T` dump
+is byte-identical to pre-W3 across 8 frames (panels/frames/cmd/fkey/footer/menu-
+bar dropdown); self-test + W1/W2 harnesses still pass.
 
 **W4 — Tool discovery + present-tools gating.** Startup `FindFirst CC*.COM`
 bitmap; gate existing menu items / keybinds on presence. No new UI, just "absent
