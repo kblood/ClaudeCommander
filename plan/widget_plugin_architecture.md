@@ -324,7 +324,7 @@ fires / absent⇒no-op-no-bad-command. NOTE: gating is at the action (handler),
 not yet visual dimming of absent menu rows — that's a cosmetic follow-on; the
 "no surprise" guarantee is delivered.
 
-**W5 — `[tools]` registry. ✅ SHIPPED (menu half; commit TBD, 2026-06-24).**
+**W5 — `[tools]` registry. ✅ SHIPPED (menu half; commit 993136e, 2026-06-24).**
 `FEAT_TOOLS_INI` (opt-in, the runtime half §8.7; closure pulls in TOOLS + INI):
 `mod/ini.inc`'s parser gains a `[tools]` section reading `label = program` lines
 into `utool_lbl[]/utool_cmd[]`; at startup `build_tools_menu` (mod/toolsini.inc)
