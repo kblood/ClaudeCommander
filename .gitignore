@@ -41,6 +41,9 @@ TEDOUT.TXT
 # hex-editor (CCHEXED) test fixture
 _hxedit/
 CCX.KEY
+# pager E-key editor-launch test fixture
+_vedit/
+_relnotes_*.md
 # checksum (CCSUM) test artifacts
 sumout.txt
 SUMIN.TXT
