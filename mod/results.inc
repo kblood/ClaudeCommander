@@ -1,25 +1,42 @@
 ; @feature RESULTS
-; @title   Alt-F7 find -> in-panel results list (Enter jumps to the file)
+; @title   Alt-F7 find / Alt-F8 grep -> in-panel results list (Enter jumps)
 ; @needs   FIND
-; @cost    4700
+; @cost    5200
 ; @optin   not in the default STD set (its ~4 KB heap will not fit there);
 ;          select it explicitly: configure.ps1 -Base std -Remove VFS -Add RESULTS
 ;
 ; mod/results.inc  --  FEAT_RESULTS
-; Turns Alt-F7 (find) from a screen-takeover into an in-cc panel: CCFIND's output
-; is redirected to FINDOUT.TXT, parsed into the inactive panel as a third panel
-; SOURCE (P_SRC = SRC_RESULT), and Enter on a row jumps the panel to that file's
-; folder with the cursor on it. The full path of each row lives in res_heap; the
-; entry carries only the basename (E_NAME) + a near offset into res_heap
-; (E_RES_OFF, aliased over E_TIME -- see the hazard note at the struct defs).
+; Turns Alt-F7 (find) and Alt-F8 (grep, when FEAT_GREP is built) from screen
+; takeovers into an in-cc panel. CCFIND/CCGREP output is redirected to a temp
+; file, parsed into the inactive panel as a third panel SOURCE (P_SRC =
+; SRC_RESULT), and Enter on a row acts on it:
+;   * find row  -> jump the panel to that file's folder, cursor on it.
+;   * grep row  -> open the F3 built-in viewer on the file, scrolled to the line
+;                  (only when FEAT_VIEW is built; otherwise it falls back to the
+;                  find-style folder jump).
+; The full path of each row lives in res_heap; the entry carries the basename
+; (E_NAME, used for the jump and the viewer header), a near offset to the path
+; (E_RES_OFF = E_TIME), and -- for grep rows only -- a line number (E_RES_LINE =
+; E_DATE) and a near offset to the matched text (E_RES_TEXT = E_SIZE low word,
+; which is also the find-vs-grep discriminator: 0 on a find row).
 ;
-; All three entry points are reached only when the active/target panel is a
-; results panel (key_find builds it; key_enter/go_parent/read_dir fork on
-; P_SRC==SRC_RESULT), so the E_TIME/E_DATE alias reuse is fenced.
+; All entry points are reached only when the active/target panel is a results
+; panel (key_find/key_grep build it; key_enter/go_parent/read_dir fork on
+; P_SRC==SRC_RESULT), so the E_SIZE/E_TIME/E_DATE alias reuse is fenced.
 
-; results_show: called by key_find after CCFIND wrote FINDOUT.TXT. Turn the
-; INACTIVE panel into a results list of what we just searched, then focus it.
+; results_show: called by key_find after CCFIND wrote FINDOUT.TXT.
 results_show:
+        mov     byte [rl_grep], 0
+        mov     word [rl_fname], s_findout
+        jmp     results_show_common
+%ifdef FEAT_GREP
+; results_show_grep: called by key_grep after CCGREP wrote GREPOUT.TXT.
+results_show_grep:
+        mov     byte [rl_grep], 1
+        mov     word [rl_fname], s_grepout
+        ; fall through
+%endif
+results_show_common:
         call    other_panel_ptr         ; bx = the panel that is NOT active
         mov     [rl_panel], bx
         ; copy the searched dir (active P_PATH) into the results panel's P_PATH
@@ -32,19 +49,20 @@ results_show:
         rep     movsb
         mov     bx, [rl_panel]
         mov     byte [bx+P_SRC], SRC_RESULT
-        call    results_load            ; bx = panel -> fill entries from FINDOUT.TXT
+        call    results_load            ; bx = panel -> fill entries from the temp file
         mov     bx, [rl_panel]
         mov     [active], bx            ; focus the results
         ret
 
-; results_load: bx = the results panel. Parse FINDOUT.TXT (full path per line,
-; CRLF) into entries + res_heap. Truncates with a single status row.
+; results_load: bx = the results panel. Parse [rl_fname] (find: "<path>\r\n";
+; grep: "<path>:<line>:<text>\r\n") into entries + res_heap. Truncates with a
+; single status row when entries or heap fill.
 results_load:
         mov     [ppanel], bx
         mov     word [bx+P_COUNT], 0
         mov     word [bx+P_TOP], 0
         mov     word [bx+P_CUR], 0
-        mov     dx, s_findout
+        mov     dx, [rl_fname]
         mov     ax, 3D00h               ; open for read
         int     21h
         jc      .done                   ; no file -> empty results
@@ -74,27 +92,29 @@ results_load:
         mov     ax, [bx+P_COUNT]
         cmp     ax, MAX_FILES-1         ; leave one slot for a status row
         jae     .trunc
+%ifdef FEAT_GREP
+        cmp     byte [rl_grep], 0
+        jne     .grep
+%endif
+        ; ---- find row: the whole line is a full path --------------------------
+.find:
         mov     [rl_path], di
-.copy:
+.fcopy:
         mov     ax, si
         sub     ax, viewbuf
         cmp     ax, [rl_end]
-        jae     .eol
-        mov     ax, di                  ; heap bound check BEFORE loading the char
-        sub     ax, res_heap            ; (this clobbers al, so do it first)
-        cmp     ax, RESHEAP_MAX-2       ; room for this char + NUL?
-        jae     .trunc
+        jae     .feol
         mov     al, [si]
         cmp     al, 0Dh
-        je      .eol
+        je      .feol
         cmp     al, 0Ah
-        je      .eol
-        mov     [di], al
+        je      .feol
+        call    heap_putc
+        jc      .trunc
         inc     si
-        inc     di
-        jmp     .copy
-.eol:
-        mov     byte [di], 0
+        jmp     .fcopy
+.feol:
+        mov     byte [di], 0            ; NUL-terminate the path
         inc     di
         mov     ax, di
         dec     ax
@@ -105,9 +125,196 @@ results_load:
         mov     bx, [ppanel]
         mov     ax, [bx+P_COUNT]
         call    entry_ptr               ; si = &entry[count]
-        ; basename = chars after the last '\' in rl_path
+        call    results_set_name        ; E_NAME = basename(rl_path)
+        mov     byte [si+E_ATTR], 20h        ; archive bit -> renders as a file
+        mov     word [si+E_SIZE], 0          ; E_RES_TEXT=0 -> find row; size 0
+        mov     word [si+E_SIZE+2], 0
+        mov     ax, [rl_path]
+        mov     [si+E_RES_OFF], ax           ; (= E_TIME) path ptr
+        mov     word [si+E_RES_LINE], 0      ; (= E_DATE) no line for find
+        mov     bx, [ppanel]
+        inc     word [bx+P_COUNT]
+        pop     di
+        pop     si
+        jmp     .line
+%ifdef FEAT_GREP
+        ; ---- grep row: "<path>:<line>:<text>" --------------------------------
+.grep:
+        mov     [rl_path], di
+        xor     bx, bx                  ; colon counter (the drive ':' is #1)
+.gpath:
+        mov     ax, si
+        sub     ax, viewbuf
+        cmp     ax, [rl_end]
+        jae     .gmal                   ; EOL before a 2nd colon -> malformed
+        mov     al, [si]
+        cmp     al, 0Dh
+        je      .gmal
+        cmp     al, 0Ah
+        je      .gmal
+        cmp     al, ':'
+        jne     .gpstore
+        inc     bx
+        cmp     bx, 2
+        jb      .gpstore                ; first colon = drive -> keep it in the path
+        inc     si                      ; second colon = path/line separator: consume
+        jmp     .gpend
+.gpstore:
+        call    heap_putc
+        jc      .trunc
+        inc     si
+        jmp     .gpath
+.gmal:
+        ; no 2nd colon: treat the whole line as a find-style path row
+        mov     byte [di], 0
+        inc     di
+        mov     ax, di
+        dec     ax
+        cmp     ax, [rl_path]
+        je      .line
+        push    si
+        push    di
+        mov     bx, [ppanel]
+        mov     ax, [bx+P_COUNT]
+        call    entry_ptr
+        call    results_set_name
+        mov     byte [si+E_ATTR], 20h
+        mov     word [si+E_SIZE], 0     ; E_RES_TEXT=0 -> behaves as a find row
+        mov     word [si+E_SIZE+2], 0
+        mov     ax, [rl_path]
+        mov     [si+E_RES_OFF], ax
+        mov     word [si+E_RES_LINE], 0
+        mov     bx, [ppanel]
+        inc     word [bx+P_COUNT]
+        pop     di
+        pop     si
+        jmp     .line                   ; si at CR/LF/EOL -> .line handles it
+.gpend:
+        mov     byte [di], 0            ; NUL-terminate path
+        inc     di
+        ; parse the decimal line number into cx
+        xor     cx, cx
+.gnum:
+        mov     ax, si
+        sub     ax, viewbuf
+        cmp     ax, [rl_end]
+        jae     .gnumdone
+        mov     al, [si]
+        cmp     al, '0'
+        jb      .gnumdone
+        cmp     al, '9'
+        ja      .gnumdone
+        push    ax
+        mov     ax, cx
+        mov     dx, 10
+        mul     dx                      ; ax = cx*10 (overflow into dx ignored)
+        mov     cx, ax
+        pop     ax
+        sub     al, '0'
+        mov     ah, 0
+        add     cx, ax
+        inc     si
+        jmp     .gnum
+.gnumdone:
+        mov     [rl_line], cx
+        ; skip the ':' that separates line number from text, if present
+        mov     ax, si
+        sub     ax, viewbuf
+        cmp     ax, [rl_end]
+        jae     .gtxt
+        cmp     byte [si], ':'
+        jne     .gtxt
+        inc     si
+.gtxt:
+        mov     [rl_text], di
+.gtcopy:
+        mov     ax, si
+        sub     ax, viewbuf
+        cmp     ax, [rl_end]
+        jae     .gteol
+        mov     al, [si]
+        cmp     al, 0Dh
+        je      .gteol
+        cmp     al, 0Ah
+        je      .gteol
+        call    heap_putc
+        jc      .gteol                  ; heap full -> end the text here (row stays valid)
+        inc     si
+        jmp     .gtcopy
+.gteol:
+        mov     byte [di], 0            ; NUL-terminate matched text
+        inc     di
+        push    si
+        push    di
+        mov     bx, [ppanel]
+        mov     ax, [bx+P_COUNT]
+        call    entry_ptr               ; si = &entry[count]
+        call    results_set_name        ; E_NAME = basename (viewer header / jump)
+        mov     byte [si+E_ATTR], 20h
+        mov     ax, [rl_text]
+        mov     [si+E_RES_TEXT], ax          ; (= E_SIZE low) matched-text ptr (nonzero)
+        mov     word [si+E_SIZE+2], 0
+        mov     ax, [rl_path]
+        mov     [si+E_RES_OFF], ax           ; (= E_TIME) path ptr
+        mov     ax, [rl_line]
+        mov     [si+E_RES_LINE], ax          ; (= E_DATE) line number
+        mov     bx, [ppanel]
+        inc     word [bx+P_COUNT]
+        pop     di
+        pop     si
+        jmp     .line                   ; si at CR/LF/EOL -> .line handles it
+%endif
+.skipc:
+        inc     si
+        jmp     .line
+.trunc:
+        mov     bx, [ppanel]
+        mov     ax, [bx+P_COUNT]
+        cmp     ax, MAX_FILES
+        jae     .done
+        call    entry_ptr               ; si = &entry[count]
+        mov     bp, s_resmore
+        lea     di, [si+E_NAME]
+.tc:
+        mov     al, [bp]
+        or      al, al
+        jz      .tce
+        mov     [di], al
+        inc     bp
+        inc     di
+        jmp     .tc
+.tce:
+        mov     byte [di], 0
+        mov     byte [si+E_ATTR], E_ATTR_STATUS
+        mov     word [si+E_RES_TEXT], 0      ; not a grep row (status renders E_NAME)
+        mov     word [si+E_RES_OFF], 0FFFFh
+        mov     bx, [ppanel]
+        inc     word [bx+P_COUNT]
+.done:
+        ret
+
+; store AL into res_heap at di with a bound check. CF=1 (di unchanged) if full.
+; Preserves bx (callers use it for the colon counter / panel ptr).
+heap_putc:
+        push    ax
+        mov     ax, di
+        sub     ax, res_heap
+        cmp     ax, RESHEAP_MAX-4       ; reserve room for two NUL terminators
+        pop     ax
+        jae     .full
+        mov     [di], al
+        inc     di
+        clc
+        ret
+.full:
+        stc
+        ret
+
+; si = entry ptr; copy basename of [rl_path] into E_NAME (<=12 chars). si preserved.
+results_set_name:
+        push    si
         mov     bp, [rl_path]
-        mov     dx, bp
+        mov     dx, bp                  ; dx = start of basename
 .bn:
         mov     al, [bp]
         or      al, al
@@ -131,53 +338,39 @@ results_load:
         loop    .nc
 .nce:
         mov     byte [di], 0
-        mov     byte [si+E_ATTR], 20h        ; archive bit -> renders as a file
-        mov     word [si+E_SIZE], 0          ; size 0 keeps sort/columns harmless
-        mov     word [si+E_SIZE+2], 0
-        mov     ax, [rl_path]
-        mov     [si+E_RES_OFF], ax           ; (= E_TIME) path ptr
-        mov     word [si+E_RES_LINE], 0      ; (= E_DATE) line (W2 grep)
-        mov     bx, [ppanel]
-        inc     word [bx+P_COUNT]
-        pop     di
         pop     si
-        jmp     .line
-.skipc:
-        inc     si
-        jmp     .line
-.trunc:
-        mov     bx, [ppanel]
-        mov     ax, [bx+P_COUNT]
-        cmp     ax, MAX_FILES
-        jae     .done
-        call    entry_ptr               ; si = &entry[count]
-        mov     bp, s_resmore
-        lea     di, [si+E_NAME]
-.tc:
-        mov     al, [bp]
-        or      al, al
-        jz      .tce
-        mov     [di], al
-        inc     bp
-        inc     di
-        jmp     .tc
-.tce:
-        mov     byte [di], 0
-        mov     byte [si+E_ATTR], E_ATTR_STATUS
-        mov     word [si+E_RES_OFF], 0FFFFh
-        mov     bx, [ppanel]
-        inc     word [bx+P_COUNT]
-.done:
         ret
 
-; results_enter: Enter on the active results panel. Inert on the status row;
-; otherwise turn the panel into a real listing of the file's folder and land the
-; cursor on the file.
+; results_view_at_line: si = grep entry. Open the F3 built-in viewer on the
+; file (E_RES_OFF), scrolled to E_RES_LINE. Find rows have E_RES_LINE=0 -> top.
+; The built-in pager (view_open_builtin) is core, so this needs no FEAT_VIEW.
+results_view_at_line:
+        mov     ax, [si+E_RES_LINE]
+        mov     [view_start_line], ax
+        mov     si, [si+E_RES_OFF]      ; full path in res_heap
+        mov     di, targpath
+.cp:
+        mov     al, [si]
+        mov     [di], al
+        inc     si
+        inc     di
+        or      al, al
+        jnz     .cp
+        mov     byte [view_hex], 0
+        jmp     view_open_builtin
+
+; results_enter: Enter on the active results panel. Inert on the status row. A
+; grep row opens the viewer at its line (when FEAT_VIEW is built); a find row
+; turns the panel into a real listing of the file's folder, cursor on the file.
 results_enter:
         mov     bx, [active]
         call    cur_entry_ptr           ; si = entry, ppanel = bx
         test    byte [si+E_ATTR], E_ATTR_STATUS
         jnz     .ret
+        cmp     word [si+E_RES_TEXT], 0 ; grep row -> view at line; find row -> jump
+        je      .findjump
+        jmp     results_view_at_line
+.findjump:
         mov     si, [si+E_RES_OFF]      ; si = full path in res_heap
         ; copy the full path into the active panel's P_PATH (cap 67 + NUL)
         mov     bx, [active]
@@ -269,5 +462,8 @@ results_enter:
         ret
 
 s_findout   db 'FINDOUT.TXT',0
+%ifdef FEAT_GREP
+s_grepout   db 'GREPOUT.TXT',0
+%endif
 s_resmore   db '...(more)',0           ; non-selectable status row (<=12 chars)
 s_findredir db ' >FINDOUT.TXT',0

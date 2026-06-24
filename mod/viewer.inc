@@ -26,16 +26,9 @@ key_view:
         call    cur_entry_ptr
         test    byte [si+E_ATTR], E_ATTR_STATUS
         jnz     .skip               ; status row -> nothing to view
-        mov     si, [si+E_RES_OFF]  ; full path in res_heap
-        mov     di, targpath
-.rcp:
-        mov     al, [si]
-        mov     [di], al
-        inc     si
-        inc     di
-        or      al, al
-        jnz     .rcp
-        jmp     view_open_builtin
+        ; view the real found file at its line (grep rows carry a line number;
+        ; find rows have E_RES_LINE=0 -> open at the top). results.inc owns this.
+        jmp     results_view_at_line
 .notres:
 %endif
         call    build_entry_path    ; targpath = full path (si preserved)
@@ -76,6 +69,22 @@ view_open_builtin:
         mov     ah, 3Eh
         int     21h
         call    view_build_lines
+%ifdef FEAT_RESULTS
+        ; a grep jump asked to open at a specific 1-based line: clamp it to the
+        ; last line and scroll there once (cleared so editor-reloads keep place).
+        mov     ax, [view_start_line]
+        or      ax, ax
+        jz      .nostart
+        dec     ax
+        cmp     ax, [vnlines]
+        jb      .ssok
+        mov     ax, [vnlines]
+        dec     ax
+.ssok:
+        mov     [vtop], ax
+        mov     word [view_start_line], 0
+.nostart:
+%endif
 .loop:
         call    render_view
         cmp     byte [test_mode], 0

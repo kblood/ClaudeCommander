@@ -28,10 +28,20 @@ key_grep:
         call    grep_catz
         mov     si, s_grepmask
         call    grep_catz
+%ifdef FEAT_RESULTS
+        mov     si, s_grepredir         ; ' >GREPOUT.TXT' (results.inc parses it)
+        call    grep_catz
+%endif
         mov     ax, di
         sub     ax, cmdbuf
         mov     [cmdlen], ax
+%ifdef FEAT_RESULTS
+        call    run_helper              ; silent EXEC; matches -> GREPOUT.TXT
+        mov     word [cmdlen], 0
+        call    results_show_grep       ; load them into the other panel + focus it
+%else
         call    run_command
+%endif
 .ret:
         ret
 
@@ -49,3 +59,6 @@ grep_catz:
 s_greppfx       db 'CCGREP ',0
 s_grepmask      db ' *.*',0
 s_grepprompt    db 'Search file contents for (a word):',0
+%ifdef FEAT_RESULTS
+s_grepredir     db ' >GREPOUT.TXT',0
+%endif

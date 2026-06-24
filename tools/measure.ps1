@@ -41,7 +41,9 @@ function Measure-Resident {
         [string]$Out
     )
     $lst = [System.IO.Path]::ChangeExtension($Out, ".lst")
-    & $Nasm -f bin @Defs "$Dir\cc.asm" -o $Out -l $lst 2>&1 | Out-Null
+    # -i "$Dir/" makes include resolution independent of the caller's cwd (cc.asm
+    # pulls mod/*.inc by relative path); without it a non-cc cwd fails to link.
+    & $Nasm -f bin -i "$Dir/" @Defs "$Dir\cc.asm" -o $Out -l $lst 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         if (Test-Path $lst) { Remove-Item $lst -Force -ErrorAction SilentlyContinue }
         return @{ ok = $false; code = 0; resident = 0; out = $Out }

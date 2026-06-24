@@ -263,6 +263,24 @@ print_line:
         jne     .back
         inc     di                  ; step past the LF
 .havels:
+        ; count LFs in [fbuf, ls) -> 1-based line number for this match
+        push    si
+        push    di
+        mov     si, fbuf
+        mov     cx, 1
+.lc:
+        cmp     si, di
+        jae     .lcd
+        cmp     byte [si], 0Ah
+        jne     .lcn
+        inc     cx
+.lcn:
+        inc     si
+        jmp     .lc
+.lcd:
+        mov     [lineno], cx
+        pop     di
+        pop     si
         push    di                  ; save ls
         ; find line end le -> di walks forward to LF or buffer end
         mov     bx, fbuf
@@ -281,6 +299,10 @@ print_line:
         mov     di, linebuf
         mov     si, fpath
         call    catz_di
+        mov     byte [di], ':'
+        inc     di
+        mov     ax, [lineno]        ; emit  <lineno>:  before the line text
+        call    emit_dec_di
         mov     byte [di], ':'
         inc     di
         pop     si                  ; si = ls
@@ -332,6 +354,25 @@ enqueue_child:
         mov     byte [di], 0
         mov     si, tmppath
         call    enqueue
+        ret
+
+; emit unsigned AX as decimal ASCII at [di]; di advanced. clobbers ax/bx/cx/dx.
+emit_dec_di:
+        mov     bx, 10
+        xor     cx, cx              ; digit count
+.dv:
+        xor     dx, dx
+        div     bx                  ; ax = quotient, dx = remainder
+        push    dx
+        inc     cx
+        or      ax, ax
+        jnz     .dv
+.po:
+        pop     ax
+        add     al, '0'
+        mov     [di], al
+        inc     di
+        loop    .po
         ret
 
 ; copy ASCIIZ ds:si -> [di] without the NUL; di advanced.
@@ -464,6 +505,7 @@ linebuf     resb 280
 fh          resw 1
 flen        resw 1
 le_save     resw 1
+lineno      resw 1
 dta         resb 64
 qhead       resw 1
 qtail       resw 1
