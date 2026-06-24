@@ -1,7 +1,7 @@
 # Widget & plugin architecture — the unified component model
 
-Status: **W3a + W1 SHIPPED (commits e98abf2, e72ce71); W2–W5 pending.** Last
-updated 2026-06-24. Target: `cc.asm` +
+Status: **W3a + W1 + W2 SHIPPED (commits e98abf2, e72ce71, dacc9b2); W3–W5
+pending.** Last updated 2026-06-24. Target: `cc.asm` +
 `mod/*.inc`. Extends ROADMAP.md (the four-layer hybrid) and the M1 dispatch seam
 (`plan/m1_dispatch.md`). This doc records the architecture for making *every*
 visible part of cc — clock, file panels, menu bar, and external tools — a
@@ -279,14 +279,22 @@ aliased over `P_VFS`; full paths in `res_heap`, entries carry basename +
 `read_dir` no-ops on `SRC_RESULT` (refresh-clobber fix); F3 views the real path;
 copy disabled from a results panel. `/T` harness `run_results.ps1` GREEN.
 
-**W2 — Grep hits as results.** Extend `SRC_RESULT` rows to carry a line number
-(in `E_RES_LINE` = the `E_DATE` slot, already reserved by W1); Alt-F8 (grep)
-loads hits; Enter opens the F3 viewer at that line. Reuses W1 wholesale.
-NOTE (discovered while scoping): `CCGREP` emits `path:<line-text>` — there is no
-line *number* today. W2 must either add a line counter to `cgrep.asm` (new output
-contract `path:lineno:text`) or drop the jump-to-line and open at the top. Also a
-UX fork: grep rows want to show the matched text, not just the basename. Both are
-real design decisions — pause for the user before implementing.
+**W2 — Grep hits as results. ✅ SHIPPED (commit dacc9b2, 2026-06-24).** Both
+design forks resolved by the user as "Full". `CCGREP` now emits the new contract
+`path:lineno:text` (a LF counter + `emit_dec_di` in `cgrep.asm`). Under
+`FEAT_RESULTS`, Alt-F8 redirects to `GREPOUT.TXT` and loads it as a `SRC_RESULT`
+panel; grep rows show the **matched line text** in the name field and the **line
+number** in the size field (`format_entry_grep`, gated in core `format_entry` by
+`P_SRC==SRC_RESULT && E_RES_TEXT!=0`). `E_RES_TEXT` (= `E_SIZE` low word) holds a
+near offset to the matched text in `res_heap` and is the find-vs-grep row
+discriminator; `E_RES_LINE` (= `E_DATE`) holds the line number. Enter on a grep
+row opens the F3 built-in pager scrolled to the line (`results_view_at_line` +
+`view_start_line`); find rows keep their folder-jump (`E_RES_LINE=0`). The pager
+is core, so no `FEAT_VIEW` dependency. A malformed grep line degrades to a
+find-style row. `measure.ps1` gained `-i "$Dir/"` so the configurator's trial
+assemble is cwd-independent. GREEN: `-Only GREP,RESULTS,VIEW` fits (63,496 B);
+`run_grepresults.ps1` witnesses text+line# in the panel and the viewer landing on
+the line; `run_results.ps1` + the configurator self-test still pass.
 
 **W3 — Widget descriptor table.** Convert `widgets_draw/tick/key` to a single
 `wtab` walker (§2); move footer/clock/menubar to rows; **make the two panels
