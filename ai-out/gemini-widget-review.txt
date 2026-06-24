@@ -1,0 +1,23 @@
+Here is a critical design review.
+
+**1. Architecture Soundness for DOS .COM Constraints**
+
+The architecture is sound. Choosing a compile-time configurator over runtime overlays or a DLL-style model is the correct, conservative choice for a 64KB `.COM` target. It directly addresses the primary constraint by managing the single segment's memory map at build time, ensuring the resident image cannot exceed the limit. The plan's reliance on near pointers for widgets and handlers is consistent and efficient for this model. This approach maximizes stability and performance by avoiding the significant complexity and overhead of dynamic loading in real mode.
+
+**2. Data Contract Analysis**
+
+*   **`P_SRC` Enum Widening:** While a pragmatic way to add new panel sources like search results, widening the `P_VFS` enum is brittle. It creates an implicit contract where functions must now defend against unknown `P_SRC` types, risking bugs if a routine expecting a file entry receives a grep line.
+*   **'L'-Mode Listing Contract:** Reusing the `E_TIME`/`E_DATE` directory entry slots to store a grep line number is a risky memory-saving hack. It creates ambiguous, context-sensitive data structures. Generic functions operating on these entries, like sorting, could misinterpret a line number as a date, leading to incorrect behavior. This tight coupling between the data structure and the specific panel mode is a source of fragility.
+*   **`cc.ini` Tools Registry:** This is a clean, standard contract for integrating external tools, appropriately separating them from the internal widget/plugin model. No issues here.
+
+**3. Flaws, Risks, and Simplifications**
+
+*   **Widget Descriptor Table:** The fixed `(draw/tick/key/region)` structure is efficient but rigid. Adding new global event types in the future would require a breaking change to this core structure and all widget definitions.
+*   **Search-Results Panel:** Cloning `vfs_load` to create `results_load` is a flawed simplification. It will inherit file-specific logic (e.g., sorting by date/size) that is meaningless for text-based search results, leading to a confusing user experience. Furthermore, silently truncating results at `MAX_FILES` severely undermines the utility of the search feature for anything but small result sets; the UI should at least signal that the list is incomplete.
+*   **Configurator & Build System:** The `@feature` manifest and bundled NASM are excellent for configuration and reproducibility. However, the `configure.ps1` script itself introduces a complex layer of tooling. It's another piece of software to debug and maintain, and a bug within it could silently break builds or make development prohibitive.
+
+---
+
+**Single Riskiest Assumption**
+
+The single riskiest assumption is that **the benefits of the custom script-based configurator outweigh its inherent complexity and maintenance cost.** This meta-build system is now a critical dependency. Its correctness is paramount, yet it exists outside the core application's logic and testing harnesses. For a project of this scale, the risk of the build tooling becoming an opaque, fragile barrier to development is higher than the risk of mismanaging `%ifdef`s within the source code itself. A failure in this tooling layer breaks everything.

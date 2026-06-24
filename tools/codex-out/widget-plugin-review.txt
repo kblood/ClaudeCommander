@@ -1,0 +1,21 @@
+**Riskiest Assumption**
+
+The plan assumes the new resident pieces fit. ROADMAP says the default build is already at **64,504 B, about 8 B free**, while the architecture doc still reasons from older ~4.7 KB headroom. `results_load`, `SRC_RESULT` branching, widget walkers, tool discovery, and menu/key registry plumbing will not fit in the default image without an explicit reclaim decision.
+
+**Design Review**
+
+The high-level architecture is sound for a `.COM`: compile-time in-process widgets plus EXEC-based external tools is the right boundary. Do not blur it with far pointers in the widget table yet. In a single-segment `.COM`, `dw near_offset` is correct and cheaper; far-call readiness should stay documentation until overlays exist.
+
+The widget descriptor table is reasonable, but the panel rows need a context problem solved. `panel_draw` for left and right cannot be represented by only a function pointer unless you add tiny left/right thunks or a context byte/pointer. Adding context increases the descriptor size; thunks increase code. Pick one explicitly.
+
+`P_VFS -> P_SRC` is a good evolution, but the dangerous part is compatibility with old boolean checks. Any code doing “nonzero means not real dir” may still work for refresh suppression, but operations like Enter, Backspace, delete, copy, sort, columns, and relist need source-specific behavior. A small source-operation dispatch may be cleaner than scattered 3-way tests.
+
+The `L`-mode producer contract is under-specified. Reusing the VFS listing shape is attractive, but find/grep results need more than `<size> <name>`: full path, display name, maybe attrs/type, optional line, truncation state, parse errors, and path length limits. The existing 24-byte entry shape is unlikely to hold full paths safely. Storing full paths directly in panel entries is probably the weakest data-model point; better store a display row plus an index/offset into the generated `.LST`.
+
+Reusing `E_TIME/E_DATE` for grep line number is acceptable only if fenced hard by `SRC_RESULT`. It should have symbolic aliases like `E_RES_LINE_LO/HI`; otherwise future date/column/render code will eventually misinterpret it.
+
+`results_load` cloning `vfs_load` is a good first implementation, but `MAX_FILES` truncation needs a real UX and data contract. A fake “truncated” entry can break Enter/sort unless marked as non-file metadata.
+
+`cc.ini [tools]` is pragmatic, but parsing hotkeys/contracts/menu names in resident code may cost more than expected. Consider keeping the runtime registry simple and letting the compile-time configurator generate compact tables.
+
+The `@feature` manifest/configurator is directionally good, but `@cost ~300` comments are not a reliable budget mechanism. The configurator should measure actual built sizes per selection, not trust stale annotations. Bundled NASM is fine as packaging, not architecture.

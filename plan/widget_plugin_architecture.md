@@ -307,10 +307,15 @@ model, within DOS's limits.
    loads the clock/panel/menu kind of widget from disk — they are image code. If
    that is ever truly needed it is a Layer-4 overlay (ROADMAP §3 rule 4), out of
    scope here and explicitly deferred.
-2. **Resident wall (~4.7 KB, ROADMAP §1).** The widget table (W3) and
-   `results_load` (W1) are resident and counted. `build.ps1` enforces the wall;
-   if W3+W1 don't fit on `FEAT_FULL`, trade a buffer (viewbuf/MAX_FILES) under a
-   flag, exactly as ROADMAP §1 prescribes — do not silently bust the segment.
+2. **Resident wall — there is NO headroom in the default build.** ROADMAP §0
+   (authoritative, 2026-06-23) records `FEAT_STD` at **64,504 B, ~8 B free** —
+   the ~4.7 KB figure in ROADMAP §1 is stale planning math, superseded. So the
+   widget table (W3) and `results_load` (W1) **cannot** be added to the default
+   image as-is; each requires an explicit reclaim (shrink `viewbuf`/`MAX_FILES`
+   under a flag) OR lives only in a tier the user opts into. This is not a
+   footnote — it is *the* reason the configurator exists (§7): you cannot "add
+   everything," you must choose a subset that fits. `build.ps1` enforces the
+   wall. See §8.1.
 3. **`P_SRC` reuses the `P_VFS` byte** (value 0/1 stay identical), so existing
    `cmp byte [bx+P_VFS],0` sites keep working as "is this a real dir"; only the
    handful that need the 3-way distinction read `P_SRC`. Audit every `P_VFS`
@@ -378,7 +383,10 @@ flag mode for scripts/CI):
 1. Scan `mod/*.inc`, parse the `@feature` manifests → the feature catalogue.
 2. Present toggles grouped by area, each showing its `@cost`; maintain a
    **running resident total against the budget** (the same math `build.ps1`
-   uses — the ~4.7 KB headroom / 64 KB segment wall, ROADMAP §1).
+   uses — the 64 KB segment wall; the default `FEAT_STD` is already at it,
+   64,504 B / ~8 B free per ROADMAP §0). The `@cost` numbers are a *preview*
+   estimate only; the authoritative size is the **actual trial assemble** the
+   configurator runs per selection (§8.5) — never trust the annotation.
 3. Enforce `@needs` dependencies and the mutual exclusions (e.g. menubar vs
    pop-up) so an invalid set can't be chosen.
 4. Refuse / warn when the selection exceeds budget — the configurator is where
@@ -419,7 +427,89 @@ builds + passes its relevant `/T` harnesses. This is independent of W1/W2
 
 ---
 
-## 8. One-paragraph answer for the user
+## 8. Review refinements (codex + gemini, 2026-06-24)
+
+Two independent outside reviews (OpenAI Codex, Google Gemini) read §§0–8. Both
+validated the configurator-over-overlay decision and the compile-time/EXEC
+boundary. These are the concrete amendments their critique forces; where they
+agreed it is noted, since agreement = high confidence.
+
+### 8.1 Budget reality — the riskiest assumption, corrected (codex)
+The default build has ~8 B free, not ~4.7 KB (§6.2). Consequence baked into the
+milestones: **W1 and W3 do not target `FEAT_STD` as-is.** Each new resident
+piece (`results_load`, `SRC_RESULT` branching, the `wtab` walker, discovery,
+registry plumbing) must declare its reclaim: either it lives behind a `FEAT_`
+the user opts into *and* trades a buffer (`viewbuf` 16 KB / `MAX_FILES` 24.7 KB)
+under that flag, or it does not ship resident. The configurator is what makes
+this a *choice* rather than a wall. No milestone is "done" until `build.ps1`
+shows it fits the tier it claims.
+
+### 8.2 Results data model — do NOT store full paths in entries (codex)
+`E_NAME` is 14 B (8.3); a find result is a full path (≤ ~80 B). So
+`results_load` is **not** a straight `vfs_load` clone. Design:
+- a **results path heap** (a flat buffer of NUL-terminated full paths, appended
+  as the `.LST` is parsed) carved under `FEAT_RESULTS` (counts against §8.1);
+- each panel entry stores a **display string** (basename, or a right-truncated
+  path) in `E_NAME` plus a **word offset into the path heap** (reuse a spare
+  entry slot, symbolically named — §8.4) for the real path used on Enter;
+- if the heap fills before `MAX_FILES`, that is the truncation trigger (§8.3),
+  whichever comes first.
+
+### 8.3 Truncation is metadata, not a fake file (codex + gemini, agreed)
+When a result set exceeds `MAX_FILES` or the path heap, show a **non-selectable
+trailing status row** ("… N more, refine the search") rendered by the panel but
+flagged so Enter/sort/tag skip it. Never a silent cap; never a row that Enter
+can act on as if it were a file.
+
+### 8.4 Source-aware operations, not scattered 3-way tests (codex + gemini)
+`P_SRC` widening is brittle if every op sprouts a `cmp P_SRC` ladder. Introduce a
+tiny **source-operation dispatch**: a per-source descriptor of `{enter, parent,
+can_sort, can_tag, relist}` so `SRC_RESULT` cleanly **disables file-centric ops**
+(sort by size/date, column cycle, tag-by-mask) that are meaningless for results,
+and `SRC_DIR`/`SRC_VFS` keep today's behaviour. The grep-line slot reuse gets
+**symbolic aliases** `E_RES_LINE_LO/HI` (= the `E_TIME/E_DATE` offsets) used
+*only* on `SRC_RESULT`, so a future date/column change can grep the alias and
+see the hazard. Both reviewers flagged the raw slot reuse as the top fragility.
+
+### 8.5 Configurator must be thin and self-testing (gemini's riskiest point)
+Gemini's single riskiest assumption: the configurator becomes an opaque, fragile
+meta-build whose failure breaks everything. Mitigations, mandatory:
+- it is a **thin wrapper** over the `-dFEAT_*` flags that already work
+  (`configure.ps1` today), not a reimplementation of the build;
+- its **acceptance self-test** is "reproduce MIN/STD/FULL/CCPOP byte-for-byte"
+  (or behaviourally + `/T` green) from the manifest-driven selection — a
+  regression guard that lives in the repo and runs in CI alongside the harnesses;
+- size is decided by an **actual trial assemble**, not `@cost` annotations
+  (§7.3); `@cost` is a UI preview only.
+
+### 8.6 Panel-as-widget needs a context (codex)
+A single `panel_draw` pointer can't serve both panels. Decision: the widget
+descriptor gains an **optional context word** (the panel pointer for panel rows;
+0/ignored for stateless widgets like the clock), passed in a register to
+`draw/tick/key`. Chosen over two `panel_draw_L/R` thunks because it generalises
+(any future multi-instance widget reuses it) at the cost of one word per row.
+The descriptor stays **near pointers only** — far-pointer columns are deferred
+with overlays (§7.4), both reviewers explicitly warned against adding them now.
+
+### 8.7 [tools] registry — prefer build-time table generation (codex)
+Parsing hotkeys/contracts/menu-names from `cc.ini [tools]` in *resident* code
+costs bytes the default build (§8.1) does not have. Given the configurator
+exists, lean toward **generating the menu/key tables at build time** from the
+manifest + `[tools]`, and keep the *runtime* step to the cheap folder-scan that
+only flips present/absent bits (§3.1). Full runtime `[tools]` parsing becomes an
+opt-in `FEAT_TOOLS_INI` for users who want drop-in-without-rebuild and can spare
+the bytes. (Gemini considered runtime `[tools]` clean; the budget, not
+cleanliness, is why we bias to build-time.)
+
+### 8.8 Descriptor extensibility (gemini, minor)
+Adding a new global hook later shouldn't break every widget. The descriptor's
+hook columns are already **all-optional (0 = none)**, so a new column is
+additive; reserve the `flags` byte for this. Not a blocker; just don't pack the
+struct so tight that growth forces a rewrite.
+
+---
+
+## 9. One-paragraph answer for the user
 
 Yes, it's possible — and cc is already most of the way there. The clock, panels,
 and menu bar are *in-process* widgets: machine code compiled into `cc.com`, which
