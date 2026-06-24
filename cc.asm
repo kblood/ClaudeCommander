@@ -135,6 +135,35 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
         dw      0
 %endmacro
 
+; --- widget descriptor table (the in-process draw/tick/key seam) --------------
+; Every visible part of cc -- the two panels, the frame chrome, the command and
+; fkey rows, and the optional footer/clock/menu-bar -- is one row in wtab. The
+; three walkers (widgets_draw / widgets_tick / widgets_key) each sweep the table
+; calling the one non-zero column, so adding a widget is a single WIDGET row
+; gated by its FEAT_ -- the walkers never change (the keytab pattern, for paint).
+; Rows are listed in DRAW ORDER; the table is the literal render sequence.
+;
+; The walkers + the core rows (panels/frames/cmd/fkeys) are core, so even a
+; FEAT_MIN build (no FEAT_WIDGETS) renders through the table. FEAT_WIDGETS now
+; only marks the presence of the optional overlay widgets; the seam is core.
+WIDGET_SZ   equ 8
+%macro WIDGET 5             ; %1 draw_fn  %2 tick_fn  %3 key_fn  %4 region  %5 flags
+        dw      %1
+        dw      %2
+        dw      %3
+        db      %4
+        db      %5
+%endmacro
+; region ids -- advisory today (documentation + future partial repaint)
+WR_PANL     equ 0          ; left panel content
+WR_PANR     equ 1          ; right panel content
+WR_FRAME    equ 2          ; panel frames (borders)
+WR_CMD      equ 3          ; command row
+WR_FKEY     equ 4          ; function-key row
+WR_FOOT     equ 5          ; free-space / tag footer
+WR_TOP      equ 6          ; top row (menu bar)
+WF_NONE     equ 0
+
 ; --- build profile -> feature set ---------------------------------------------
 ; build.ps1 passes -dFEAT_MIN / -dFEAT_STD / -dFEAT_FULL. A bare `nasm cc.asm`
 ; (no flag) builds as STD. Tiers are cumulative: FULL = STD + heavy features.
@@ -405,10 +434,8 @@ main_loop:
 ; against KB_ASC rows. No row + printable ascii -> cmd_addchar fallthrough.
 ; AL/AH are preserved into the handler (scratch is DL/DH/CL/SI/BX only).
 dispatch:
-%ifdef FEAT_WIDGETS
         call    widgets_key         ; input-owning widgets get first refusal
         jc      .ret                ; a widget claimed (and handled) the key
-%endif
         mov     dl, KB_ASC          ; assume ascii key
         mov     dh, al              ; code to match = al (ascii)
         or      al, al
@@ -768,30 +795,101 @@ set_active_cwd:
 ; ============================================================================
 render_all:
         call    clear_bg
-        ; left panel
+        call    widgets_draw        ; walk wtab in draw order (panels..frames..overlays)
+        ret
+
+; The widget descriptor table -- listed in draw order (= the literal old
+; render_all sequence). Core rows first, then FEAT-gated overlay widgets.
+wtab:
+        WIDGET  draw_panelL, 0,          0,           WR_PANL,  WF_NONE
+        WIDGET  draw_panelR, 0,          0,           WR_PANR,  WF_NONE
+        WIDGET  draw_frames, 0,          0,           WR_FRAME, WF_NONE
+        WIDGET  draw_cmdline,0,          0,           WR_CMD,   WF_NONE
+        WIDGET  draw_fkeys,  0,          0,           WR_FKEY,  WF_NONE
+%ifdef FEAT_FREE
+        WIDGET  draw_foot,   0,          0,           WR_FOOT,  WF_NONE
+%endif
+%ifdef FEAT_CLOCK
+        WIDGET  draw_clock,  clock_tick, 0,           WR_CMD,   WF_NONE
+%endif
+%ifdef FEAT_MENUBAR
+        WIDGET  mb_bar_draw, 0,          mb_key,      WR_TOP,   WF_NONE
+%endif
+wtab_end:
+
+; draw walker: call every non-zero draw_fn, in table order.
+widgets_draw:
+        mov     si, wtab
+.l:
+        cmp     si, wtab_end
+        jae     .done
+        mov     ax, [si]            ; draw_fn
+        or      ax, ax
+        jz      .next
+        push    si
+        call    ax
+        pop     si
+.next:
+        add     si, WIDGET_SZ
+        jmp     .l
+.done:
+        ret
+
+; tick walker: idle refresh -- call every non-zero tick_fn (only the clock today).
+widgets_tick:
+        mov     si, wtab
+.l:
+        cmp     si, wtab_end
+        jae     .done
+        mov     ax, [si+2]          ; tick_fn
+        or      ax, ax
+        jz      .next
+        push    si
+        call    ax
+        pop     si
+.next:
+        add     si, WIDGET_SZ
+        jmp     .l
+.done:
+        ret
+
+; key walker: offer the key (al=ascii, ah=scan) to each non-zero key_fn before
+; the keytab. A widget claims it by returning CF=1; declining widgets leave
+; al/ah untouched. Returns CF=1 if some widget claimed it. al/ah are preserved
+; across the sweep (the walk uses si/dx only).
+widgets_key:
+        mov     si, wtab
+.l:
+        cmp     si, wtab_end
+        jae     .none
+        mov     dx, [si+4]          ; key_fn
+        or      dx, dx
+        jz      .next
+        push    si
+        call    dx
+        pop     si
+        jc      .claimed
+.next:
+        add     si, WIDGET_SZ
+        jmp     .l
+.none:
+        clc
+        ret
+.claimed:
+        stc
+        ret
+
+; panel draw rows: set the panel's screen geometry, then draw it. Tail-call.
+draw_panelL:
         mov     bx, panelL
         mov     byte [pcx], L_CONX
         mov     byte [pcw], L_CONW
-        call    draw_panel
-        ; right panel
+        jmp     draw_panel
+draw_panelR:
         mov     bx, panelR
         mov     byte [pcx], R_CONX
         mov     byte [pcw], R_CONW
-        call    draw_panel
-        call    draw_frames
-        call    draw_cmdline
-        call    draw_fkeys
-%ifdef FEAT_WIDGETS
-        call    widgets_draw        ; status widgets (footer, clock) -- drawn last
-%else
-%ifdef FEAT_FREE
-        call    draw_foot
-%endif
-%ifdef FEAT_CLOCK
-        call    draw_clock
-%endif
-%endif
-        ret
+        jmp     draw_panel
 
 ; fill whole screen with blue spaces ------------------------------------------
 clear_bg:
@@ -2073,13 +2171,7 @@ get_key:
         ret
 .live:
 .poll:
-%ifdef FEAT_WIDGETS
         call    widgets_tick        ; idle refresh (clock ticks once a second)
-%else
-%ifdef FEAT_CLOCK
-        call    clock_tick
-%endif
-%endif
         mov     ah, 1               ; keystroke waiting?
         int     16h
         jnz     .kbonly
