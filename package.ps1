@@ -17,6 +17,7 @@ $bins = @(
     @{ src = "czip.asm";  com = "CCZIP.COM"  },
     @{ src = "cgrep.asm"; com = "CCGREP.COM" },
     @{ src = "chex.asm";  com = "CCHEX.COM"  },
+    @{ src = "chexed.asm";com = "CCHEXED.COM"},
     @{ src = "csum.asm";  com = "CCSUM.COM"  },
     @{ src = "cd64.asm";  com = "CCD64.COM"  },
     @{ src = "ct64.asm";  com = "CCT64.COM"  },
@@ -84,7 +85,8 @@ row), run CCPOP.COM.
 The Tools menu runs the bundled helpers on the cursor / panel files so they
 feel built in: Hex dump (the F3 viewer in hex mode), Checksum, Compare,
 Split file and Wildcard rename. The F3 viewer itself has a built-in HEX
-mode -- open any file with F3 and press H to toggle text <-> hex.
+mode -- open any file with F3 and press H to toggle text <-> hex, or press
+E to edit it (text editor in text mode, CCHEXED hex editor in hex mode).
 
 Files:
   CC.COM      the file manager (run this) -- top pull-down menu bar on F9
@@ -94,6 +96,8 @@ Files:
   CCZIP.COM   list a ZIP        (Ctrl-F9, or CCZIP <zip>)
   CCGREP.COM  search contents   (Alt-F8, or CCGREP <word> [dir] [mask])
   CCHEX.COM   hex dump a file   (type CCHEX <file>)
+  CCHEXED.COM hex EDITOR        (F3 hex view E key, editor=CCHEXED, or
+                                 CCHEXED <file>; F2 saves, Esc quits)
   CCSUM.COM   CRC-32 + size     (type CCSUM <file>)
   CCD64.COM   browse C64 .d64   (Enter on a .d64; F5 extracts a file)
   CCT64.COM   browse C64 .t64   (Enter on a .t64; F5 extracts a file)

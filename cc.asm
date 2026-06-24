@@ -2973,9 +2973,10 @@ s_btn_skp   db '[Skip]',0
 s_btn_all   db '[All]',0
 s_btn_can   db '[Cancel]',0
 s_viewhdr   db '   [ View ]',0
-s_viewbar   db ' Up/Dn PgUp/PgDn Home/End: scroll    H: hex    Esc/F3: quit',0
+s_viewbar   db ' Up/Dn PgUp/PgDn Home/End scroll   H hex   E edit   Esc/F3 quit',0
 s_hexhdr    db '   [ Hex ]',0
-s_hexbar    db ' Up/Dn PgUp/PgDn Home/End: scroll    H: text   Esc/F3: quit',0
+s_hexbar    db ' Up/Dn PgUp/PgDn Home/End scroll   H text  E hex-edit   Esc/F3 quit',0
+s_cchexed   db 'CCHEXED',0
 
 active      dw 0
 ppanel      dw 0
@@ -3127,6 +3128,7 @@ vlen        resw 1
 vtop        resw 1
 vnlines     resw 1
 view_hex    resb 1             ; 0 = text pager, 1 = hex dump (toggled by H)
+view_edit_req resb 1           ; E in the pager -> launch an editor, then reload
 viewbuf     resb VIEW_MAX
 lineoff     resw MAX_VLINES
 %ifdef FEAT_SNAP

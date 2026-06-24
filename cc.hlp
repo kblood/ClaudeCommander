@@ -38,6 +38,9 @@
     Built-in pager: Up/Dn/PgUp/PgDn/Home/End scroll; press H to toggle
     between TEXT and a built-in HEX dump (offset / 16 bytes / ASCII) of the
     same file -- no external program; Esc or F3 quits.
+    Press E to edit the file you are viewing: in TEXT mode it opens the
+    configured editor (see CONFIG below); in HEX mode it opens CCHEXED, the
+    bundled hex editor. cc reloads the file when the editor exits.
     Shipped viewers: CCIMG (bmp/pcx/gif, VGA mode 13h) and CCWAV (PCM
     .wav via the Sound Blaster). Press a key / ESC to return to cc.
 
@@ -78,6 +81,9 @@
 
   EXTERNAL TOOLS (type the name at the prompt, then Enter)
     CCHEX <file> .... hex + ASCII dump of any file (binary viewer)
+    CCHEXED <file> .. overwrite-only hex editor: arrows move a byte cursor,
+                      type hex digits to overwrite, F2 saves, Esc quits
+                      (also the F3 hex view's E key and editor = CCHEXED)
     CCSUM <file> .... CRC-32 + byte size (verify two files match)
     CCGREP w d m .... search file contents (also Alt-F8)
     CCFIND p d ...... find files by name (also Alt-F7)

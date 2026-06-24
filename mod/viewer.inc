@@ -31,10 +31,14 @@ key_view:
 ; Open targpath into viewbuf and run the built-in pager. Reached by F3's text
 ; path above and (with view_hex preset) by key_hexview from the Tools menu.
 view_open_builtin:
+        mov     word [vtop], 0
+        mov     byte [view_edit_req], 0
+        mov     byte [mouse_mode], MM_OFF  ; ignore panel clicks while viewing
+.reload:                            ; (re)read targpath into viewbuf
         mov     ax, 3D00h
         mov     dx, targpath
         int     21h
-        jc      .ret
+        jc      .close              ; open failed -> bail (restores mouse mode)
         mov     [fh_src], ax
         mov     bx, ax
         mov     ah, 3Fh
@@ -46,8 +50,6 @@ view_open_builtin:
         mov     ah, 3Eh
         int     21h
         call    view_build_lines
-        mov     word [vtop], 0
-        mov     byte [mouse_mode], MM_OFF  ; ignore panel clicks while viewing
 .loop:
         call    render_view
         cmp     byte [test_mode], 0
@@ -56,9 +58,62 @@ view_open_builtin:
 .nk:
         call    get_key
         call    view_move           ; update vtop; CF=1 -> quit
-        jnc     .loop
+        jc      .close
+        cmp     byte [view_edit_req], 0
+        je      .loop
+        mov     byte [view_edit_req], 0
+        call    view_launch_editor  ; run CCHEXED / configured editor on the file
+        jmp     .reload             ; the file may have changed -> re-read it
+.close:
         mov     byte [mouse_mode], MM_BROWSER
 .ret:
+        ret
+
+; Launch an editor on the file currently in the pager (targpath). In hex mode
+; that's CCHEXED; in text mode it's the configured editor (editor_name). Built
+; as "<prog> <targpath>" in cmdbuf, run visibly via run_command. Reached by the
+; E key in view_move.
+view_launch_editor:
+        mov     di, cmdbuf
+        cmp     byte [view_hex], 0
+        jne     .hex
+%ifdef FEAT_EDIT
+        mov     si, editor_name     ; text mode -> configured editor
+.cn1:   mov     al, [si]
+        or      al, al
+        jz      .arg
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .cn1
+%else
+        ret                         ; no editor configured in this build
+%endif
+.hex:
+        mov     si, s_cchexed       ; hex mode -> CCHEXED
+.cn2:   mov     al, [si]
+        or      al, al
+        jz      .arg
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .cn2
+.arg:
+        mov     byte [di], ' '
+        inc     di
+        mov     si, targpath
+.cp:    mov     al, [si]
+        or      al, al
+        jz      .fin
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .cp
+.fin:
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_command
         ret
 
 %ifdef FEAT_VIEW
@@ -112,11 +167,19 @@ view_move:
         je      .hex
         cmp     al, 'H'
         je      .hex
+        cmp     al, 'e'             ; open this file in an editor
+        je      .edit
+        cmp     al, 'E'
+        je      .edit
         clc
         ret
 .hex:
         xor     byte [view_hex], 1  ; flip mode; restart at the top
         mov     word [vtop], 0
+        clc
+        ret
+.edit:
+        mov     byte [view_edit_req], 1  ; handled by view_open_builtin's loop
         clc
         ret
 .up:
