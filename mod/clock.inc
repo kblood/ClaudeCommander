@@ -1,3 +1,8 @@
+; @feature CLOCK
+; @title   live HH:MM:SS clock on the command row
+; @needs   WIDGETS
+; @cost    95
+;
 ; mod/clock.inc  --  FEAT_CLOCK
 ; Draws HH:MM:SS at the right end of the command row (row 23, cols 71-78).
 ; Hooked from render_all (after draw_cmdline), so it redraws on every frame.

@@ -1,3 +1,7 @@
+; @feature SEARCH
+; @title   incremental quick-search (Ctrl-F6)
+; @cost    250
+;
 ; mod/search.inc  --  FEAT_SEARCH
 ; Norton-style incremental quick-search.  Bound to Ctrl-F6.  Runs its own
 ; key sub-loop (sharing get_key, so the /T harness drives it too): printable

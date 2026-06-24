@@ -1,3 +1,7 @@
+; @feature ZIP
+; @title   Ctrl-F9 list archive contents (CCZIP)
+; @cost    90
+;
 ; mod/zip.inc  --  FEAT_ZIP
 ; Ctrl-F9 lists the contents of the archive under the cursor by launching the
 ; external CCZIP.COM (which parses the ZIP central directory) via run_command.

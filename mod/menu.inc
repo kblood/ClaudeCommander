@@ -1,3 +1,7 @@
+; @feature MENU
+; @title   pop-up command menu (F9)
+; @cost    350
+;
 ; mod/menu.inc  --  FEAT_MENU
 ; F9 pop-up command menu.  A data-driven {label, handler} table (menu_tbl) is
 ; drawn as a bordered drop-down at top-left; Up/Down move the highlight, Enter

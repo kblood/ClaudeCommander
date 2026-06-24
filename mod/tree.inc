@@ -1,3 +1,7 @@
+; @feature TREE
+; @title   Alt-F10 modal directory-tree browser
+; @cost    875
+;
 ; mod/tree.inc  --  FEAT_TREE
 ; A modal directory-tree browser, opened with Alt-F10 (NC's own "tree" key).
 ;

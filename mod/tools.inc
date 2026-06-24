@@ -1,3 +1,8 @@
+; @feature TOOLS
+; @title   Tools menu-bar pull-down: hex/checksum/compare/split/rename
+; @needs   MENUBAR
+; @cost    510
+;
 ; mod/tools.inc  --  FEAT_TOOLS
 ; A "Tools" pull-down (added to the menu bar) that runs the external helper
 ; .COMs on the cursor / panel files so they feel built in. Each item just

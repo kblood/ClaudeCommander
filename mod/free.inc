@@ -1,3 +1,8 @@
+; @feature FREE
+; @title   panel footer: file count / free space / tagged size
+; @needs   WIDGETS
+; @cost    385
+;
 ; mod/free.inc  --  FEAT_FREE
 ; File-count + free-space footer drawn into each panel's bottom frame border.
 ; Hooked from render_all AFTER draw_frames (so it overwrites the plain border

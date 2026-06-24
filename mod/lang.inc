@@ -1,3 +1,8 @@
+; @feature LANG
+; @title   translatable F-key bar (cc.lng)
+; @needs   INI
+; @cost    110
+;
 ; mod/lang.inc  --  FEAT_LANG
 ; Optional UI translation.  If cc.lng exists, its first 10 lines replace the
 ; ten function-key bar labels (fk_tbl entries) -- the most visible UI text.

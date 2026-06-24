@@ -1,3 +1,7 @@
+; @feature FIND
+; @title   Alt-F7 find files (CCFIND)
+; @cost    120
+;
 ; mod/find.inc  --  FEAT_FIND
 ; Alt-F7 finds files by name across the active panel's directory tree.  Prompts
 ; for a pattern, then launches the external CCFIND.COM (which walks the tree and

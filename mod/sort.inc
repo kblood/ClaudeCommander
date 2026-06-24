@@ -1,3 +1,7 @@
+; @feature SORT
+; @title   sort by name/ext/size/date (Ctrl-F1..F4)
+; @cost    60
+;
 ; mod/sort.inc  --  FEAT_SORT
 ; Sort-order selection. The comparison logic lives in core order_cmp (driven
 ; by [sort_mode]); this module just provides the key handlers that set the

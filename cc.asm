@@ -178,6 +178,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
   %define FEAT_INI
 %endif
 %ifdef FEAT_VIEW
+  %define FEAT_VFS              ; run_view_helper uses vfs_cat (lives in vfs.inc)
   %define FEAT_INI
 %endif
 %ifdef FEAT_LANG

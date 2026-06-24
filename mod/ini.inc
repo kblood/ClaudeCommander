@@ -1,3 +1,7 @@
+; @feature INI
+; @title   cc.ini / cc.lng config parsing (needed by several below)
+; @cost    2245
+;
 ; mod/ini.inc  --  FEAT_INI
 ; Minimal cc.ini reader, run once at startup before the panels are read.  Parses
 ; "key = value" lines (";", "#" and "[section]" lines ignored) and applies the

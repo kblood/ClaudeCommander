@@ -1,3 +1,7 @@
+; @feature MASK
+; @title   tag/untag files by *.mask (Ctrl-F7/F8)
+; @cost    210
+;
 ; mod/mask.inc  --  FEAT_MASK
 ; Select / deselect a group of files by wildcard (Norton "Gray +/-").  Bound to
 ; Ctrl-F7 (select) and Ctrl-F8 (deselect): prompt for a pattern like "*.TXT",

@@ -1,3 +1,7 @@
+; @feature HELP
+; @title   built-in help pager (F1, reads cc.hlp)
+; @cost    90
+;
 ; mod/help.inc  --  FEAT_HELP
 ; F1 shows the help file cc.hlp through the built-in viewer.  Reuses the
 ; viewer's line-builder and scroller (view_build_lines / render_view /

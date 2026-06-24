@@ -1,3 +1,8 @@
+; @feature VIEW
+; @title   [view] map: per-extension external viewers (F3)
+; @needs   VFS
+; @cost    150
+;
 ; mod/viewer.inc  --  extracted from cc.asm (M1 module split, byte-identical)
 ; Plain implicit-text code only; no section/equ/macro (see plan/m1_split.md).
 

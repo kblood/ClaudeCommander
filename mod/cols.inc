@@ -1,3 +1,7 @@
+; @feature COLS
+; @title   cycle the right column: size/date/time/attrs (Ctrl-F5)
+; @cost    260
+;
 ; mod/cols.inc  --  FEAT_COLS
 ; Cycle the panel's right-hand column between size / date / time. The actual
 ; rendering is in core format_entry (gated on [col_mode]); this module owns

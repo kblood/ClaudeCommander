@@ -1,3 +1,7 @@
+; @feature EDIT
+; @title   F4 launches the CCEDIT external editor
+; @cost    115
+;
 ; mod/edit.inc  --  FEAT_EDIT
 ; F4 launches an external editor on the current file.  Builds
 ; "<editor> <fullpath>" onto the command line and reuses run_command (the same

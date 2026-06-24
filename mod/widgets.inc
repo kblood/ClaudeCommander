@@ -1,3 +1,7 @@
+; @feature WIDGETS
+; @title   status-widget draw/tick/key seam (needed by CLOCK, FREE, MENUBAR)
+; @cost    15
+;
 ; mod/widgets.inc  --  FEAT_WIDGETS
 ; The status-widget seam. render_all calls widgets_draw once per frame; the idle
 ; poll loop in get_key calls widgets_tick. Each fans out to whatever status

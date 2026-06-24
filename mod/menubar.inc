@@ -1,3 +1,8 @@
+; @feature MENUBAR
+; @title   NC-style pull-down menu bar (F9; supersedes the MENU pop-up)
+; @needs   WIDGETS
+; @cost    675
+;
 ; mod/menubar.inc  --  FEAT_MENUBAR
 ; The Norton-Commander pull-down MENU BAR: a horizontal strip of menu titles
 ; (Files / Commands / Options) across the top row, each opening a vertical

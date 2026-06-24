@@ -1,3 +1,7 @@
+; @feature VIEWS
+; @title   panel body view modes (brief 3-column; Ctrl-F10)
+; @cost    415
+;
 ; mod/views.inc  --  FEAT_VIEWS
 ; Panel BODY view modes, as a small REGISTRY of body widgets. The panel body is
 ; a swappable widget selected by P_VIEW; each view registers one row in view_tab

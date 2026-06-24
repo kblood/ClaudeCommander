@@ -1,3 +1,7 @@
+; @feature GREP
+; @title   Alt-F8 search file contents (CCGREP)
+; @cost    125
+;
 ; mod/grep.inc  --  FEAT_GREP
 ; Alt-F8 searches file *contents* across the active panel's directory tree.
 ; Prompts for a word, then launches the external CCGREP.COM (which walks the

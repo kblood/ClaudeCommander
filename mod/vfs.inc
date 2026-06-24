@@ -1,3 +1,8 @@
+; @feature VFS
+; @title   browse archives (.zip/.d64/...) as folders
+; @needs   INI
+; @cost    2440
+;
 ; mod/vfs.inc  --  FEAT_VFS: browse container files (ZIP, ...) as folders.
 ;
 ; A panel is either a REAL directory or a VIRTUAL container view (P_VFS=1).

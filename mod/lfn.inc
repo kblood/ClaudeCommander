@@ -1,3 +1,8 @@
+; @feature LFN
+; @title   long-filename display when an LFN provider is active
+; @needs   INI
+; @cost    90
+;
 ; mod/lfn.inc  --  FEAT_LFN
 ; On-demand long-name display for the CURSOR entry only.  Storing a 255-byte
 ; long name for every directory entry would blow the 64 KB segment, so the

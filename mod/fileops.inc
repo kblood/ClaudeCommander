@@ -1,3 +1,5 @@
+; @core (always compiled in; not a selectable feature)
+;
 ; mod/fileops.inc  --  extracted from cc.asm (M1 module split, byte-identical)
 ; Plain implicit-text code only; no section/equ/macro (see plan/m1_split.md).
 

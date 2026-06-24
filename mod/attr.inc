@@ -1,3 +1,8 @@
+; @feature ATTR
+; @title   Ctrl-A edit file attributes
+; @needs   INI
+; @cost    355
+;
 ; mod/attr.inc  --  FEAT_ATTR
 ; Ctrl-A edits the cursor file's DOS attributes (Read-only / Hidden / System /
 ; Archive).  Reads the current bits with INT 21h 4300h, runs a small key
