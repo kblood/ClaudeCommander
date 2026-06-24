@@ -38,7 +38,7 @@ New-Item -ItemType Directory -Path $out | Out-Null
 Write-Host "Assembling binaries ->" $out
 foreach ($b in $bins) {
     $target = "$out\$($b.com)"
-    & $nasm -f bin "$dir\$($b.src)" -o $target 2>&1
+    & $nasm -f bin -i "$dir/" "$dir\$($b.src)" -o $target 2>&1
     if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: $($b.src)"; exit 1 }
     $sz = (Get-Item $target).Length
     "{0,-12} {1,7:N0} B  <- {2}" -f $b.com, $sz, $b.src | Write-Host
@@ -54,7 +54,7 @@ $popDefs = @(
     "-dFEAT_ZIP","-dFEAT_ATTR","-dFEAT_VFS","-dFEAT_VIEW","-dFEAT_INI",
     "-dFEAT_LANG","-dFEAT_LFN"
 )
-& $nasm -f bin @popDefs "$dir\cc.asm" -o "$out\CCPOP.COM" 2>&1
+& $nasm -f bin -i "$dir/" @popDefs "$dir\cc.asm" -o "$out\CCPOP.COM" 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: CCPOP.COM"; exit 1 }
 "{0,-12} {1,7:N0} B  <- cc.asm (pop-up menu)" -f "CCPOP.COM", (Get-Item "$out\CCPOP.COM").Length | Write-Host
 
@@ -76,9 +76,15 @@ Claude Commander (cc) -- portable distribution
 Run CC.COM to start the file manager. Press F1 inside for the key reference.
 
 CC.COM shows a Norton-style pull-down MENU BAR across the top row
-(Files / Commands / Options) -- press F9 to drop a menu down, Left/Right to
-switch menus, Up/Down + Enter to run an item, Esc to close. If you'd rather
-have the classic single pop-up menu (and one extra file row), run CCPOP.COM.
+(Files / Commands / Options / Tools) -- press F9 to drop a menu down,
+Left/Right to switch menus, Up/Down + Enter to run an item, Esc to close.
+If you'd rather have the classic single pop-up menu (and one extra file
+row), run CCPOP.COM.
+
+The Tools menu runs the bundled helpers on the cursor / panel files so they
+feel built in: Hex dump (the F3 viewer in hex mode), Checksum, Compare,
+Split file and Wildcard rename. The F3 viewer itself has a built-in HEX
+mode -- open any file with F3 and press H to toggle text <-> hex.
 
 Files:
   CC.COM      the file manager (run this) -- top pull-down menu bar on F9
