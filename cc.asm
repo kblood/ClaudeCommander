@@ -2753,6 +2753,10 @@ VIEW_MAX    equ 14336           ; built-in pager byte cap (14 KB; larger files
                                 ;   the resident image under the std 63 KB wall.
 MAX_VLINES  equ 1024
 VIEW_ROWS   equ 23             ; text rows 1..23 (row 0 header, row 24 bar)
+VIEW_TOP    equ 1              ; viewer content first row -- the full-screen pager
+                              ; owns rows 0(header)..24(bar) regardless of the
+                              ; panel's FIRST_ROW (which shifts under a menubar)
+HEXW        equ 75             ; hex line width: 8 off + 2 + 16*3 + 1 + 16 ASCII
 A_VHDR      equ 030h           ; black on cyan header
 A_VTXT      equ 007h           ; grey on black text
 A_VBAR      equ 030h           ; black on cyan bottom bar
@@ -2960,7 +2964,9 @@ s_btn_skp   db '[Skip]',0
 s_btn_all   db '[All]',0
 s_btn_can   db '[Cancel]',0
 s_viewhdr   db '   [ View ]',0
-s_viewbar   db ' Up/Dn PgUp/PgDn Home/End: scroll      Esc or F3: quit',0
+s_viewbar   db ' Up/Dn PgUp/PgDn Home/End: scroll    H: hex    Esc/F3: quit',0
+s_hexhdr    db '   [ Hex ]',0
+s_hexbar    db ' Up/Dn PgUp/PgDn Home/End: scroll    H: text   Esc/F3: quit',0
 
 active      dw 0
 ppanel      dw 0
@@ -3111,6 +3117,7 @@ m_lastpan   resw 1
 vlen        resw 1
 vtop        resw 1
 vnlines     resw 1
+view_hex    resb 1             ; 0 = text pager, 1 = hex dump (toggled by H)
 viewbuf     resb VIEW_MAX
 lineoff     resw MAX_VLINES
 %ifdef FEAT_SNAP

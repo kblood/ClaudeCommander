@@ -30,6 +30,9 @@
   VIEWERS (the [view] map in cc.ini selects a viewer per extension)
     F3 on a mapped file runs "<viewer> <file>"; unmapped files use the
     built-in text pager. e.g.  [view]  gif = CCIMG
+    Built-in pager: Up/Dn/PgUp/PgDn/Home/End scroll; press H to toggle
+    between TEXT and a built-in HEX dump (offset / 16 bytes / ASCII) of the
+    same file -- no external program; Esc or F3 quits.
     Shipped viewers: CCIMG (bmp/pcx/gif, VGA mode 13h) and CCWAV (PCM
     .wav via the Sound Blaster). Press a key / ESC to return to cc.
 

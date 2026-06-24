@@ -4,6 +4,7 @@ dbstaging/
 *.zip
 # build + test artifacts
 *.com
+*.lst
 CCDUMP.TXT
 CCSNAP.BIN
 _snap*.txt
@@ -32,6 +33,8 @@ grepout.txt
 # hex (CCHEX) test artifacts
 hexout.txt
 HEXIN.TXT
+# built-in hex-view (F3 H) test fixture
+_hxtest/
 # checksum (CCSUM) test artifacts
 sumout.txt
 SUMIN.TXT
