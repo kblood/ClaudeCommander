@@ -1,6 +1,7 @@
 # Widget & plugin architecture — the unified component model
 
-Status: **design, ready to stage.** Last updated 2026-06-24. Target: `cc.asm` +
+Status: **W3a + W1 SHIPPED (commits e98abf2, e72ce71); W2–W5 pending.** Last
+updated 2026-06-24. Target: `cc.asm` +
 `mod/*.inc`. Extends ROADMAP.md (the four-layer hybrid) and the M1 dispatch seam
 (`plan/m1_dispatch.md`). This doc records the architecture for making *every*
 visible part of cc — clock, file panels, menu bar, and external tools — a
@@ -269,16 +270,23 @@ cc," and it generalises to any future producer.
 Ordered so each step ships a visible win and de-risks the next. Each is its own
 GREEN-then-commit unit per the project's autonomy rule.
 
-**W1 — Producer contract + search-results panel (the visible win).**
-Add `SRC_RESULT` + `results_load` (clone `vfs_load`, parse full-path lines) +
-wire Alt-F7 (find) to run `CCFIND` in `L`-mode with redirect and load the result
-into the inactive panel. Enter on a result jumps to the file. `/T` harness:
-Alt-F7 with a scripted pattern → results panel renders → Enter → panel at target.
-*This is the agreed next step; do it first.*
+**W1 — Producer contract + search-results panel (the visible win). ✅ SHIPPED
+(commit e72ce71, 2026-06-24).** `mod/results.inc` (`FEAT_RESULTS`, opt-in):
+`results_show`/`results_load`/`results_enter`. `P_SRC` enum (SRC_DIR/VFS/RESULT)
+aliased over `P_VFS`; full paths in `res_heap`, entries carry basename +
+`E_RES_OFF` (over `E_TIME`). Alt-F7 runs `CCFIND` via `run_helper` → `FINDOUT.TXT`
+→ inactive panel; Enter jumps to the file's folder with the cursor on it.
+`read_dir` no-ops on `SRC_RESULT` (refresh-clobber fix); F3 views the real path;
+copy disabled from a results panel. `/T` harness `run_results.ps1` GREEN.
 
 **W2 — Grep hits as results.** Extend `SRC_RESULT` rows to carry a line number
-(in the `E_TIME`/`E_DATE` slots); Alt-F8 (grep) loads `file:line` hits; Enter
-opens the F3 viewer at that line. Reuses W1 wholesale.
+(in `E_RES_LINE` = the `E_DATE` slot, already reserved by W1); Alt-F8 (grep)
+loads hits; Enter opens the F3 viewer at that line. Reuses W1 wholesale.
+NOTE (discovered while scoping): `CCGREP` emits `path:<line-text>` — there is no
+line *number* today. W2 must either add a line counter to `cgrep.asm` (new output
+contract `path:lineno:text`) or drop the jump-to-line and open at the top. Also a
+UX fork: grep rows want to show the matched text, not just the basename. Both are
+real design decisions — pause for the user before implementing.
 
 **W3 — Widget descriptor table.** Convert `widgets_draw/tick/key` to a single
 `wtab` walker (§2); move footer/clock/menubar to rows; **make the two panels
@@ -417,13 +425,15 @@ extend with a far-pointer bit. Until then: don't build it.
 
 ### 7.5 Milestone — slots before/with W3
 
-**W3a — Configurator + manifests.** Add `@feature` headers to every `mod/*.inc`;
-turn `configure.ps1` into the manifest-driven picker with the budget meter and
-dependency validation; bundle NASM. Acceptance: the picker reproduces the
-existing MIN/STD/FULL/CCPOP sets exactly, and a hand-rolled custom selection
-builds + passes its relevant `/T` harnesses. This is independent of W1/W2
-(results panel) and can land in parallel; it is the concrete deliverable of the
-"framework they plug into" discussion.
+**W3a — Configurator + manifests. ✅ SHIPPED (commit e98abf2, 2026-06-24).**
+`@feature` manifests (`@title`/`@needs`/`@cost`/`@optin`) on all 23 selectable
+modules + `@core` on the 6 always-in ones; `configure.ps1` scans them into the
+catalogue (no hard-coded list), validates the dependency closure, and shows an
+`@cost` size preview backed by an authoritative trial assemble (shared
+`tools/measure.ps1`). `run_configurator.ps1` reproduces MIN/STD/FULL/CCPOP
+**byte-for-byte** vs the canonical builds and `/T`-smokes each. Fixed a latent
+gap: `FEAT_VIEW` needs `FEAT_VFS` (uses `vfs_cat`). `CONFIGURE.md` documents it,
+incl. the "ship sources + DOS NASM = on-target configurator" packaging note.
 
 ---
 
