@@ -55,6 +55,7 @@ $catalog = [ordered]@{
     MASK    = "tag/untag files by *.mask (Ctrl-F7/F8)"
     MENU    = "pop-up command menu (F9)"
     MENUBAR = "NC-style pull-down menu bar (F9; supersedes the MENU pop-up)"
+    TOOLS   = "Tools menu-bar pull-down: hex/checksum/compare/split/rename"
     HELP    = "built-in help pager (F1, reads cc.hlp)"
     EDIT    = "F4 launches the CCEDIT external editor"
     FIND    = "Alt-F7 find files (CCFIND)"
@@ -72,6 +73,7 @@ $catalog = [ordered]@{
 $deps = @{
     CLOCK = @("WIDGETS"); FREE = @("WIDGETS")
     VFS = @("INI"); VIEW = @("INI"); LANG = @("INI"); LFN = @("INI"); ATTR = @("INI")
+    TOOLS = @("MENUBAR"); MENUBAR = @("WIDGETS")
 }
 # the STD set (everything); MIN = nothing optional.
 $stdSet = @($catalog.Keys)

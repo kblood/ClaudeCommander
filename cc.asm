@@ -158,6 +158,7 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
     %define FEAT_VIEW
     %define FEAT_VIEWS
     %define FEAT_TREE
+    %define FEAT_TOOLS          ; "Tools" menu-bar pull-down (CCSUM/CCDIFF/...)
   %endif
   %if _TIER >= 3             ; ---- FULL adds (reserved for heavy features) ----
   %endif
@@ -187,6 +188,9 @@ KB_END      equ 0FFh       ; table sentinel (class byte)
 %endif
 %ifdef FEAT_ATTR
   %define FEAT_INI
+%endif
+%ifdef FEAT_TOOLS
+  %define FEAT_MENUBAR          ; the Tools pull-down lives on the menu bar
 %endif
 %ifdef FEAT_MENUBAR
   %define FEAT_WIDGETS          ; the persistent bar draws through the widget seam
@@ -2747,10 +2751,12 @@ set_panel_drive:
 ; ============================================================================
 ;  F3 -- FILE VIEWER  (reads up to VIEW_MAX bytes, scrolls by line)
 ; ============================================================================
-VIEW_MAX    equ 14336           ; built-in pager byte cap (14 KB; larger files
+VIEW_MAX    equ 12288           ; built-in pager byte cap (12 KB; larger files
                                 ;   truncate, as before -- external [view] tools
-                                ;   handle big files). Trimmed from 16 KB to keep
-                                ;   the resident image under the std 63 KB wall.
+                                ;   handle big files). Trimmed 16->14->12 KB to
+                                ;   keep the resident image under the std 63 KB
+                                ;   wall as resident widgets (menu bar, Tools,
+                                ;   hex view) were added.
 MAX_VLINES  equ 1024
 VIEW_ROWS   equ 23             ; text rows 1..23 (row 0 header, row 24 bar)
 VIEW_TOP    equ 1              ; viewer content first row -- the full-screen pager
@@ -2792,6 +2798,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %include "mod/menubar.inc"
 %elifdef FEAT_MENU
 %include "mod/menu.inc"
+%endif
+%ifdef FEAT_TOOLS
+%include "mod/tools.inc"
 %endif
 %ifdef FEAT_MASK
 %include "mod/mask.inc"

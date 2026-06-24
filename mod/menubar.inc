@@ -312,7 +312,12 @@ mb_menus:
         dw      mb_t_files, mb_files, 1
         dw      mb_t_cmds,  mb_cmds,  9
         dw      mb_t_opts,  mb_opts,  20
+%ifdef FEAT_TOOLS
+        dw      mb_t_tools, mb_tools, 30
+MB_MENUS equ 4
+%else
 MB_MENUS equ 3
+%endif
 
 mb_files:
         dw      mb_l_view, key_view
@@ -352,6 +357,16 @@ mb_opts:
 %endif
         dw      0
 
+%ifdef FEAT_TOOLS
+mb_tools:
+        dw      mb_l_hex,   key_hexview      ; built-in (F3 + H); rest shell out
+        dw      mb_l_sum,   key_tools_sum
+        dw      mb_l_cmp,   key_tools_cmp
+        dw      mb_l_split, key_tools_split
+        dw      mb_l_ren,   key_tools_ren
+        dw      0
+%endif
+
 mb_t_files  db ' Files ', 0
 mb_t_cmds   db ' Commands ', 0
 mb_t_opts   db ' Options ', 0
@@ -384,4 +399,12 @@ mb_l_col    db 'Columns: cycle', 0
 %endif
 %ifdef FEAT_ATTR
 mb_l_attr   db 'Edit attribs (Ctrl-A)', 0
+%endif
+%ifdef FEAT_TOOLS
+mb_t_tools  db ' Tools ', 0
+mb_l_hex    db 'Hex dump (F3, then H)', 0
+mb_l_sum    db 'Checksum (CRC-32)', 0
+mb_l_cmp    db 'Compare (other panel)', 0
+mb_l_split  db 'Split file...', 0
+mb_l_ren    db 'Wildcard rename...', 0
 %endif
