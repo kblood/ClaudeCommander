@@ -1,7 +1,7 @@
 # Widget & plugin architecture — the unified component model
 
-Status: **W3a + W1 + W2 + W3 SHIPPED (commits e98abf2, e72ce71, dacc9b2,
-c4802ce); W4–W5 pending.** Last updated 2026-06-24. Target: `cc.asm` +
+Status: **W3a + W1 + W2 + W3 + W4 SHIPPED (commits e98abf2, e72ce71, dacc9b2,
+c4802ce, 0a97583); W5 pending.** Last updated 2026-06-24. Target: `cc.asm` +
 `mod/*.inc`. Extends ROADMAP.md (the four-layer hybrid) and the M1 dispatch seam
 (`plan/m1_dispatch.md`). This doc records the architecture for making *every*
 visible part of cc — clock, file panels, menu bar, and external tools — a
@@ -310,9 +310,18 @@ code-free stub. Acceptance met: `run_w3_diff.ps1` proves the post-W3 `/T` dump
 is byte-identical to pre-W3 across 8 frames (panels/frames/cmd/fkey/footer/menu-
 bar dropdown); self-test + W1/W2 harnesses still pass.
 
-**W4 — Tool discovery + present-tools gating.** Startup `FindFirst CC*.COM`
-bitmap; gate existing menu items / keybinds on presence. No new UI, just "absent
-tool ⇒ hidden, not broken."
+**W4 — Tool discovery + present-tools gating. ✅ SHIPPED (commit 0a97583,
+2026-06-24).** `discover_tools` (mod/discover.inc, `FEAT_DISCOVER`, opt-in) runs
+at startup and fills a `present_tools` bitmap. Crucially it scans the *same*
+dirs COMMAND.COM searches for the EXEC — cwd + every PATH entry + cc's program
+dir (argv0) — so "present" ≡ "launchable" and the gate can't falsely disable a
+tool that would run. Each tool key/menu handler (`key_find`, `key_grep`,
+`key_tools_*`) gates on its `TOOLBIT_*` bit: present ⇒ fire, absent ⇒ silent
+no-op (no "Bad command" takeover). Opt-in because it changes tool behaviour;
+with it off STD/MIN/FULL are byte-unchanged. `run_discover.ps1` proves present⇒
+fires / absent⇒no-op-no-bad-command. NOTE: gating is at the action (handler),
+not yet visual dimming of absent menu rows — that's a cosmetic follow-on; the
+"no surprise" guarantee is delivered.
 
 **W5 — `[tools]` registry.** Menu widget + keytab read `cc.ini [tools]` (§3.3),
 so arbitrary dropped-in helpers become menu entries. The full "drop a `.COM`, get
