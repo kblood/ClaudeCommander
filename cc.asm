@@ -86,6 +86,10 @@ PANELSIZE   equ P_ENTRIES + MAX_FILES*ENTSIZE
 OPENMAX     equ 12          ; max [open] mappings
 OPENROW     equ 18          ; 4-byte ext (upper, NUL-padded) + 14-byte helper
 
+; user-tool registry (FEAT_TOOLS_INI): cc.ini [tools] "label = program" rows
+UTOOL_MAX   equ 12          ; max [tools] entries added to the Tools pull-down
+UTBUF_SZ    equ 512         ; ASCIIZ storage for all labels + program names
+
 ; recursive copy/delete: per-level DTA stack
 DTASZ       equ 64         ; bytes per FindFirst DTA (record is 43)
 MAX_DEPTH   equ 24         ; max directory nesting we will recurse
@@ -250,6 +254,10 @@ TOOLBIT_REN   equ 0020h
 %ifdef FEAT_ATTR
   %define FEAT_INI
 %endif
+%ifdef FEAT_TOOLS_INI
+  %define FEAT_TOOLS            ; user tools (cc.ini [tools]) live on the Tools menu
+  %define FEAT_INI              ; ...parsed from cc.ini, so the ini reader is needed
+%endif
 %ifdef FEAT_TOOLS
   %define FEAT_MENUBAR          ; the Tools pull-down lives on the menu bar
 %endif
@@ -360,6 +368,10 @@ start:
 %ifdef FEAT_DISCOVER
         ; --- scan cwd/PATH/progdir for the helper .COMs we know about ---
         call    discover_tools
+%endif
+%ifdef FEAT_TOOLS_INI
+        ; --- fold any cc.ini [tools] entries into the Tools pull-down ---
+        call    build_tools_menu
 %endif
 
         ; --- init both panels to current drive/dir ---
@@ -3014,6 +3026,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_TOOLS
 %include "mod/tools.inc"
 %endif
+%ifdef FEAT_TOOLS_INI
+%include "mod/toolsini.inc"
+%endif
 %ifdef FEAT_DISCOVER
 %include "mod/discover.inc"
 %endif
@@ -3245,6 +3260,15 @@ present_tools resw 1        ; mod/discover.inc: bitmap of helper .COMs found
 disc_pp     resw 1          ; env-walk position saved across scans
 progdir_buf resb 80         ; cc's program directory (trailing '\')
 disc_spec   resb 128        ; FindFirst spec being built ("<dir>\CC*.COM")
+%endif
+%ifdef FEAT_TOOLS_INI
+utool_n     resw 1          ; mod/toolsini.inc: cc.ini [tools] entry count
+utool_lbl   resw UTOOL_MAX  ; per-entry menu-label pointer (into utbuf)
+utool_cmd   resw UTOOL_MAX  ; per-entry program-name pointer (into utbuf)
+ut_pp       resw 1          ; write cursor within utbuf
+utbuf       resb UTBUF_SZ   ; ASCIIZ storage for the labels + program names
+tools_builtin_n resw 1      ; rows copied from the static mb_tools template
+tools_menu_rt   resw (8+UTOOL_MAX+1)*2  ; runtime Tools drop-down (builtin + user)
 %endif
 %ifdef FEAT_INI
 INIMAX      equ 1024

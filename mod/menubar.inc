@@ -336,7 +336,11 @@ mb_menus:
         dw      mb_t_cmds,  mb_cmds,  9
         dw      mb_t_opts,  mb_opts,  20
 %ifdef FEAT_TOOLS
+  %ifdef FEAT_TOOLS_INI
+        dw      mb_t_tools, tools_menu_rt, 30   ; runtime: builtins + cc.ini [tools]
+  %else
         dw      mb_t_tools, mb_tools, 30
+  %endif
 MB_MENUS equ 4
 %else
 MB_MENUS equ 3

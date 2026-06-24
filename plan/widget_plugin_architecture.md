@@ -1,7 +1,8 @@
 # Widget & plugin architecture — the unified component model
 
-Status: **W3a + W1 + W2 + W3 + W4 SHIPPED (commits e98abf2, e72ce71, dacc9b2,
-c4802ce, 0a97583); W5 pending.** Last updated 2026-06-24. Target: `cc.asm` +
+Status: **W3a + W1 + W2 + W3 + W4 + W5 SHIPPED (commits e98abf2, e72ce71,
+dacc9b2, c4802ce, 0a97583, + W5 menu half); W5 hotkey-registration deferred.**
+Last updated 2026-06-24. Target: `cc.asm` +
 `mod/*.inc`. Extends ROADMAP.md (the four-layer hybrid) and the M1 dispatch seam
 (`plan/m1_dispatch.md`). This doc records the architecture for making *every*
 visible part of cc — clock, file panels, menu bar, and external tools — a
@@ -323,9 +324,27 @@ fires / absent⇒no-op-no-bad-command. NOTE: gating is at the action (handler),
 not yet visual dimming of absent menu rows — that's a cosmetic follow-on; the
 "no surprise" guarantee is delivered.
 
-**W5 — `[tools]` registry.** Menu widget + keytab read `cc.ini [tools]` (§3.3),
-so arbitrary dropped-in helpers become menu entries. The full "drop a `.COM`, get
-a feature" loop.
+**W5 — `[tools]` registry. ✅ SHIPPED (menu half; commit TBD, 2026-06-24).**
+`FEAT_TOOLS_INI` (opt-in, the runtime half §8.7; closure pulls in TOOLS + INI):
+`mod/ini.inc`'s parser gains a `[tools]` section reading `label = program` lines
+into `utool_lbl[]/utool_cmd[]`; at startup `build_tools_menu` (mod/toolsini.inc)
+splices those user rows onto the end of the static built-in Tools drop-down into
+a runtime table `tools_menu_rt` (the menu-bar Tools row now points there). One
+shared handler `run_user_tool` maps the picked row back to its `utool` slot and
+EXECs `"<program> <cursor-path>"` through the existing built-in-Tools path
+(`tools_exec`→`run_command`) — the **action contract**. So dropping a `.COM` and
+adding one `cc.ini` line makes it a Tools-menu entry with no rebuild — the full
+"drop a `.COM`, get a feature" loop for the **menu surface**. Off (the default)
+STD/MIN/FULL are byte-unchanged. `run_toolsini.ps1` proves the user row appears
+alongside the built-ins (and an empty `[tools]` adds nothing).
+DEFERRED (a genuine design fork, not done here): binding a user tool to a
+**hotkey** needs dynamic keytab registration — runtime scan-code allocation +
+conflict policy against the static `keytab`. Left for a follow-on; the menu is
+the self-contained, no-fork surface. Trailing columns in the doc's `[tools]`
+format (`key`/`contract`/`menu`) are parsed-past for now; only `label`+`program`
+are honoured. Present-gating of user tools (hiding a row whose `.COM` is absent)
+is also a follow-on — user-declared tools are taken on faith; `run_command`
+surfaces a missing one the usual way.
 
 W1–W2 deliver the user's "search results panel" and the find/grep integration.
 W3 delivers "panels are widgets" and the minimal default. W4–W5 deliver "the

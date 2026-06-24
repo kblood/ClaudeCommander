@@ -16,6 +16,10 @@ ini_load:
 %ifdef FEAT_VIEW
         mov     word [view_n], 0
 %endif
+%ifdef FEAT_TOOLS_INI
+        mov     word [utool_n], 0
+        mov     word [ut_pp], utbuf     ; reset the label/program text cursor
+%endif
         mov     byte [cur_sect], 0
         mov     ax, 3D00h
         mov     dx, s_ininame
@@ -63,8 +67,17 @@ ini_load:
         ; inside a map section ([open] / [view]) every "ext = helper" maps
         cmp     byte [cur_sect], 0
         je      .keys
+%ifdef FEAT_TOOLS_INI
+        cmp     byte [cur_sect], 3      ; [tools] uses "label = program" not "ext ="
+        je      .dotools
+%endif
         call    map_add
         jmp     .skip
+%ifdef FEAT_TOOLS_INI
+.dotools:
+        call    tools_add
+        jmp     .skip
+%endif
 .keys:
         ; try recognised keys
         push    si
@@ -115,6 +128,14 @@ ini_load:
         pop     si
         jc      .secview
 %endif
+%ifdef FEAT_TOOLS_INI
+        push    si
+        inc     si
+        mov     di, k_tools
+        call    sect_is             ; CF=1 if section name is "tools"
+        pop     si
+        jc      .sectools
+%endif
         jmp     .skip
 .secopen:
         mov     byte [cur_sect], 1
@@ -126,6 +147,11 @@ ini_load:
         mov     byte [cur_sect], 2
         mov     word [cur_map_base], viewmap
         mov     word [cur_map_n], view_n
+        jmp     .skip
+%endif
+%ifdef FEAT_TOOLS_INI
+.sectools:
+        mov     byte [cur_sect], 3      ; lines now parse as "label = program"
         jmp     .skip
 %endif
 .skip:
@@ -405,6 +431,101 @@ map_add:
 .bad:
         ret
 
+%ifdef FEAT_TOOLS_INI
+; si -> "label = program ..." line in the [tools] section. Parse one entry:
+;   label   = text left of '=' (trailing blanks trimmed) -> the menu row caption
+;   program = the FIRST token right of '='               -> the .COM to EXEC
+; trailing columns (key / contract / menu) from the doc format are ignored for
+; now (the action contract: run "<program> <cursor-path>" like a built-in Tools
+; item). Both strings are appended ASCIIZ to utbuf and their pointers recorded
+; in utool_lbl/utool_cmd. Malformed/empty/overflowing lines are dropped whole.
+tools_add:
+        mov     ax, [utool_n]
+        cmp     ax, UTOOL_MAX
+        jae     .done
+        mov     di, [ut_pp]             ; write cursor in utbuf
+        mov     bx, di                  ; bx = label start (preserved throughout)
+.lbl:
+        mov     al, [si]
+        or      al, al
+        jz      .bad
+        cmp     al, 0Dh
+        je      .bad
+        cmp     al, 0Ah
+        je      .bad
+        cmp     al, '='
+        je      .lble
+        cmp     di, utbuf+UTBUF_SZ-2
+        jae     .bad
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .lbl
+.lble:
+        ; trim trailing spaces/tabs from the label
+.trim:
+        cmp     di, bx
+        jbe     .lblz
+        cmp     byte [di-1], ' '
+        je      .trimd
+        cmp     byte [di-1], 9
+        jne     .lblz
+.trimd:
+        dec     di
+        jmp     .trim
+.lblz:
+        cmp     di, bx                  ; empty label -> reject
+        je      .bad
+        mov     byte [di], 0
+        inc     di
+        inc     si                      ; past '='
+.sk:
+        mov     al, [si]                ; skip blanks before the program token
+        cmp     al, ' '
+        je      .ska
+        cmp     al, 9
+        je      .ska
+        jmp     .prog
+.ska:
+        inc     si
+        jmp     .sk
+.prog:
+        mov     dx, di                  ; dx = program start
+.pcp:
+        mov     al, [si]
+        or      al, al
+        jz      .proge
+        cmp     al, 0Dh
+        je      .proge
+        cmp     al, 0Ah
+        je      .proge
+        cmp     al, ' '
+        je      .proge
+        cmp     al, 9
+        je      .proge
+        cmp     di, utbuf+UTBUF_SZ-2
+        jae     .bad
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .pcp
+.proge:
+        cmp     di, dx                  ; empty program -> reject
+        je      .bad
+        mov     byte [di], 0
+        inc     di
+        mov     [ut_pp], di             ; commit the buffer cursor (success)
+        mov     di, [utool_n]
+        shl     di, 1
+        mov     [utool_lbl+di], bx
+        mov     [utool_cmd+di], dx
+        inc     word [utool_n]
+.done:
+        ret
+.bad:
+        ret
+%endif
+
 ; si -> a filename ASCIIZ. If its extension is in the [open] map, CF=1 and
 ; di -> the helper name; otherwise CF=0. si preserved.
 open_lookup:
@@ -496,6 +617,9 @@ k_editor    db 'editor',0
 k_open      db 'open',0
 %ifdef FEAT_VIEW
 k_view      db 'view',0
+%endif
+%ifdef FEAT_TOOLS_INI
+k_tools     db 'tools',0
 %endif
 v_name      db 'name',0
 v_ext       db 'ext',0
