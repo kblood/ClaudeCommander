@@ -3280,8 +3280,8 @@ ukey_n      resw 1          ; dynamically-registered user hotkey count
 ukeytab     resb UTOOL_MAX*4 ; rows: db class, db code, dw utool-index (keytab-shaped)
 %endif
 %ifdef FEAT_INI
-INIMAX      equ 1024
-inibuf      resb INIMAX     ; mod/ini.inc cc.ini text scratch
+; cc.ini is read into the shared 12 KB viewbuf at startup (before any panel read
+; or F3 view), so no dedicated scratch is reserved here -- see mod/ini.inc.
 ini_n       resw 1
 LNGMAX      equ 160
 lngbuf      resb LNGMAX     ; mod/lang.inc cc.lng label text (repointed in place)

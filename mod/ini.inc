@@ -27,8 +27,8 @@ ini_load:
         jc      .ret
         mov     bx, ax
         mov     ah, 3Fh
-        mov     cx, INIMAX-1
-        mov     dx, inibuf
+        mov     cx, VIEW_MAX-1      ; reuse the 12 KB F3/vfs scratch (startup-only,
+        mov     dx, viewbuf         ; runs before any panel read or file view)
         int     21h
         jc      .close
         mov     [ini_n], ax
@@ -38,8 +38,8 @@ ini_load:
         mov     bx, [ini_n]
         or      bx, bx
         jz      .ret
-        mov     byte [inibuf+bx], 0 ; NUL-terminate the text
-        mov     si, inibuf
+        mov     byte [viewbuf+bx], 0 ; NUL-terminate the text
+        mov     si, viewbuf
 .line:
         ; skip leading blanks
 .lead:
