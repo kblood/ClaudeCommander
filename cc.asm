@@ -164,6 +164,18 @@ WR_FOOT     equ 5          ; free-space / tag footer
 WR_TOP      equ 6          ; top row (menu bar)
 WF_NONE     equ 0
 
+; --- external-tool discovery bitmap (FEAT_DISCOVER) ---------------------------
+; One bit per external helper cc knows about. discover_tools (mod/discover.inc)
+; sets the bits at startup; tool key/menu handlers gate on them. The equates are
+; always defined so the gates compile unconditionally; the scan + present_tools
+; storage are FEAT_DISCOVER-only.
+TOOLBIT_FIND  equ 0001h
+TOOLBIT_GREP  equ 0002h
+TOOLBIT_SUM   equ 0004h
+TOOLBIT_DIFF  equ 0008h
+TOOLBIT_SPLIT equ 0010h
+TOOLBIT_REN   equ 0020h
+
 ; --- build profile -> feature set ---------------------------------------------
 ; build.ps1 passes -dFEAT_MIN / -dFEAT_STD / -dFEAT_FULL. A bare `nasm cc.asm`
 ; (no flag) builds as STD. Tiers are cumulative: FULL = STD + heavy features.
@@ -344,6 +356,10 @@ start:
 %ifdef FEAT_LANG
         ; --- repoint the F-key bar labels from cc.lng if present ---
         call    lang_load
+%endif
+%ifdef FEAT_DISCOVER
+        ; --- scan cwd/PATH/progdir for the helper .COMs we know about ---
+        call    discover_tools
 %endif
 
         ; --- init both panels to current drive/dir ---
@@ -2998,6 +3014,9 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %ifdef FEAT_TOOLS
 %include "mod/tools.inc"
 %endif
+%ifdef FEAT_DISCOVER
+%include "mod/discover.inc"
+%endif
 %ifdef FEAT_MASK
 %include "mod/mask.inc"
 %endif
@@ -3220,6 +3239,12 @@ menu_sel    resw 1
 %endif
 %ifdef FEAT_MASK
 mask_set    resb 1          ; mod/mask.inc: 1=tag, 0=untag
+%endif
+%ifdef FEAT_DISCOVER
+present_tools resw 1        ; mod/discover.inc: bitmap of helper .COMs found
+disc_pp     resw 1          ; env-walk position saved across scans
+progdir_buf resb 80         ; cc's program directory (trailing '\')
+disc_spec   resb 128        ; FindFirst spec being built ("<dir>\CC*.COM")
 %endif
 %ifdef FEAT_INI
 INIMAX      equ 1024

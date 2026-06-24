@@ -9,6 +9,10 @@
 ; heavy recursion lives in a separate Layer-3 binary.
 
 key_find:
+%ifdef FEAT_DISCOVER
+        test    word [present_tools], TOOLBIT_FIND
+        jz      .ret                    ; CCFIND not found anywhere -> silent no-op
+%endif
         mov     si, s_findprompt
         call    dlg_input               ; -> dlgbuf, CF=1 if cancelled
         jc      .ret

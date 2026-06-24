@@ -10,6 +10,10 @@
 ; separate Layer-3 binary, exactly like Alt-F7 / CCFIND.
 
 key_grep:
+%ifdef FEAT_DISCOVER
+        test    word [present_tools], TOOLBIT_GREP
+        jz      .ret                    ; CCGREP not found anywhere -> silent no-op
+%endif
         mov     si, s_grepprompt
         call    dlg_input               ; -> dlgbuf, CF=1 if cancelled
         jc      .ret

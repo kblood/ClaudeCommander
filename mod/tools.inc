@@ -41,6 +41,10 @@ tools_exec:
 
 ; Tools / Checksum:  CCSUM <cursor>
 key_tools_sum:
+%ifdef FEAT_DISCOVER
+        test    word [present_tools], TOOLBIT_SUM
+        jz      .ret
+%endif
         call    tools_cur_path
         jc      .ret
         mov     di, cmdbuf
@@ -54,6 +58,10 @@ key_tools_sum:
 
 ; Tools / Compare:  CCDIFF <active cursor> <other-panel cursor>
 key_tools_cmp:
+%ifdef FEAT_DISCOVER
+        test    word [present_tools], TOOLBIT_DIFF
+        jz      .ret
+%endif
         call    tools_cur_path          ; targpath = left file
         jc      .ret
         call    other_panel_ptr         ; bx = the other panel
@@ -78,6 +86,10 @@ key_tools_cmp:
 
 ; Tools / Split:  prompt for piece size, then  CCSPLIT <cursor> <size>
 key_tools_split:
+%ifdef FEAT_DISCOVER
+        test    word [present_tools], TOOLBIT_SPLIT
+        jz      .ret
+%endif
         call    tools_cur_path
         jc      .ret
         mov     si, s_t_splitp
@@ -100,6 +112,10 @@ key_tools_split:
 
 ; Tools / Rename:  prompt source + destination masks, then CCREN <src> <dst>
 key_tools_ren:
+%ifdef FEAT_DISCOVER
+        test    word [present_tools], TOOLBIT_REN
+        jz      .ret
+%endif
         mov     si, s_t_renp1
         call    dlg_input
         jc      .ret
