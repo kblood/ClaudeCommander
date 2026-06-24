@@ -59,6 +59,19 @@ injection. The widget seam stays compile-time; the plugin seam stays
 out-of-process. This is the maximum integration DOS allows without an overlay,
 and it is enough for everything the user described.
 
+**Decision (2026-06-24): the modularity vehicle is a compile-time CONFIGURATOR,
+not a runtime/launch-time code loader.** We considered a DOS-overlay ("DLL for
+DOS", INT 21h 4B03h) system to load widget code at launch and break the 64 KB
+wall; it was **rejected as the primary path** because it fights the project's
+core "smallest possible, single self-contained `.COM`" identity (adds a loader,
+a far-call host ABI, multiple `.OVL` artifacts, no memory protection). Instead we
+productize the *existing* `%ifdef FEAT_*` system into a feature picker that emits
+a custom, still-tiny single `.COM` (§7). Overlays remain documented only as the
+deferred escape hatch for the one case the configurator cannot serve — needing
+**>64 KB of features resident simultaneously** (§7.4). The widget/keybind seam
+and the data contracts below are the framework in *both* worlds, so none of that
+work is overlay-specific or wasted.
+
 ---
 
 ## 1. What already exists (so we extend, not rebuild)
@@ -319,7 +332,94 @@ model, within DOS's limits.
 
 ---
 
-## 7. One-paragraph answer for the user
+## 7. The configurator — the chosen modularity vehicle (decision 2026-06-24)
+
+The framework the user is reaching for ("a system plugins plug into") is, for
+cc, **the compile-time feature seam + a configurator that composes it** — not a
+runtime loader. cc is already ~80% of the way there: `%ifdef FEAT_*` modules,
+the `FEAT_MIN/STD/FULL` tiers, the `CCPOP` variant, and `configure.ps1` emitting
+`-dFEAT_X`. This section productizes that into "the compiler installation."
+
+### 7.1 What a "plugin" is in this model
+
+A plugin = **a `mod/<name>.inc` that conforms to two seams it already has:**
+
+1. the **widget ABI** (`{draw, tick, key, region}` descriptor row, §2), and/or
+2. the **keytab ABI** (`KEYBIND_*` rows, `plan/m1_dispatch.md`),
+
+plus a small **manifest header** (§7.2) so the configurator can discover and
+cost it. Writing a plugin is writing one `.inc` against published seams; *adding*
+it to a build is ticking a box in the configurator. No core edits — that is the
+whole point of the seams. (External `CC*.COM` tools, §3, are the *other* kind of
+plugin and compose via the `cc.ini [tools]` registry, also no rebuild needed.)
+
+### 7.2 The feature manifest header
+
+Each `mod/*.inc` gains a machine-readable header comment so the picker is
+data-driven, not a hard-coded list:
+
+```
+; @feature   FEAT_CLOCK
+; @title     Clock (top-right HH:MM:SS)
+; @cost      ~300            ; resident bytes, for the budget meter
+; @needs     FEAT_WIDGETS    ; dependency FEAT flags (the %define chains today)
+; @summary   Ticks once a second on the command row.
+```
+
+These mirror the implicit dependency chains that already exist in `cc.asm`
+(`FEAT_TOOLS`→`FEAT_MENUBAR`→`FEAT_WIDGETS`). Making them explicit lets the
+configurator validate selections and show running cost.
+
+### 7.3 The configurator itself
+
+Evolve `configure.ps1` into an interactive picker (and keep a non-interactive
+flag mode for scripts/CI):
+
+1. Scan `mod/*.inc`, parse the `@feature` manifests → the feature catalogue.
+2. Present toggles grouped by area, each showing its `@cost`; maintain a
+   **running resident total against the budget** (the same math `build.ps1`
+   uses — the ~4.7 KB headroom / 64 KB segment wall, ROADMAP §1).
+3. Enforce `@needs` dependencies and the mutual exclusions (e.g. menubar vs
+   pop-up) so an invalid set can't be chosen.
+4. Refuse / warn when the selection exceeds budget — the configurator is where
+   the 64 KB ceiling is explained to the user, not a cryptic linker error.
+5. Call NASM with the resolved `-dFEAT_*` set; emit a named custom `CC.COM` and
+   a one-line report of what's in and the final size.
+
+"Compiler installation" = ship this picker **plus a bundled NASM**. NASM has a
+DOS build, so the configurator can optionally target rebuilding on the
+ao486/real hardware itself — fully in-spirit with a DOS file manager that can
+recompile itself. Default to the Windows NASM for the cross-build-then-copy flow.
+
+### 7.4 Considered and deferred: the overlay ("DLL") loader
+
+Recorded so the trade-off isn't relitigated. A DOS-overlay system (INT 21h
+4B03h: load a flat `org 0` blob into its own segment, patch a **host-services
+vector table** into it, far-call its registered widgets) is genuinely possible
+and would (a) break the 64 KB wall and (b) allow adding *in-loop widget code* at
+launch by dropping a `CC*.OVL` file. It is **deferred, not adopted**, because it
+costs the single-file smallness the project is built around (resident loader +
+far-call ABI + per-overlay artifacts + no memory protection + an append-only
+host ABI). **The only thing it uniquely enables is >64 KB of features resident
+at once** — a need cc does not currently have, since any sensible subset fits in
+one segment and the configurator lets the user choose that subset. If that need
+ever materialises (a true kitchen-sink build), the overlay loader is the
+escape hatch, and the widget descriptor table (§2) is already the right shape to
+extend with a far-pointer bit. Until then: don't build it.
+
+### 7.5 Milestone — slots before/with W3
+
+**W3a — Configurator + manifests.** Add `@feature` headers to every `mod/*.inc`;
+turn `configure.ps1` into the manifest-driven picker with the budget meter and
+dependency validation; bundle NASM. Acceptance: the picker reproduces the
+existing MIN/STD/FULL/CCPOP sets exactly, and a hand-rolled custom selection
+builds + passes its relevant `/T` harnesses. This is independent of W1/W2
+(results panel) and can land in parallel; it is the concrete deliverable of the
+"framework they plug into" discussion.
+
+---
+
+## 8. One-paragraph answer for the user
 
 Yes, it's possible — and cc is already most of the way there. The clock, panels,
 and menu bar are *in-process* widgets: machine code compiled into `cc.com`, which
