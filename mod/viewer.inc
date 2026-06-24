@@ -34,16 +34,27 @@ key_view:
         call    build_entry_path    ; targpath = full path (si preserved)
 %ifdef FEAT_VIEW
         ; if the cursor file's extension is in the [view] map, run that viewer
-        ; instead of the built-in text pager (skip for virtual container panels).
+        ; instead of the built-in text pager.
         mov     bx, [active]
+        cmp     byte [bx+P_VFS], 1
+        je      .vfs_member         ; inside a container -> view member by index
         cmp     byte [bx+P_VFS], 0
-        jne     view_open_builtin
+        jne     view_open_builtin   ; other virtual source -> built-in (unchanged)
         call    cur_entry_ptr
         lea     si, [si+E_NAME]
         call    view_lookup         ; CF=1 -> di = viewer helper
         jnc     view_open_builtin
         call    run_view_helper
         ret
+.vfs_member:
+%ifdef FEAT_VFS
+        ; container member: run "<viewhelper> <container> <index>" so the viewer
+        ; reads the member straight from the archive -- no extraction needed.
+        call    vfs_view
+        ret
+%else
+        jmp     view_open_builtin
+%endif
 %endif
         ; (no [view] map) fall through into the built-in pager
 

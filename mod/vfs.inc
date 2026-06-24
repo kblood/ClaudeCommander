@@ -517,6 +517,51 @@ vfs_putdec:
         pop     bx
         ret
 
+; F3 on a container panel: VIEW the cursor member in place, WITHOUT extracting,
+; via "<viewhelper> <container> <member-index>". The viewer reads the member
+; straight from the archive by its TOC index (CCGB does this for .DAX images).
+; The member's own extension selects the [view] helper, exactly like F3 on a
+; real file -- only the argument is "<container> <index>", not a standalone path.
+vfs_view:
+        mov     bx, [active]
+        call    cur_entry_ptr           ; si = cursor entry
+        test    byte [si+E_ATTR], 10h
+        jnz     .ret                    ; ".." / sub-folder -> nothing to view
+        mov     ax, [si+E_TIME]         ; stashed 0-based member index (matches X/L)
+        mov     [vfs_idx], ax
+        mov     [vfs_pan], bx
+        ; view helper for THIS MEMBER's extension (e.g. .GBI -> CCGB)
+        lea     si, [si+E_NAME]
+        call    view_lookup             ; CF=1 -> di = helper; si preserved
+        jnc     .ret                    ; unmapped member type -> nothing to do
+        mov     [vfs_helper], di
+        ; vfs_cpath = P_PATH + '\' + P_CNAME  (the container's full path)
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_PATH]
+        mov     di, vfs_cpath
+        call    bp_copy_dir
+        mov     bx, [vfs_pan]
+        lea     si, [bx+P_CNAME]
+        call    bp_copy_name
+        ; cmdbuf = helper + " " + vfs_cpath + " " + idx
+        mov     di, cmdbuf
+        mov     si, [vfs_helper]
+        call    vfs_cat
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        mov     si, vfs_cpath
+        call    vfs_cat
+        mov     si, s_vfs_sp
+        call    vfs_cat
+        mov     ax, [vfs_idx]
+        call    vfs_putdec
+        mov     ax, di
+        sub     ax, cmdbuf
+        mov     [cmdlen], ax
+        call    run_command             ; viewer owns the screen; then redraw
+.ret:
+        ret
+
 ; Alt-F9: extract EVERY member of the .zip under the cursor (real panel) into
 ; the other panel via "<helper> XA <container> <destdir>".
 key_unpackall:
