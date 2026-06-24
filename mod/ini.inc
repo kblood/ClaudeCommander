@@ -73,6 +73,13 @@ ini_load:
         call    kw_match
         jc      .docols
         pop     si
+%ifdef FEAT_EDIT
+        push    si
+        mov     di, k_editor
+        call    kw_match
+        jc      .doeditor
+        pop     si
+%endif
         jmp     .skip
 .dosort:
         add     sp, 2               ; keep the advanced si
@@ -82,6 +89,12 @@ ini_load:
         add     sp, 2
         call    set_cols_val
         jmp     .skip
+%ifdef FEAT_EDIT
+.doeditor:
+        add     sp, 2
+        call    set_editor_val
+        jmp     .skip
+%endif
 .section:
         mov     byte [cur_sect], 0
         push    si
@@ -226,6 +239,35 @@ set_sort_val:
         ret
 .d:     mov     byte [sort_mode], 3
         ret
+
+%ifdef FEAT_EDIT
+; si -> value token -> copy into editor_name (max 15 chars, NUL-terminated),
+; stopping at the first space / tab / CR / LF / NUL.
+set_editor_val:
+        mov     di, editor_name
+        mov     cx, 15
+.cp:
+        mov     al, [si]
+        or      al, al
+        jz      .end
+        cmp     al, ' '
+        je      .end
+        cmp     al, 9
+        je      .end
+        cmp     al, 0Dh
+        je      .end
+        cmp     al, 0Ah
+        je      .end
+        jcxz    .end
+        mov     [di], al
+        inc     di
+        inc     si
+        dec     cx
+        jmp     .cp
+.end:
+        mov     byte [di], 0
+        ret
+%endif
 
 set_cols_val:
         mov     di, v_size
@@ -444,6 +486,9 @@ map_lookup:
 s_ininame   db 'cc.ini',0
 k_sort      db 'sort',0
 k_cols      db 'columns',0
+%ifdef FEAT_EDIT
+k_editor    db 'editor',0
+%endif
 k_open      db 'open',0
 %ifdef FEAT_VIEW
 k_view      db 'view',0

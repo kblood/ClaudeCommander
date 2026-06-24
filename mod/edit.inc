@@ -1,8 +1,10 @@
 ; mod/edit.inc  --  FEAT_EDIT
-; F4 launches the external editor CCEDIT.COM on the current file.  Builds
-; "CCEDIT <fullpath>" onto the command line and reuses run_command (the same
+; F4 launches an external editor on the current file.  Builds
+; "<editor> <fullpath>" onto the command line and reuses run_command (the same
 ; COMSPEC /C EXEC path the command line uses), so cc stays small -- the editor
-; is a separate Layer-3 binary shipped beside cc.com.
+; is a separate Layer-3 binary shipped beside cc.com.  The editor name defaults
+; to CCEDIT but is overridable from cc.ini ("editor = EDIT", "editor = CCHEXED",
+; or any editor on the PATH); see set_editor_val in mod/ini.inc.
 
 key_edit:
         mov     bx, [active]
@@ -11,10 +13,12 @@ key_edit:
         call    cur_entry_ptr           ; -> si = entry ptr (name at si)
         test    byte [si+E_ATTR], 10h
         jnz     .ret                    ; don't "edit" a directory
-        ; cmdbuf = "CCEDIT " + panelpath + "\" + name
+        ; cmdbuf = "<editor> " + panelpath + "\" + name
         mov     di, cmdbuf
-        mov     si, s_editpfx
+        mov     si, editor_name
         call    edit_catz
+        mov     byte [di], ' '
+        inc     di
         mov     bx, [active]
         lea     si, [bx+P_PATH]
         call    edit_catz
@@ -43,4 +47,8 @@ edit_catz:
         jmp     edit_catz
 .d:     ret
 
-s_editpfx   db 'CCEDIT ',0
+; The editor command launched by F4. Default CCEDIT; cc.ini "editor =" rewrites
+; this in place (set_editor_val caps it at 15 chars), so the buffer is sized for
+; a name/short path, not the full command line.
+editor_name db 'CCEDIT'
+            times 16-6 db 0

@@ -35,6 +35,9 @@ hexout.txt
 HEXIN.TXT
 # built-in hex-view (F3 H) test fixture
 _hxtest/
+# configurable-editor (cc.ini editor=) test fixture
+_edtest/
+TEDOUT.TXT
 # checksum (CCSUM) test artifacts
 sumout.txt
 SUMIN.TXT
