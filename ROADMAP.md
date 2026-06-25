@@ -59,6 +59,7 @@ name at cc's prompt — `on_enter` already shells out via `run_command`).
 | CCGREP.COM | recursive content search (path:line) | 0ddd13c |
 | CCHEX.COM | hex + ASCII dump (binary viewer) | 4f4a6ce |
 | CCSUM.COM | CRC-32 + byte size | 01bda41 |
+| CCTOUCH.COM | set file date/time (now or explicit) | 8c004dc |
 
 **Runtime data files (Layer 2):** `cc.ini` (sort/columns), `cc.lng` (F-key bar
 translation; `da.lng` shipped as a Danish sample), `cc.hlp` (F1 help text).
@@ -75,8 +76,9 @@ Notes on the two hard ones:
 
 **Still open** (would need resident reclaim or stay external): full `MSG` string
 table, F2 user menu (`cc.mnu`), remappable keys, command-line history,
-bookmarks, colour themes, file associations, touch, copy progress %, file
+bookmarks, colour themes, file associations, copy progress %, file
 compare (CCDIFF), split/combine, multi-rename, brief/full/info view modes.
+(Touch shipped as the CCTOUCH.COM helper, commit 8c004dc.)
 
 ---
 
@@ -249,7 +251,7 @@ Legend: **[R]** resident module (Layer 1) · **[D]** runtime data (Layer 2) ·
 | Feature | Where | Cost | Notes |
 |---|---|---|---|
 | Attribute editor (toggle R/H/S/A) | [R] | ~0.5 KB | INT 21h 43h. |
-| Touch (set date/time) | [R] | ~0.4 KB | INT 21h 57h. |
+| Touch (set date/time) | DONE | 0 KB | Shipped as CCTOUCH.COM (8c004dc), INT 21h 5701h. |
 | Copy/Move byte-progress % | [R] | ~0.4 KB | Extend the existing busy box. |
 | Preserve timestamps/attributes on copy | [R] | ~0.3 KB | Read+reapply during `copy_file`. |
 | Verify-after-copy | [R] | ~0.5 KB | Optional re-read+compare. |
