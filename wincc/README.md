@@ -48,7 +48,11 @@ cc.exe             # opens both panels on the current directory
 | F6 | move cursor / tagged set to the other panel |
 | F7 | make directory |
 | F8 / Del | delete cursor / tagged set (with confirm) |
+| Ctrl+S | cycle sort: name → ext → size → date |
+| Ctrl+T | cycle colour theme: blue → black → mono |
 | F10 / Esc | quit |
+
+The active panel's sort mode and the current theme are shown on the status row.
 
 ## Headless self-test
 
@@ -59,8 +63,8 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 ```
 
 - `--keys` replays a whitespace-separated token script (`UP DOWN ENTER TAB TAG
-  PGUP PGDN HOME END QUIT COPY MOVE DEL VIEW`, plus arg-carrying `MKDIR:<name>`
-  and `REN:<name>`).
+  PGUP PGDN HOME END QUIT COPY MOVE DEL VIEW SORT THEME`, plus arg-carrying
+  `MKDIR:<name>`, `REN:<name>`, `SORT:name|ext|size|date`).
 - `--dump` writes the final 80×25 screen as UTF-8 text; `--dumpa` writes the
   per-cell attribute bytes as hex. `run_test.ps1` asserts against both.
 
@@ -71,7 +75,9 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 - **Milestone 2 (done):** file operations — copy / move (recursive for dir
   trees), delete (recursive, with confirm dialog), mkdir, rename — on the
   cursor entry or the tagged set; modal text-input widget; F3 file viewer
-  (scrollable). `run_test.ps1` 19/19 green.
-- **Next:** sort modes & info/brief view, then the features the DOS build
-  couldn't fit (command history, bookmarks, colour themes), F4 edit launch,
-  drive selection.
+  (scrollable).
+- **Milestone 3 (done):** sort modes (name / ext / size / date) per panel, and
+  runtime colour themes (blue / black / mono), both shown on the status row.
+  `run_test.ps1` 25/25 green.
+- **Next:** drive selection, F4 edit launch (`%EDITOR%` / notepad), command
+  line with history, bookmarks.

@@ -31,17 +31,31 @@
 #define LIST_Y0 1            /* first file row inside a panel box */
 #define VIS 21               /* visible file rows per panel       */
 
-/* ---- attribute palette (same low-nibble fg / high-nibble bg as VGA text) -- */
-#define A_NORM  0x17         /* light grey on blue   */
-#define A_DIR   0x1F         /* bright white on blue  */
-#define A_TAG   0x1E         /* yellow on blue        */
-#define A_CUR   0x30         /* black on cyan (cursor bar) */
-#define A_CURT  0x3E         /* yellow on cyan (tagged under cursor) */
-#define A_FRAME 0x17
-#define A_HDR   0x1F
-#define A_STAT  0x17
-#define A_FKEY  0x30
-#define A_FKNUM 0x07
+/* ---- attribute palette (same low-nibble fg / high-nibble bg as VGA text) --
+ * Runtime variables (not #defines) so colour themes can swap them live. */
+static WORD A_NORM, A_DIR, A_TAG, A_CUR, A_CURT, A_FRAME, A_HDR, A_STAT, A_FKEY, A_FKNUM;
+
+typedef struct {
+    const char *name;
+    WORD norm, dir, tag, cur, curt, frame, hdr, stat, fkey, fknum;
+} Theme;
+static const Theme THEMES[] = {
+    { "blue",  0x17, 0x1F, 0x1E, 0x30, 0x3E, 0x17, 0x1F, 0x17, 0x30, 0x07 },
+    { "black", 0x07, 0x0F, 0x0E, 0x70, 0x7E, 0x08, 0x0F, 0x07, 0x70, 0x7F },
+    { "mono",  0x07, 0x0F, 0x0F, 0x70, 0x70, 0x07, 0x0F, 0x07, 0x70, 0x70 },
+};
+#define NTHEMES ((int)(sizeof(THEMES) / sizeof(THEMES[0])))
+static int g_theme = 0;
+
+static void apply_theme(int i)
+{
+    g_theme = ((i % NTHEMES) + NTHEMES) % NTHEMES;
+    const Theme *t = &THEMES[g_theme];
+    A_NORM = t->norm; A_DIR = t->dir; A_TAG = t->tag; A_CUR = t->cur; A_CURT = t->curt;
+    A_FRAME = t->frame; A_HDR = t->hdr; A_STAT = t->stat; A_FKEY = t->fkey; A_FKNUM = t->fknum;
+}
+
+static const char *SORTNAME[] = { "name", "ext", "size", "date" };
 
 typedef struct {
     wchar_t           name[MAX_PATH];
@@ -57,6 +71,7 @@ typedef struct {
     Entry  *items;
     int     count, cap;
     int     cur, top;
+    int     sortmode;       /* 0=name 1=ext 2=size 3=date */
 } Panel;
 
 static CHAR_INFO scr[ROWS * COLS];
@@ -113,6 +128,14 @@ static void box(int x, int y, int w, int h, WORD at)
 }
 
 /* ---------------------------------------------------------------- directory io */
+static int g_sortmode = 0;   /* set by read_dir before qsort */
+
+static const wchar_t *ext_of(const wchar_t *n)
+{
+    const wchar_t *d = wcsrchr(n, L'.');
+    return (d && d != n) ? d + 1 : L"";
+}
+
 static int ent_cmp(const void *a, const void *b)
 {
     const Entry *x = a, *y = b;
@@ -120,6 +143,12 @@ static int ent_cmp(const void *a, const void *b)
     int ydd = (wcscmp(y->name, L"..") == 0);
     if (xdd != ydd) return ydd - xdd;            /* ".." first */
     if (x->is_dir != y->is_dir) return y->is_dir - x->is_dir;  /* dirs first */
+    switch (g_sortmode) {
+    case 1: { int e = _wcsicmp(ext_of(x->name), ext_of(y->name)); if (e) return e; break; }
+    case 2: if (x->size < y->size) return -1; if (x->size > y->size) return 1; break;
+    case 3: { LONG c = CompareFileTime(&y->mtime, &x->mtime); if (c) return c; break; }  /* newest first */
+    default: break;
+    }
     return _wcsicmp(x->name, y->name);
 }
 
@@ -173,6 +202,7 @@ static void read_dir(Panel *p)
         } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
+    g_sortmode = p->sortmode;
     qsort(p->items, p->count, sizeof(Entry), ent_cmp);
 }
 
@@ -460,10 +490,11 @@ static void compose_frame(void)
 
     /* status row */
     fill(0, 23, COLS, 1, L' ', A_STAT);
-    if (act->count) {
-        Entry *e = &act->items[act->cur];
+    {
         wchar_t st[COLS];
-        _snwprintf(st, COLS, L" %s   %d item(s)", e->name, act->count);
+        const wchar_t *nm = act->count ? act->items[act->cur].name : L"";
+        _snwprintf(st, COLS, L" %s   %d item(s)   sort:%S  theme:%S",
+                   nm, act->count, SORTNAME[act->sortmode], THEMES[g_theme].name);
         puts_at(0, 23, st, A_STAT);
     }
 
@@ -486,7 +517,15 @@ static void compose_frame(void)
 /* ---------------------------------------------------------------- actions */
 enum { ACT_NONE, ACT_UP, ACT_DOWN, ACT_PGUP, ACT_PGDN, ACT_HOME, ACT_END,
        ACT_ENTER, ACT_TAB, ACT_TAG, ACT_QUIT,
-       ACT_VIEW, ACT_COPY, ACT_MOVE, ACT_MKDIR, ACT_DELETE, ACT_RENAME };
+       ACT_VIEW, ACT_COPY, ACT_MOVE, ACT_MKDIR, ACT_DELETE, ACT_RENAME,
+       ACT_SORT, ACT_THEME };
+
+static void set_sort(int m)
+{
+    act->sortmode = ((m % 4) + 4) % 4;
+    read_dir(act);
+    clamp_panel(act);
+}
 
 static void clamp_panel(Panel *p)
 {
@@ -543,6 +582,8 @@ static int do_action(int a)
             if (wcscmp(e->name, L"..") != 0) open_input(2, L" Rename to ", e->name);
         }
         break;
+    case ACT_SORT:  set_sort(act->sortmode + 1); break;
+    case ACT_THEME: apply_theme(g_theme + 1); break;
     case ACT_TAB:  act = (act == &L) ? &R : &L; break;
     case ACT_TAG:
         if (act->count) {
@@ -616,6 +657,8 @@ static int token_action(const char *t)
     if (!_stricmp(t, "MOVE"))   return ACT_MOVE;
     if (!_stricmp(t, "DEL"))    return ACT_DELETE;
     if (!_stricmp(t, "VIEW"))   return ACT_VIEW;
+    if (!_stricmp(t, "SORT"))   return ACT_SORT;
+    if (!_stricmp(t, "THEME"))  return ACT_THEME;
     return ACT_NONE;
 }
 
@@ -629,6 +672,14 @@ static void apply_token(const char *t)
 {
     if (!_strnicmp(t, "MKDIR:", 6)) { wchar_t w[MAX_PATH]; mb2w(t + 6, w, MAX_PATH); op_mkdir(w); return; }
     if (!_strnicmp(t, "REN:", 4))   { wchar_t w[MAX_PATH]; mb2w(t + 4, w, MAX_PATH); op_rename(w); return; }
+    if (!_strnicmp(t, "SORT:", 5)) {
+        const char *m = t + 5;
+        if (!_stricmp(m, "name")) set_sort(0);
+        else if (!_stricmp(m, "ext"))  set_sort(1);
+        else if (!_stricmp(m, "size")) set_sort(2);
+        else if (!_stricmp(m, "date")) set_sort(3);
+        return;
+    }
     int a = token_action(t);
     if (a != ACT_NONE) do_action(a);
 }
@@ -720,6 +771,11 @@ static void run_live(void)
         if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
             const KEY_EVENT_RECORD *ke = &ir.Event.KeyEvent;
             if (handle_modal(ke)) continue;
+            /* Ctrl+S cycle sort, Ctrl+T cycle theme */
+            if ((ke->dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) && !g_view_active) {
+                if (ke->wVirtualKeyCode == 'S') { do_action(ACT_SORT);  continue; }
+                if (ke->wVirtualKeyCode == 'T') { do_action(ACT_THEME); continue; }
+            }
             /* F8 / Del opens a confirm dialog rather than deleting outright */
             if ((ke->wVirtualKeyCode == VK_F8 || ke->wVirtualKeyCode == VK_DELETE)
                 && !g_view_active) {
@@ -759,6 +815,8 @@ static void set_path_arg(Panel *p, const char *a)
 
 int main(int argc, char **argv)
 {
+    apply_theme(0);
+
     /* defaults: both panels = current directory */
     GetCurrentDirectoryW(MAX_PATH, L.path);
     wcscpy(R.path, L.path);

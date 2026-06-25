@@ -73,5 +73,33 @@ $vv = (Get-Content "$dir\_vo.txt" -Encoding UTF8) -join "`n"
 Check "viewer header"    ($vv -match 'View: copyme\.txt')
 Check "viewer content"   ($vv -match 'COPY THIS CONTENT')
 
+# --- milestone 3: sort modes + colour themes ---
+$st = "$dir\_sort"
+Remove-Item $st -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory $st -Force | Out-Null
+[IO.File]::WriteAllText("$st\bbb.txt",("x"*10));   Start-Sleep -Milliseconds 40
+[IO.File]::WriteAllText("$st\aaa.zip",("y"*5000)); Start-Sleep -Milliseconds 40
+[IO.File]::WriteAllText("$st\ccc.dat",("z"*100))
+function SortDump($keys){ Set-Content "$dir\_sk.txt" $keys -Encoding ASCII
+    & "$dir\cc.exe" --dir $st --keys "$dir\_sk.txt" --dump "$dir\_sd.txt" | Out-Null
+    Get-Content "$dir\_sd.txt" -Encoding UTF8 }
+
+# row 0 = box border, row 1 = "..", so the first file entry is row 2
+$s = SortDump "SORT:name"
+Check "sort name: aaa first" ($s[2] -match 'aaa\.zip')
+$s = SortDump "SORT:ext"
+Check "sort ext: dat first"  ($s[2] -match 'ccc\.dat')   # dat < txt < zip
+Check "sort status shows ext" ($s[23] -match 'sort:ext')
+$s = SortDump "SORT:size"
+Check "sort size: 10 first"  ($s[2] -match 'bbb\.txt\s+10\b')
+$s = SortDump "SORT:date"
+Check "sort date: newest 1st" ($s[2] -match 'ccc\.dat')  # created last
+
+# theme: 1 cycle -> black (norm 0x07), 2 cycles -> mono (norm 0x07, dir 0x0f), back to blue
+Set-Content "$dir\_sk.txt" "THEME" -Encoding ASCII
+& "$dir\cc.exe" --dir $st --keys "$dir\_sk.txt" --dumpa "$dir\_ta.txt" | Out-Null
+$ta = Get-Content "$dir\_ta.txt"
+Check "theme switch norm 07" ((($ta[2] -split ' ')[1]) -eq '07')
+
 Write-Host ("`nwincc: {0} passed, {1} failed" -f $pass,$fail)
 if ($fail -gt 0) { exit 1 } else { Write-Host "WINCC REGRESSION: PASS"; exit 0 }
