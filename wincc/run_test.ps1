@@ -135,5 +135,24 @@ Check "resize 50x12 rows"    ($rs.Count -eq 12)
 Check "resize 50x12 cols"    ($rs[0].Length -eq 50)
 Check "resize small lists"   ($rs[2] -match 'alpha\.txt')
 
+# --- cd-on-exit: active panel's path is exported to %CC_CWD_FILE% ---
+$cl = "$dir\_cdl"; $cr = "$dir\_cdr"
+Remove-Item $cl,$cr -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory "$cl\SUBA","$cr\SUBB" -Force | Out-Null
+$env:CC_CWD_FILE = "$dir\_cwd.txt"
+# sorted: .., SUBA  -> DOWN lands on SUBA, ENTER descends into it
+Remove-Item $env:CC_CWD_FILE -ErrorAction SilentlyContinue
+Set-Content "$dir\_cdk.txt" "DOWN`nENTER" -Encoding ASCII
+& "$dir\cc.exe" --dir $cl --keys "$dir\_cdk.txt" --dump "$dir\_cdd.txt" | Out-Null
+$cwd1 = if (Test-Path $env:CC_CWD_FILE) { (Get-Content $env:CC_CWD_FILE -Raw).Trim() } else { "" }
+Check "cd-on-exit active panel" ($cwd1 -match 'SUBA$')
+# after TAB the right panel is active -> its path is what gets exported
+Remove-Item $env:CC_CWD_FILE -ErrorAction SilentlyContinue
+Set-Content "$dir\_cdk.txt" "TAB`nDOWN`nENTER" -Encoding ASCII
+& "$dir\cc.exe" --dir $cl --rdir $cr --keys "$dir\_cdk.txt" --dump "$dir\_cdd.txt" | Out-Null
+$cwd2 = if (Test-Path $env:CC_CWD_FILE) { (Get-Content $env:CC_CWD_FILE -Raw).Trim() } else { "" }
+Check "cd-on-exit follows TAB"  ($cwd2 -match 'SUBB$')
+Remove-Item Env:\CC_CWD_FILE -ErrorAction SilentlyContinue
+
 Write-Host ("`nwincc: {0} passed, {1} failed" -f $pass,$fail)
 if ($fail -gt 0) { exit 1 } else { Write-Host "WINCC REGRESSION: PASS"; exit 0 }

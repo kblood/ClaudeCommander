@@ -974,6 +974,23 @@ static void run_live(void)
 }
 
 /* ---------------------------------------------------------------- main */
+/* "cd on exit": a Windows process can't change its parent shell's current
+ * directory, so on quit we write the active panel's path to the file named by
+ * %CC_CWD_FILE% (if set). The cc.cmd / cc.ps1 wrappers read it back and cd
+ * there — the same mechanism Far Manager and Midnight Commander use. */
+static void write_exit_cwd(void)
+{
+    const char *f = getenv("CC_CWD_FILE");
+    if (!f || !*f) return;
+    FILE *fp = fopen(f, "w");
+    if (!fp) return;
+    char path[MAX_PATH * 2];
+    int n = WideCharToMultiByte(CP_ACP, 0, act->path, -1,
+                                path, sizeof(path), NULL, NULL);
+    if (n > 0) fputs(path, fp);
+    fclose(fp);
+}
+
 static void set_path_arg(Panel *p, const char *a)
 {
     wchar_t w[MAX_PATH];
@@ -1025,9 +1042,11 @@ int main(int argc, char **argv)
         compose_frame();
         if (dumpfile) dump_frame(dumpfile);
         if (attrfile) dump_attr(attrfile);
+        write_exit_cwd();
         return 0;
     }
 
     run_live();
+    write_exit_cwd();
     return 0;
 }

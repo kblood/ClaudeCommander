@@ -36,6 +36,23 @@ a VGA text-mode word (same low-nibble-fg / high-nibble-bg attribute layout), and
 cc.exe             # opens both panels on the current directory
 ```
 
+### "cd on exit" (leave the shell in the active panel's folder)
+
+Like Norton/Volkov/Far, cc can drop you in the directory of its active panel
+when you quit. On Windows a process can't change its parent shell's current
+directory, so this needs a one-line wrapper that cc ships with:
+
+```powershell
+.\cc.ps1           # PowerShell: session ends in the active panel's folder
+```
+```
+cc.cmd             # cmd.exe: same, for a classic console
+```
+
+Both set `%CC_CWD_FILE%`, run `cc.exe`, then `cd` to the path cc wrote there on
+exit. Put this folder on your `PATH` (or copy the wrapper) to use `cc` everywhere.
+Running `cc.exe` directly still works — it just can't move the shell afterwards.
+
 | Key | Action |
 |---|---|
 | ↑ ↓ PgUp PgDn Home End | move cursor |
@@ -80,6 +97,8 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
   resize layout can be regression-tested without a real console.
 - `--dump` writes the final screen as UTF-8 text; `--dumpa` writes the
   per-cell attribute bytes as hex. `run_test.ps1` asserts against both.
+- if `%CC_CWD_FILE%` is set, the active panel's path is written there on exit
+  (also in `--dump` mode), so the cd-on-exit path is regression-tested headlessly.
 
 ## Status
 
@@ -94,6 +113,9 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 - **Milestone 4 (done):** quick incremental search (type to jump), drive
   selection (Alt+F1/F2 picker + direct), F4 edit launch.
 - **Milestone 5 (done):** live console resize — the layout follows the terminal
-  window size each frame; `--size WxH` headless seam. `run_test.ps1` 36/36 green.
+  window size each frame; `--size WxH` headless seam.
+- **Milestone 6 (done):** cd-on-exit — the active panel's folder is exported via
+  `%CC_CWD_FILE%`, and `cc.cmd` / `cc.ps1` wrappers leave the shell there.
+  `run_test.ps1` 38/38 green.
 - **Next:** command line with history, directory bookmarks/hotlist, copy
   progress for large files.
