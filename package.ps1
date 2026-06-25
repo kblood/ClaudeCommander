@@ -60,6 +60,27 @@ $popDefs = @(
 if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: CCPOP.COM"; exit 1 }
 "{0,-12} {1,7:N0} B  <- cc.asm (pop-up menu)" -f "CCPOP.COM", (Get-Item "$out\CCPOP.COM").Length | Write-Host
 
+# Gold Box game-data helpers. These are built in the goldbox worktree and have
+# no .asm source on main, so we can't NASM them here -- copy the prebuilt .COMs
+# in if that worktree is present. The cc.ini [open]/[view] routing references
+# them by name; missing ones are simply skipped (cc ignores absent helpers).
+$goldbox = "C:\LLM\cc-goldbox"
+$gbBins  = @("CCGLB.COM","CCGEO.COM","CCHLIB.COM","CCDAA.COM","CCSND.COM","CCGB.COM","CCGBC.COM")
+Write-Host "`nGold Box helpers (prebuilt, from $goldbox)"
+if (Test-Path $goldbox) {
+    foreach ($g in $gbBins) {
+        $srcg = Join-Path $goldbox $g
+        if (Test-Path $srcg) {
+            Copy-Item $srcg "$out\$g" -Force
+            "{0,-12} {1,7:N0} B  <- goldbox (prebuilt)" -f $g, (Get-Item "$out\$g").Length | Write-Host
+        } else {
+            Write-Host "  (skipped missing $g)"
+        }
+    }
+} else {
+    Write-Host "  (goldbox worktree not found -- Gold Box helpers omitted)"
+}
+
 Write-Host "`nCopying data files"
 foreach ($d in $data) {
     if (Test-Path "$dir\$d") {
@@ -111,6 +132,14 @@ Files:
   CCJOIN.COM  rejoin parts      (type CCJOIN <output> <base>)
   CCREN.COM   wildcard rename   (type CCREN <srcmask> <dstmask>)
   CCTOUCH.COM set file date/time(CCTOUCH <file> [YYYY-MM-DD [HH:MM[:SS]]])
+  -- Gold Box (SSI D&D) game-data helpers (if bundled) --
+  CCGLB.COM   browse .glb master lib (Enter; dispatches by chunk: sound/img/map)
+  CCGEO.COM   view .geo area maps     (F3 on a .geo / GEO members in a .glb)
+  CCHLIB.COM  view .tlb/.hti image master  (Enter on .tlb / F3 on .hti)
+  CCDAA.COM   .daa/.dai data          (Enter on .daa / F3 on .dai)
+  CCSND.COM   play DIG4 digitized sound (dispatched from CCGLB)
+  CCGB.COM    view .gbi image         (F3 on a .gbi)
+  CCGBC.COM   browse .dax container   (Enter on a .dax)
   cc.ini      startup options (sort=, columns=)
   cc.hlp      F1 help text
   da.lng      Danish F-key bar sample -- copy to cc.lng to use it
