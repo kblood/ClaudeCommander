@@ -93,6 +93,17 @@ static int     g_cf_active = 0;
 static wchar_t g_cf_msg[COLS];
 static int     g_cf_kind = 0;       /* 1=delete */
 
+/* quick incremental search */
+static wchar_t g_qs[64];
+static int     g_qs_len = 0;
+
+/* drive picker */
+static int     g_drv_active = 0;
+static wchar_t g_drv[32];        /* available drive letters, e.g. "ACD" */
+static int     g_drv_n = 0;
+static int     g_drv_sel = 0;
+static Panel  *g_drv_target = NULL;
+
 /* F3 viewer */
 static int    g_view_active = 0;
 static char  *g_view_buf = NULL;
@@ -348,6 +359,52 @@ static void op_rename(const wchar_t *newname)
     refresh_both();
 }
 
+/* ---------------------------------------------------------------- quick search */
+static void qs_reset(void) { g_qs_len = 0; g_qs[0] = 0; }
+
+static void qs_find(void)
+{
+    for (int i = 0; i < act->count; i++)
+        if (_wcsnicmp(act->items[i].name, g_qs, g_qs_len) == 0) {
+            act->cur = i;
+            clamp_panel(act);
+            return;
+        }
+}
+static void qs_char(wchar_t c)
+{
+    if (g_qs_len < 63) { g_qs[g_qs_len++] = c; g_qs[g_qs_len] = 0; }
+    qs_find();
+}
+static void qs_back(void)
+{
+    if (g_qs_len > 0) { g_qs[--g_qs_len] = 0; if (g_qs_len) qs_find(); }
+}
+
+/* ---------------------------------------------------------------- drives */
+static void set_drive(wchar_t d)
+{
+    wchar_t p[4] = { (wchar_t)towupper(d), L':', L'\\', 0 };
+    if (GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES) {
+        wcscpy(act->path, p);
+        read_dir(act);
+    }
+}
+static void drive_open(Panel *target)
+{
+    DWORD mask = GetLogicalDrives();
+    g_drv_n = 0;
+    for (int i = 0; i < 26; i++)
+        if (mask & (1u << i)) g_drv[g_drv_n++] = (wchar_t)(L'A' + i);
+    g_drv[g_drv_n] = 0;
+    g_drv_sel = 0;
+    /* preselect the target's current drive */
+    for (int i = 0; i < g_drv_n; i++)
+        if (towupper(target->path[0]) == g_drv[i]) g_drv_sel = i;
+    g_drv_target = target;
+    g_drv_active = 1;
+}
+
 /* ---------------------------------------------------------------- F3 viewer */
 static void view_open(void)
 {
@@ -478,6 +535,18 @@ static void render_overlays(void)
         puts_at(x + 2, y + 1, g_cf_msg, A_HDR);
         puts_at(x + 2, y + 3, L"[Y] Yes    [N] No", A_HDR);
     }
+    if (g_drv_active) {
+        int h = g_drv_n + 2, w = 14, x = (COLS - w) / 2, y = (ROWS - h) / 2;
+        fill(x, y, w, h, L' ', A_HDR);
+        box(x, y, w, h, A_HDR);
+        puts_at(x + 2, y, L" Drive ", A_HDR);
+        for (int i = 0; i < g_drv_n; i++) {
+            WORD at = (i == g_drv_sel) ? A_CUR : A_HDR;
+            wchar_t line[8]; _snwprintf(line, 8, L" %c:\\ ", g_drv[i]);
+            fill(x + 1, y + 1 + i, w - 2, 1, L' ', at);
+            puts_at(x + 2, y + 1 + i, line, at);
+        }
+    }
 }
 
 static void compose_frame(void)
@@ -492,9 +561,13 @@ static void compose_frame(void)
     fill(0, 23, COLS, 1, L' ', A_STAT);
     {
         wchar_t st[COLS];
-        const wchar_t *nm = act->count ? act->items[act->cur].name : L"";
-        _snwprintf(st, COLS, L" %s   %d item(s)   sort:%S  theme:%S",
-                   nm, act->count, SORTNAME[act->sortmode], THEMES[g_theme].name);
+        if (g_qs_len)
+            _snwprintf(st, COLS, L" search: %s_", g_qs);
+        else {
+            const wchar_t *nm = act->count ? act->items[act->cur].name : L"";
+            _snwprintf(st, COLS, L" %s   %d item(s)   sort:%S  theme:%S",
+                       nm, act->count, SORTNAME[act->sortmode], THEMES[g_theme].name);
+        }
         puts_at(0, 23, st, A_STAT);
     }
 
@@ -518,7 +591,7 @@ static void compose_frame(void)
 enum { ACT_NONE, ACT_UP, ACT_DOWN, ACT_PGUP, ACT_PGDN, ACT_HOME, ACT_END,
        ACT_ENTER, ACT_TAB, ACT_TAG, ACT_QUIT,
        ACT_VIEW, ACT_COPY, ACT_MOVE, ACT_MKDIR, ACT_DELETE, ACT_RENAME,
-       ACT_SORT, ACT_THEME };
+       ACT_SORT, ACT_THEME, ACT_EDIT, ACT_DRIVEL, ACT_DRIVER };
 
 static void set_sort(int m)
 {
@@ -546,9 +619,45 @@ static void open_input(int kind, const wchar_t *title, const wchar_t *prefill)
     g_in_len = (int)wcslen(g_in_buf);
 }
 
+static void launch_editor(void)
+{
+    if (!act->count) return;
+    Entry *e = &act->items[act->cur];
+    if (e->is_dir) return;
+    wchar_t path[MAX_PATH]; join(path, act->path, e->name);
+
+    const wchar_t *ed = _wgetenv(L"EDITOR");
+    wchar_t cmd[MAX_PATH * 2];
+    if (ed && ed[0]) _snwprintf(cmd, MAX_PATH * 2, L"\"%s\" \"%s\"", ed, path);
+    else             _snwprintf(cmd, MAX_PATH * 2, L"notepad.exe \"%s\"", path);
+
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {0};
+    if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, act->path, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
 /* returns 1 to quit */
 static int do_action(int a)
 {
+    /* drive picker captures navigation while open */
+    if (g_drv_active) {
+        switch (a) {
+        case ACT_UP:    if (--g_drv_sel < 0) g_drv_sel = 0; break;
+        case ACT_DOWN:  if (++g_drv_sel >= g_drv_n) g_drv_sel = g_drv_n - 1; break;
+        case ACT_ENTER: {
+            Panel *sv = act; act = g_drv_target;
+            set_drive(g_drv[g_drv_sel]);
+            act = sv; g_drv_active = 0;
+            break;
+        }
+        case ACT_QUIT:  g_drv_active = 0; break;
+        }
+        return 0;
+    }
+
     /* viewer captures navigation while open */
     if (g_view_active) {
         switch (a) {
@@ -563,6 +672,8 @@ static int do_action(int a)
         }
         return 0;
     }
+
+    qs_reset();   /* any explicit action ends an in-progress quick search */
 
     switch (a) {
     case ACT_UP:   act->cur--; break;
@@ -584,6 +695,9 @@ static int do_action(int a)
         break;
     case ACT_SORT:  set_sort(act->sortmode + 1); break;
     case ACT_THEME: apply_theme(g_theme + 1); break;
+    case ACT_EDIT:  launch_editor(); break;
+    case ACT_DRIVEL: drive_open(&L); break;
+    case ACT_DRIVER: drive_open(&R); break;
     case ACT_TAB:  act = (act == &L) ? &R : &L; break;
     case ACT_TAG:
         if (act->count) {
@@ -659,6 +773,9 @@ static int token_action(const char *t)
     if (!_stricmp(t, "VIEW"))   return ACT_VIEW;
     if (!_stricmp(t, "SORT"))   return ACT_SORT;
     if (!_stricmp(t, "THEME"))  return ACT_THEME;
+    if (!_stricmp(t, "EDIT"))   return ACT_EDIT;
+    if (!_stricmp(t, "DRIVESL")) return ACT_DRIVEL;
+    if (!_stricmp(t, "DRIVESR")) return ACT_DRIVER;
     return ACT_NONE;
 }
 
@@ -680,6 +797,12 @@ static void apply_token(const char *t)
         else if (!_stricmp(m, "date")) set_sort(3);
         return;
     }
+    if (!_strnicmp(t, "TYPE:", 5)) {
+        wchar_t w[64]; mb2w(t + 5, w, 64);
+        for (int i = 0; w[i]; i++) qs_char(w[i]);
+        return;
+    }
+    if (!_strnicmp(t, "DRIVE:", 6)) { set_drive((wchar_t)t[6]); return; }
     int a = token_action(t);
     if (a != ACT_NONE) do_action(a);
 }
@@ -702,6 +825,7 @@ static int key_to_action(const KEY_EVENT_RECORD *k)
     case VK_F10:    return ACT_QUIT;
     case VK_F2:     return ACT_RENAME;
     case VK_F3:     return ACT_VIEW;
+    case VK_F4:     return ACT_EDIT;
     case VK_F5:     return ACT_COPY;
     case VK_F6:     return ACT_MOVE;
     case VK_F7:     return ACT_MKDIR;
@@ -771,10 +895,31 @@ static void run_live(void)
         if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
             const KEY_EVENT_RECORD *ke = &ir.Event.KeyEvent;
             if (handle_modal(ke)) continue;
+
+            /* drive picker captures keys while open */
+            if (g_drv_active) {
+                int a = key_to_action(ke);
+                if (a != ACT_NONE) do_action(a);
+                continue;
+            }
+
+            DWORD alt  = ke->dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED);
+            DWORD ctrl = ke->dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED);
+
+            /* Alt+F1 / Alt+F2 open the drive picker for left / right panel */
+            if (alt && ke->wVirtualKeyCode == VK_F1) { do_action(ACT_DRIVEL); continue; }
+            if (alt && ke->wVirtualKeyCode == VK_F2) { do_action(ACT_DRIVER); continue; }
+
             /* Ctrl+S cycle sort, Ctrl+T cycle theme */
-            if ((ke->dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) && !g_view_active) {
+            if (ctrl && !g_view_active) {
                 if (ke->wVirtualKeyCode == 'S') { do_action(ACT_SORT);  continue; }
                 if (ke->wVirtualKeyCode == 'T') { do_action(ACT_THEME); continue; }
+            }
+
+            /* quick-search editing */
+            if (!g_view_active) {
+                if (ke->wVirtualKeyCode == VK_BACK   && g_qs_len) { qs_back();  continue; }
+                if (ke->wVirtualKeyCode == VK_ESCAPE && g_qs_len) { qs_reset(); continue; }
             }
             /* F8 / Del opens a confirm dialog rather than deleting outright */
             if ((ke->wVirtualKeyCode == VK_F8 || ke->wVirtualKeyCode == VK_DELETE)
@@ -789,6 +934,11 @@ static void run_live(void)
                 }
                 continue;
             }
+
+            /* printable char (not space — space tags) starts/extends quick search */
+            wchar_t uc = ke->uChar.UnicodeChar;
+            if (uc > 32 && !ctrl && !alt && !g_view_active) { qs_char(uc); continue; }
+
             int a = key_to_action(ke);
             if (a != ACT_NONE) quit = do_action(a);
         }

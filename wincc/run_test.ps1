@@ -101,5 +101,26 @@ Set-Content "$dir\_sk.txt" "THEME" -Encoding ASCII
 $ta = Get-Content "$dir\_ta.txt"
 Check "theme switch norm 07" ((($ta[2] -split ' ')[1]) -eq '07')
 
+# --- milestone 4: quick search + drive selection ---
+$qd = "$dir\_qs"
+Remove-Item $qd -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory $qd -Force | Out-Null
+foreach ($f in "alpha.txt","beta.txt","gamma.txt","delta.txt") { [IO.File]::WriteAllText("$qd\$f","x") }
+# sorted: .., alpha, beta, delta, gamma  -> rows 1..5
+Set-Content "$dir\_qk.txt" "TYPE:gam" -Encoding ASCII
+& "$dir\cc.exe" --dir $qd --keys "$dir\_qk.txt" --dump  "$dir\_qd.txt" | Out-Null
+& "$dir\cc.exe" --dir $qd --keys "$dir\_qk.txt" --dumpa "$dir\_qa.txt" | Out-Null
+$qdd = Get-Content "$dir\_qd.txt" -Encoding UTF8
+$qaa = Get-Content "$dir\_qa.txt"
+Check "quicksearch status"   ($qdd[23] -match 'search: gam')
+Check "quicksearch cursor"   ((($qaa[5] -split ' ')[1]) -eq '30' -and $qdd[5] -match 'gamma')
+
+Set-Content "$dir\_qk.txt" "DRIVE:C" -Encoding ASCII
+& "$dir\cc.exe" --dir $qd --keys "$dir\_qk.txt" --dump "$dir\_qd2.txt" | Out-Null
+Check "drive switch C:\"     ((Get-Content "$dir\_qd2.txt" -Encoding UTF8)[0] -match 'C:\\')
+Set-Content "$dir\_qk.txt" "DRIVESL" -Encoding ASCII
+& "$dir\cc.exe" --dir $qd --keys "$dir\_qk.txt" --dump "$dir\_qd3.txt" | Out-Null
+Check "drive picker overlay" (((Get-Content "$dir\_qd3.txt" -Encoding UTF8) -join "`n") -match 'C:\\')
+
 Write-Host ("`nwincc: {0} passed, {1} failed" -f $pass,$fail)
 if ($fail -gt 0) { exit 1 } else { Write-Host "WINCC REGRESSION: PASS"; exit 0 }
