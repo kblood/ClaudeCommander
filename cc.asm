@@ -451,6 +451,22 @@ main_loop:
         mov     al, [orig_mode]
         int     10h
         call    show_cursor
+        ; --- cd-on-exit (Norton/Volkov style): leave COMMAND.COM in the active
+        ;     panel's directory. DOS keeps the current dir as global state, so a
+        ;     CHDIR here persists to the shell after we terminate. Virtual
+        ;     (container) panels are skipped; any failure is ignored. ---
+        mov     bx, [active]
+        cmp     byte [bx+P_VFS], 0
+        jne     .nocd
+        mov     al, [bx+P_PATH]         ; drive letter 'A'..'Z'
+        sub     al, 'A'
+        mov     dl, al
+        mov     ah, 0Eh                 ; select default drive
+        int     21h
+        lea     dx, [bx+P_PATH]         ; ASCIIZ "C:\DIR\SUB"
+        mov     ah, 3Bh                 ; CHDIR
+        int     21h
+.nocd:
         mov     ax, 4C00h
         int     21h
 

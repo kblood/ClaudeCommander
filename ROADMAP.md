@@ -252,6 +252,7 @@ Legend: **[R]** resident module (Layer 1) · **[D]** runtime data (Layer 2) ·
 |---|---|---|---|
 | Attribute editor (toggle R/H/S/A) | [R] | ~0.5 KB | INT 21h 43h. |
 | Touch (set date/time) | DONE | 0 KB | Shipped as CCTOUCH.COM (8c004dc), INT 21h 5701h. |
+| cd-on-exit (leave shell in active panel's dir) | DONE | ~0 KB | INT 21h 0Eh+3Bh at terminate; DOS keeps CWD as global state. Norton/Volkov style. |
 | Copy/Move byte-progress % | [R] | ~0.4 KB | Extend the existing busy box. |
 | Preserve timestamps/attributes on copy | [R] | ~0.3 KB | Read+reapply during `copy_file`. |
 | Verify-after-copy | [R] | ~0.5 KB | Optional re-read+compare. |

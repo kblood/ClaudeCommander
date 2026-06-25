@@ -125,6 +125,10 @@ _ttest2/
 _ttest3/
 R.TXT
 RESULT.TXT
+# cd-on-exit test scaffolding (DOS)
+_cdexit/
+_cdexit.conf
+CWDOUT.TXT
 # Windows console port (wincc) build + test artifacts
 wincc/cc.exe
 wincc/*.o
@@ -165,6 +169,13 @@ wincc/_rsm.txt
 wincc/_big.txt
 wincc/_sm.txt
 wincc/_rs/
+wincc/_cdl/
+wincc/_cdr/
+wincc/_cdexit/
+wincc/_cwd.txt
+wincc/_cwdout.txt
+wincc/_cdk.txt
+wincc/_cdd.txt
 # pack-bug reproduction scaffolding
 PKT/
 PKT2/
