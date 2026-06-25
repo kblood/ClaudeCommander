@@ -25,11 +25,14 @@
 #include <wchar.h>
 #include <string.h>
 
-#define COLS 80
-#define ROWS 25
-#define PANEL_W 40
+#define MAXCOLS 512          /* allocation ceiling; logic uses g_cols/g_rows */
+#define MAXROWS 256
 #define LIST_Y0 1            /* first file row inside a panel box */
-#define VIS 21               /* visible file rows per panel       */
+
+/* live dimensions (default 80x25; tracks the console window in run_live) */
+static int g_cols = 80, g_rows = 25;
+
+static int vis_rows(void) { int v = g_rows - 4; return v < 1 ? 1 : v; }   /* file rows per panel */
 
 /* ---- attribute palette (same low-nibble fg / high-nibble bg as VGA text) --
  * Runtime variables (not #defines) so colour themes can swap them live. */
@@ -74,7 +77,7 @@ typedef struct {
     int     sortmode;       /* 0=name 1=ext 2=size 3=date */
 } Panel;
 
-static CHAR_INFO scr[ROWS * COLS];
+static CHAR_INFO scr[MAXROWS * MAXCOLS];
 static Panel L, R;
 static Panel *act = &L;
 
@@ -90,7 +93,7 @@ static int     g_in_len = 0;
 
 /* confirm dialog (delete) */
 static int     g_cf_active = 0;
-static wchar_t g_cf_msg[COLS];
+static wchar_t g_cf_msg[MAXCOLS];
 static int     g_cf_kind = 0;       /* 1=delete */
 
 /* quick incremental search */
@@ -116,14 +119,14 @@ static wchar_t g_view_name[MAX_PATH];
 /* ---------------------------------------------------------------- framebuffer */
 static void cell(int x, int y, wchar_t ch, WORD at)
 {
-    if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
-    CHAR_INFO *c = &scr[y * COLS + x];
+    if (x < 0 || x >= g_cols || y < 0 || y >= g_rows) return;
+    CHAR_INFO *c = &scr[y * g_cols + x];
     c->Char.UnicodeChar = ch;
     c->Attributes = at;
 }
 static void puts_at(int x, int y, const wchar_t *s, WORD at)
 {
-    for (; *s && x < COLS; s++, x++) cell(x, y, *s, at);
+    for (; *s && x < g_cols; s++, x++) cell(x, y, *s, at);
 }
 static void fill(int x, int y, int w, int h, wchar_t ch, WORD at)
 {
@@ -455,72 +458,80 @@ static void view_scroll(int d)
 }
 
 /* ---------------------------------------------------------------- rendering */
-static void render_panel(Panel *p, int px, int active)
+static void render_panel(Panel *p, int px, int pw, int active)
 {
-    box(px, 0, PANEL_W, 23, A_FRAME);
+    int ph = g_rows - 2;                 /* panel box height (rows above status) */
+    box(px, 0, pw, ph, A_FRAME);
 
-    /* path on the top border */
-    wchar_t hdr[PANEL_W];
-    _snwprintf(hdr, PANEL_W - 4, L" %s ", p->path);
+    /* path on the top border (truncated to fit) */
+    wchar_t hdr[MAXCOLS];
+    int hcap = pw - 4; if (hcap < 1) hcap = 1; if (hcap > MAXCOLS - 1) hcap = MAXCOLS - 1;
+    _snwprintf(hdr, hcap, L" %s ", p->path);
+    hdr[hcap] = 0;
     puts_at(px + 2, 0, hdr, A_HDR);
 
-    for (int i = 0; i < VIS; i++) {
+    int interior = pw - 2;
+    int namew = interior - 10;           /* leave 10 cols for the size/<DIR> */
+    if (namew < 4) namew = (interior > 4 ? interior - 1 : interior);
+
+    for (int i = 0; i < ph - 2; i++) {
         int y = LIST_Y0 + i;
         int idx = p->top + i;
-        if (idx >= p->count) { fill(px + 1, y, PANEL_W - 2, 1, L' ', A_NORM); continue; }
+        if (idx >= p->count) { fill(px + 1, y, interior, 1, L' ', A_NORM); continue; }
         Entry *e = &p->items[idx];
 
         WORD at = e->is_dir ? A_DIR : A_NORM;
         if (e->tagged) at = A_TAG;
         if (active && idx == p->cur) at = e->tagged ? A_CURT : A_CUR;
 
-        fill(px + 1, y, PANEL_W - 2, 1, L' ', at);
+        fill(px + 1, y, interior, 1, L' ', at);
 
-        wchar_t nm[32];
-        _snwprintf(nm, 30, L"%s", e->name);
-        nm[29] = 0;
+        wchar_t nm[MAXCOLS];
+        _snwprintf(nm, namew + 1, L"%s", e->name);
+        nm[namew] = 0;
         puts_at(px + 1, y, nm, at);
 
         wchar_t sz[16];
         if (e->is_dir) wcscpy(sz, L"<DIR>");
         else _snwprintf(sz, 16, L"%llu", e->size);
         int slen = (int)wcslen(sz);
-        puts_at(px + (PANEL_W - 1) - slen, y, sz, at);
+        puts_at(px + (pw - 1) - slen, y, sz, at);
     }
 }
 
 static void render_view(void)
 {
-    fill(0, 0, COLS, ROWS, L' ', A_NORM);
+    fill(0, 0, g_cols, g_rows, L' ', A_NORM);
     /* header */
-    fill(0, 0, COLS, 1, L' ', A_HDR);
-    wchar_t hdr[COLS];
-    _snwprintf(hdr, COLS, L" View: %s   (%ld bytes, %d lines)",
+    fill(0, 0, g_cols, 1, L' ', A_HDR);
+    wchar_t hdr[MAXCOLS];
+    _snwprintf(hdr, MAXCOLS, L" View: %s   (%ld bytes, %d lines)",
                g_view_name, g_view_len, g_view_nlines);
     puts_at(0, 0, hdr, A_HDR);
 
-    for (int row = 0; row < 23; row++) {
+    int body = g_rows - 2;               /* rows 1 .. g_rows-2 */
+    for (int row = 0; row < body; row++) {
         int ln = g_view_top + row;
         if (ln >= g_view_nlines) break;
         long off = g_view_line[ln];
         int x = 0;
-        for (long i = off; i < g_view_len && g_view_buf[i] != '\n' && x < COLS; i++) {
+        for (long i = off; i < g_view_len && g_view_buf[i] != '\n' && x < g_cols; i++) {
             unsigned char c = (unsigned char)g_view_buf[i];
             if (c == '\r') continue;
-            if (c == '\t') { do { cell(x++, row + 1, L' ', A_NORM); } while (x % 8 && x < COLS); continue; }
+            if (c == '\t') { do { cell(x++, row + 1, L' ', A_NORM); } while (x % 8 && x < g_cols); continue; }
             if (c < 32 || c == 127) c = '.';
             cell(x++, row + 1, (wchar_t)c, A_NORM);
         }
     }
     /* footer */
-    fill(0, 24, COLS, 1, L' ', A_FKEY);
-    puts_at(0, 24, L" PgUp/PgDn/Up/Down scroll   Esc/F3 close ", A_FKEY);
+    fill(0, g_rows - 1, g_cols, 1, L' ', A_FKEY);
+    puts_at(0, g_rows - 1, L" PgUp/PgDn/Up/Down scroll   Esc/F3 close ", A_FKEY);
 }
 
 static void render_overlays(void)
 {
     if (g_in_active) {
-        int w = 50, h = 5, x = (COLS - w) / 2, y = (ROWS - h) / 2;
+        int w = 50, h = 5, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
         fill(x, y, w, h, L' ', A_HDR);
         box(x, y, w, h, A_HDR);
         puts_at(x + 2, y, g_in_title, A_HDR);
@@ -529,14 +540,14 @@ static void render_overlays(void)
         cell(x + 2 + g_in_len, y + 2, L'_', A_NORM);
     }
     if (g_cf_active) {
-        int w = 50, h = 5, x = (COLS - w) / 2, y = (ROWS - h) / 2;
+        int w = 50, h = 5, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
         fill(x, y, w, h, L' ', A_HDR);
         box(x, y, w, h, A_HDR);
         puts_at(x + 2, y + 1, g_cf_msg, A_HDR);
         puts_at(x + 2, y + 3, L"[Y] Yes    [N] No", A_HDR);
     }
     if (g_drv_active) {
-        int h = g_drv_n + 2, w = 14, x = (COLS - w) / 2, y = (ROWS - h) / 2;
+        int h = g_drv_n + 2, w = 14, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
         fill(x, y, w, h, L' ', A_HDR);
         box(x, y, w, h, A_HDR);
         puts_at(x + 2, y, L" Drive ", A_HDR);
@@ -553,22 +564,23 @@ static void compose_frame(void)
 {
     if (g_view_active) { render_view(); return; }
 
-    fill(0, 0, COLS, ROWS, L' ', A_NORM);
-    render_panel(&L, 0, act == &L);
-    render_panel(&R, PANEL_W, act == &R);
+    fill(0, 0, g_cols, g_rows, L' ', A_NORM);
+    int leftw = g_cols / 2;
+    render_panel(&L, 0, leftw, act == &L);
+    render_panel(&R, leftw, g_cols - leftw, act == &R);
 
     /* status row */
-    fill(0, 23, COLS, 1, L' ', A_STAT);
+    fill(0, g_rows - 2, g_cols, 1, L' ', A_STAT);
     {
-        wchar_t st[COLS];
+        wchar_t st[MAXCOLS];
         if (g_qs_len)
-            _snwprintf(st, COLS, L" search: %s_", g_qs);
+            _snwprintf(st, MAXCOLS, L" search: %s_", g_qs);
         else {
             const wchar_t *nm = act->count ? act->items[act->cur].name : L"";
-            _snwprintf(st, COLS, L" %s   %d item(s)   sort:%S  theme:%S",
+            _snwprintf(st, MAXCOLS, L" %s   %d item(s)   sort:%S  theme:%S",
                        nm, act->count, SORTNAME[act->sortmode], THEMES[g_theme].name);
         }
-        puts_at(0, 23, st, A_STAT);
+        puts_at(0, g_rows - 2, st, A_STAT);
     }
 
     /* F-key bar */
@@ -576,12 +588,12 @@ static void compose_frame(void)
         L"Help", L"Menu", L"View", L"Edit", L"Copy",
         L"Move", L"MkDir", L"Del", L"PullDn", L"Quit"
     };
-    fill(0, 24, COLS, 1, L' ', A_FKEY);
+    fill(0, g_rows - 1, g_cols, 1, L' ', A_FKEY);
     int x = 0;
     for (int i = 0; i < 10; i++) {
         wchar_t num[4]; _snwprintf(num, 4, L"%d", i + 1);
-        puts_at(x, 24, num, A_FKNUM); x += (int)wcslen(num);
-        puts_at(x, 24, fk[i], A_FKEY); x += (int)wcslen(fk[i]) + 1;
+        puts_at(x, g_rows - 1, num, A_FKNUM); x += (int)wcslen(num);
+        puts_at(x, g_rows - 1, fk[i], A_FKEY); x += (int)wcslen(fk[i]) + 1;
     }
 
     render_overlays();
@@ -606,7 +618,7 @@ static void clamp_panel(Panel *p)
     if (p->cur >= p->count) p->cur = p->count - 1;
     if (p->cur < 0) p->cur = 0;
     if (p->cur < p->top) p->top = p->cur;
-    if (p->cur >= p->top + VIS) p->top = p->cur - VIS + 1;
+    if (p->cur >= p->top + vis_rows()) p->top = p->cur - vis_rows() + 1;
     if (p->top < 0) p->top = 0;
 }
 
@@ -678,8 +690,8 @@ static int do_action(int a)
     switch (a) {
     case ACT_UP:   act->cur--; break;
     case ACT_DOWN: act->cur++; break;
-    case ACT_PGUP: act->cur -= VIS - 1; break;
-    case ACT_PGDN: act->cur += VIS - 1; break;
+    case ACT_PGUP: act->cur -= vis_rows() - 1; break;
+    case ACT_PGDN: act->cur += vis_rows() - 1; break;
     case ACT_HOME: act->cur = 0; break;
     case ACT_END:  act->cur = act->count - 1; break;
     case ACT_VIEW:   view_open(); break;
@@ -727,15 +739,15 @@ static void dump_frame(const char *path)
 {
     FILE *f = fopen(path, "wb");
     if (!f) return;
-    for (int y = 0; y < ROWS; y++) {
-        wchar_t line[COLS + 1];
-        for (int x = 0; x < COLS; x++) {
-            wchar_t ch = scr[y * COLS + x].Char.UnicodeChar;
+    for (int y = 0; y < g_rows; y++) {
+        wchar_t line[MAXCOLS + 1];
+        for (int x = 0; x < g_cols; x++) {
+            wchar_t ch = scr[y * g_cols + x].Char.UnicodeChar;
             line[x] = ch ? ch : L' ';
         }
-        line[COLS] = 0;
-        char utf8[COLS * 4 + 1];
-        int n = WideCharToMultiByte(CP_UTF8, 0, line, COLS, utf8, sizeof(utf8) - 1, NULL, NULL);
+        line[g_cols] = 0;
+        char utf8[MAXCOLS * 4 + 1];
+        int n = WideCharToMultiByte(CP_UTF8, 0, line, g_cols, utf8, sizeof(utf8) - 1, NULL, NULL);
         utf8[n] = 0;
         fputs(utf8, f);
         fputc('\n', f);
@@ -747,9 +759,9 @@ static void dump_attr(const char *path)
 {
     FILE *f = fopen(path, "wb");
     if (!f) return;
-    for (int y = 0; y < ROWS; y++) {
-        for (int x = 0; x < COLS; x++)
-            fprintf(f, "%02x ", scr[y * COLS + x].Attributes & 0xFF);
+    for (int y = 0; y < g_rows; y++) {
+        for (int x = 0; x < g_cols; x++)
+            fprintf(f, "%02x ", scr[y * g_cols + x].Attributes & 0xFF);
         fputc('\n', f);
     }
     fclose(f);
@@ -872,26 +884,36 @@ static void run_live(void)
     CONSOLE_CURSOR_INFO ci; GetConsoleCursorInfo(hOut, &ci);
     CONSOLE_CURSOR_INFO hide = ci; hide.bVisible = FALSE;
 
-    SetConsoleMode(hIn, ENABLE_EXTENDED_FLAGS);   /* raw: no line/echo/quickedit */
+    /* ENABLE_WINDOW_INPUT delivers resize events; ENABLE_EXTENDED_FLAGS without
+     * ENABLE_QUICK_EDIT_MODE turns off quick-edit/line/echo so we get raw keys. */
+    SetConsoleMode(hIn, ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS);
     SetConsoleCursorInfo(hOut, &hide);
-
-    SMALL_RECT minr = {0, 0, 1, 1};
-    SetConsoleWindowInfo(hOut, TRUE, &minr);
-    COORD sz = {COLS, ROWS};
-    SetConsoleScreenBufferSize(hOut, sz);
-    SMALL_RECT full = {0, 0, COLS - 1, ROWS - 1};
-    SetConsoleWindowInfo(hOut, TRUE, &full);
 
     int quit = 0;
     while (!quit) {
+        /* follow the live console window size each frame */
+        CONSOLE_SCREEN_BUFFER_INFO bi;
+        GetConsoleScreenBufferInfo(hOut, &bi);
+        int W = bi.srWindow.Right - bi.srWindow.Left + 1;
+        int H = bi.srWindow.Bottom - bi.srWindow.Top + 1;
+        if (W < 24) W = 24;
+        if (W > MAXCOLS) W = MAXCOLS;
+        if (H < 8) H = 8;
+        if (H > MAXROWS) H = MAXROWS;
+        g_cols = W; g_rows = H;
+        clamp_panel(&L); clamp_panel(&R);
+
         compose_frame();
-        COORD bufsz = {COLS, ROWS}, org = {0, 0};
-        SMALL_RECT reg = {0, 0, COLS - 1, ROWS - 1};
+        COORD bufsz = { (SHORT)g_cols, (SHORT)g_rows }, org = {0, 0};
+        SMALL_RECT reg = bi.srWindow;
+        reg.Right  = reg.Left + (SHORT)g_cols - 1;
+        reg.Bottom = reg.Top  + (SHORT)g_rows - 1;
         WriteConsoleOutputW(hOut, scr, bufsz, org, &reg);
 
         INPUT_RECORD ir;
         DWORD nr = 0;
         if (!ReadConsoleInput(hIn, &ir, 1, &nr) || nr == 0) continue;
+        if (ir.EventType == WINDOW_BUFFER_SIZE_EVENT) continue;  /* re-render at new size */
         if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
             const KEY_EVENT_RECORD *ke = &ir.Event.KeyEvent;
             if (handle_modal(ke)) continue;
@@ -930,7 +952,7 @@ static void run_live(void)
                 if (n == 0 && act->count && wcscmp(act->items[act->cur].name, L"..")) n = 1;
                 if (n > 0) {
                     g_cf_active = 1; g_cf_kind = 1;
-                    _snwprintf(g_cf_msg, COLS, L"Delete %d item(s)?", n);
+                    _snwprintf(g_cf_msg, MAXCOLS, L"Delete %d item(s)?", n);
                 }
                 continue;
             }
@@ -978,6 +1000,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dumpfile = argv[++i];
         else if (!strcmp(argv[i], "--dumpa") && i + 1 < argc) attrfile = argv[++i];
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) keysfile = argv[++i];
+        else if (!strcmp(argv[i], "--size") && i + 1 < argc) {
+            int w = 0, h = 0;
+            if (sscanf(argv[++i], "%dx%d", &w, &h) == 2) {
+                if (w >= 24 && w <= MAXCOLS) g_cols = w;
+                if (h >= 8  && h <= MAXROWS) g_rows = h;
+            }
+        }
     }
 
     read_dir(&L);

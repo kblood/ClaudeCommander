@@ -58,6 +58,12 @@ cc.exe             # opens both panels on the current directory
 The active panel's sort mode and the current theme are shown on the status row;
 while quick-searching it shows the search string.
 
+The UI **follows the live console window size**: grab a corner and drag, or
+maximise, and both panels, the status row and the F-key bar re-lay-out on the
+next frame (down to a 24×8 floor, up to a 512×256 ceiling). Resize is driven
+by `ENABLE_WINDOW_INPUT` + a per-frame `GetConsoleScreenBufferInfo` poll, so it
+tracks font/zoom changes too, not just window drags.
+
 ## Headless self-test
 
 The same render path can run without an interactive console, for CI:
@@ -70,7 +76,9 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
   PGUP PGDN HOME END QUIT COPY MOVE DEL VIEW SORT THEME EDIT DRIVESL DRIVESR`,
   plus arg-carrying `MKDIR:<name>`, `REN:<name>`, `SORT:name|ext|size|date`,
   `TYPE:<text>` (quick search), `DRIVE:<letter>`).
-- `--dump` writes the final 80×25 screen as UTF-8 text; `--dumpa` writes the
+- `--size WxH` composes the frame at an arbitrary size (default 80×25), so the
+  resize layout can be regression-tested without a real console.
+- `--dump` writes the final screen as UTF-8 text; `--dumpa` writes the
   per-cell attribute bytes as hex. `run_test.ps1` asserts against both.
 
 ## Status
@@ -84,7 +92,8 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 - **Milestone 3 (done):** sort modes (name / ext / size / date) per panel, and
   runtime colour themes (blue / black / mono), both shown on the status row.
 - **Milestone 4 (done):** quick incremental search (type to jump), drive
-  selection (Alt+F1/F2 picker + direct), F4 edit launch. `run_test.ps1`
-  29/29 green.
+  selection (Alt+F1/F2 picker + direct), F4 edit launch.
+- **Milestone 5 (done):** live console resize — the layout follows the terminal
+  window size each frame; `--size WxH` headless seam. `run_test.ps1` 36/36 green.
 - **Next:** command line with history, directory bookmarks/hotlist, copy
   progress for large files.

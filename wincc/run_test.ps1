@@ -122,5 +122,18 @@ Set-Content "$dir\_qk.txt" "DRIVESL" -Encoding ASCII
 & "$dir\cc.exe" --dir $qd --keys "$dir\_qk.txt" --dump "$dir\_qd3.txt" | Out-Null
 Check "drive picker overlay" (((Get-Content "$dir\_qd3.txt" -Encoding UTF8) -join "`n") -match 'C:\\')
 
+# --- resize: layout follows --size WxH ---
+& "$dir\cc.exe" --dir $qd --size 120x40 --dump "$dir\_rbig.txt" | Out-Null
+$rb = Get-Content "$dir\_rbig.txt" -Encoding UTF8
+Check "resize 120x40 rows"   ($rb.Count -eq 40)
+Check "resize 120x40 cols"   ($rb[0].Length -eq 120)
+Check "resize fkey at bottom" ($rb[39] -match '1Help')
+Check "resize panels split"   ($rb[0] -match '^┌.*┐┌.*┐$')  # two boxes side by side
+& "$dir\cc.exe" --dir $qd --size 50x12 --dump "$dir\_rsm.txt" | Out-Null
+$rs = Get-Content "$dir\_rsm.txt" -Encoding UTF8
+Check "resize 50x12 rows"    ($rs.Count -eq 12)
+Check "resize 50x12 cols"    ($rs[0].Length -eq 50)
+Check "resize small lists"   ($rs[2] -match 'alpha\.txt')
+
 Write-Host ("`nwincc: {0} passed, {1} failed" -f $pass,$fail)
 if ($fail -gt 0) { exit 1 } else { Write-Host "WINCC REGRESSION: PASS"; exit 0 }

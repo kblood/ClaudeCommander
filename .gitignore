@@ -160,6 +160,11 @@ wincc/_qk.txt
 wincc/_dp.txt
 wincc/_dc.txt
 wincc/_k.txt
+wincc/_rbig.txt
+wincc/_rsm.txt
+wincc/_big.txt
+wincc/_sm.txt
+wincc/_rs/
 # pack-bug reproduction scaffolding
 PKT/
 PKT2/
