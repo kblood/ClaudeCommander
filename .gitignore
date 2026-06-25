@@ -125,6 +125,16 @@ _ttest2/
 _ttest3/
 R.TXT
 RESULT.TXT
+# Windows console port (wincc) build + test artifacts
+wincc/cc.exe
+wincc/*.o
+wincc/_t1/
+wincc/_rt/
+wincc/_dump*.txt
+wincc/_attr*.txt
+wincc/_f.txt
+wincc/_a.txt
+wincc/_k*.txt
 # pack-bug reproduction scaffolding
 PKT/
 PKT2/
