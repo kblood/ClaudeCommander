@@ -28,7 +28,8 @@ $bins = @(
     @{ src = "cdiff.asm"; com = "CCDIFF.COM" },
     @{ src = "csplit.asm";com = "CCSPLIT.COM"},
     @{ src = "cjoin.asm"; com = "CCJOIN.COM" },
-    @{ src = "cren.asm";  com = "CCREN.COM"  }
+    @{ src = "cren.asm";  com = "CCREN.COM"  },
+    @{ src = "ctouch.asm";com = "CCTOUCH.COM"}
 )
 $data = @("cc.ini", "cc.hlp", "da.lng")
 
@@ -109,6 +110,7 @@ Files:
   CCSPLIT.COM split a file      (type CCSPLIT <file> <size>[K])
   CCJOIN.COM  rejoin parts      (type CCJOIN <output> <base>)
   CCREN.COM   wildcard rename   (type CCREN <srcmask> <dstmask>)
+  CCTOUCH.COM set file date/time(CCTOUCH <file> [YYYY-MM-DD [HH:MM[:SS]]])
   cc.ini      startup options (sort=, columns=)
   cc.hlp      F1 help text
   da.lng      Danish F-key bar sample -- copy to cc.lng to use it
