@@ -118,6 +118,13 @@ PLAYDBG.TXT
 # external tools (CCDIFF/CCSPLIT/CCJOIN/CCREN) test scaffolding
 TT/
 _tooltest/
+# timestamp tool (CCTOUCH) test scaffolding
+_touchrt/
+_touchtest/
+_ttest2/
+_ttest3/
+R.TXT
+RESULT.TXT
 # pack-bug reproduction scaffolding
 PKT/
 PKT2/
