@@ -135,6 +135,14 @@ wincc/_attr*.txt
 wincc/_f.txt
 wincc/_a.txt
 wincc/_k*.txt
+wincc/_m2*/
+wincc/_op_*/
+wincc/_z.txt
+wincc/_zo.txt
+wincc/_vz.txt
+wincc/_vo.txt
+wincc/_ko.txt
+wincc/_mk.txt
 # pack-bug reproduction scaffolding
 PKT/
 PKT2/

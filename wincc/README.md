@@ -42,6 +42,12 @@ cc.exe             # opens both panels on the current directory
 | Enter | descend into dir / `..` to go up |
 | Tab | switch active panel |
 | Ins / Space | tag / untag |
+| F2 | rename cursor entry |
+| F3 | view file (scroll, Esc/F3 to close) |
+| F5 | copy cursor / tagged set to the other panel |
+| F6 | move cursor / tagged set to the other panel |
+| F7 | make directory |
+| F8 / Del | delete cursor / tagged set (with confirm) |
 | F10 / Esc | quit |
 
 ## Headless self-test
@@ -53,14 +59,19 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 ```
 
 - `--keys` replays a whitespace-separated token script (`UP DOWN ENTER TAB TAG
-  PGUP PGDN HOME END QUIT`).
+  PGUP PGDN HOME END QUIT COPY MOVE DEL VIEW`, plus arg-carrying `MKDIR:<name>`
+  and `REN:<name>`).
 - `--dump` writes the final 80×25 screen as UTF-8 text; `--dumpa` writes the
   per-cell attribute bytes as hex. `run_test.ps1` asserts against both.
 
 ## Status
 
 - **Milestone 1 (done):** framebuffer, dual panels, directory read (LFN),
-  navigation, Tab, descend/ascend, tagging, quit. `run_test.ps1` 9/9 green.
-- **Next:** file operations (copy/move/delete/mkdir/rename), F3 viewer, then the
-  features the DOS build couldn't fit (command history, bookmarks, colour
-  themes, view modes).
+  navigation, Tab, descend/ascend, tagging, quit.
+- **Milestone 2 (done):** file operations — copy / move (recursive for dir
+  trees), delete (recursive, with confirm dialog), mkdir, rename — on the
+  cursor entry or the tagged set; modal text-input widget; F3 file viewer
+  (scrollable). `run_test.ps1` 19/19 green.
+- **Next:** sort modes & info/brief view, then the features the DOS build
+  couldn't fit (command history, bookmarks, colour themes), F4 edit launch,
+  drive selection.

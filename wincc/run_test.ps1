@@ -37,5 +37,41 @@ Check "tagged entry attr 1e"   ((tok 4 1) -eq '1e')
 Check "cursor entry attr 30"   ((tok 5 1) -eq '30')
 Check "dir entry attr 1f"      ((tok 1 1) -eq '1f')
 
+# --- milestone 2: file operations + viewer ---
+$src = "$dir\_op_src"; $dst = "$dir\_op_dst"
+function Restage {
+    Remove-Item $src,$dst -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory $src,$dst,"$src\TREE" -Force | Out-Null
+    [IO.File]::WriteAllText("$src\TREE\inner.txt","nested")
+    [IO.File]::WriteAllText("$src\copyme.txt","COPY THIS CONTENT")
+    [IO.File]::WriteAllText("$src\moveme.txt","mv")
+    [IO.File]::WriteAllText("$src\killme.txt","rm")
+    [IO.File]::WriteAllText("$src\old.txt","ren")
+}
+# sorted src: .. , TREE, copyme.txt, killme.txt, moveme.txt, old.txt
+function Drive($keys){ Set-Content "$dir\_ko.txt" $keys -Encoding ASCII
+    & "$dir\cc.exe" --dir $src --rdir $dst --keys "$dir\_ko.txt" --dump "$dir\_zo.txt" | Out-Null }
+
+Restage; Drive "DOWN`nDOWN`nCOPY"                 # copyme.txt -> dst
+Check "copy file"        (Test-Path "$dst\copyme.txt")
+Restage; Drive "DOWN`nCOPY"                       # TREE dir -> dst (recursive)
+Check "copy dir tree"    (Test-Path "$dst\TREE\inner.txt")
+Restage; Drive "DOWN`nDOWN`nDOWN`nDOWN`nMOVE"     # moveme.txt -> dst
+Check "move removes src" (-not (Test-Path "$src\moveme.txt"))
+Check "move adds dst"    (Test-Path "$dst\moveme.txt")
+Restage; Drive "MKDIR:NewFolder"
+Check "mkdir"            (Test-Path "$src\NewFolder")
+Restage; Drive "END`nREN:renamed.txt"            # old.txt (last) -> renamed.txt
+Check "rename old gone"  (-not (Test-Path "$src\old.txt"))
+Check "rename new there" (Test-Path "$src\renamed.txt")
+Restage; Drive "DOWN`nDOWN`nDOWN`nDEL"           # killme.txt (idx3)
+Check "delete file"      (-not (Test-Path "$src\killme.txt"))
+# viewer
+Restage; Set-Content "$dir\_ko.txt" "DOWN`nDOWN`nVIEW" -Encoding ASCII
+& "$dir\cc.exe" --dir $src --keys "$dir\_ko.txt" --dump "$dir\_vo.txt" | Out-Null
+$vv = (Get-Content "$dir\_vo.txt" -Encoding UTF8) -join "`n"
+Check "viewer header"    ($vv -match 'View: copyme\.txt')
+Check "viewer content"   ($vv -match 'COPY THIS CONTENT')
+
 Write-Host ("`nwincc: {0} passed, {1} failed" -f $pass,$fail)
 if ($fail -gt 0) { exit 1 } else { Write-Host "WINCC REGRESSION: PASS"; exit 0 }
