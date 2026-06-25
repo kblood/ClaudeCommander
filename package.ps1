@@ -60,25 +60,41 @@ $popDefs = @(
 if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: CCPOP.COM"; exit 1 }
 "{0,-12} {1,7:N0} B  <- cc.asm (pop-up menu)" -f "CCPOP.COM", (Get-Item "$out\CCPOP.COM").Length | Write-Host
 
-# Gold Box game-data helpers. These are built in the goldbox worktree and have
-# no .asm source on main, so we can't NASM them here -- copy the prebuilt .COMs
-# in if that worktree is present. The cc.ini [open]/[view] routing references
-# them by name; missing ones are simply skipped (cc ignores absent helpers).
-$goldbox = "C:\LLM\cc-goldbox"
-$gbBins  = @("CCGLB.COM","CCGEO.COM","CCHLIB.COM","CCDAA.COM","CCSND.COM","CCGB.COM","CCGBC.COM")
-Write-Host "`nGold Box helpers (prebuilt, from $goldbox)"
-if (Test-Path $goldbox) {
-    foreach ($g in $gbBins) {
-        $srcg = Join-Path $goldbox $g
-        if (Test-Path $srcg) {
-            Copy-Item $srcg "$out\$g" -Force
-            "{0,-12} {1,7:N0} B  <- goldbox (prebuilt)" -f $g, (Get-Item "$out\$g").Length | Write-Host
-        } else {
-            Write-Host "  (skipped missing $g)"
+# Gold Box (SSI D&D) game-data helpers. Their .asm sources live in the GoldBox
+# modding project (not on main); the cc.ini [open]/[view] routing references
+# them by name. Prefer building them from that source tree; fall back to the
+# prebuilt .COMs in the goldbox worktree; else skip (cc ignores absent helpers,
+# so a build with neither present still works -- just without Gold Box support).
+$gbSrc   = "C:\Modding\GoldBox\native\src"
+$gbWork  = "C:\LLM\cc-goldbox"
+$gbTools = @(
+    @{ src = "ccglb.asm";  com = "CCGLB.COM"  },
+    @{ src = "ccgeo.asm";  com = "CCGEO.COM"  },
+    @{ src = "cchlib.asm"; com = "CCHLIB.COM" },
+    @{ src = "ccdaa.asm";  com = "CCDAA.COM"  },
+    @{ src = "ccsnd.asm";  com = "CCSND.COM"  },
+    @{ src = "cgb.asm";    com = "CCGB.COM"   },
+    @{ src = "cgbc.asm";   com = "CCGBC.COM"  }
+)
+Write-Host "`nGold Box helpers"
+foreach ($g in $gbTools) {
+    $target = "$out\$($g.com)"
+    $srcf   = Join-Path $gbSrc $g.src
+    if (Test-Path $srcf) {
+        & $nasm -f bin -i "$gbSrc/" $srcf -o $target 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            "{0,-12} {1,7:N0} B  <- {2} (built)" -f $g.com, (Get-Item $target).Length, $g.src | Write-Host
+            continue
         }
+        Write-Host "  build failed for $($g.src); trying prebuilt"
     }
-} else {
-    Write-Host "  (goldbox worktree not found -- Gold Box helpers omitted)"
+    $pre = Join-Path $gbWork $g.com
+    if (Test-Path $pre) {
+        Copy-Item $pre $target -Force
+        "{0,-12} {1,7:N0} B  <- goldbox worktree (prebuilt)" -f $g.com, (Get-Item $target).Length | Write-Host
+    } else {
+        Write-Host "  (skipped $($g.com): no source or prebuilt)"
+    }
 }
 
 Write-Host "`nCopying data files"

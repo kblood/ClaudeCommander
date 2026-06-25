@@ -129,6 +129,9 @@ RESULT.TXT
 _cdexit/
 _cdexit.conf
 CWDOUT.TXT
+# Gold Box helper test scaffolding (DOS)
+_gbtest/
+_gbtest.conf
 # Windows console port (wincc) build + test artifacts
 wincc/cc.exe
 wincc/*.o
