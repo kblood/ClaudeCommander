@@ -170,6 +170,72 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 
 ---
 
+## Bundled tools & file associations
+
+cc stays small by pushing heavy features into standalone helper `.COM`s (each a
+separate `nasm -f bin` binary). They're invoked from the menus/hotkeys, by typing
+the name at cc's command line, or automatically through a file association.
+
+**File & text tools**
+
+| Tool | What it does | How to run |
+|---|---|---|
+| `CCEDIT` | text editor | `F4`, or `CCEDIT <file>` |
+| `CCHEXED` | hex editor (F2 save, Esc quit) | `F3`→`H`→`E`, or `CCHEXED <file>` |
+| `CCFIND` | find files by name | `Alt-F7`, or `CCFIND <pattern> [dir]` |
+| `CCGREP` | search file contents | `Alt-F8`, or `CCGREP <word> [dir] [mask]` |
+| `CCSUM` | CRC-32 + byte size | `CCSUM <file>` |
+| `CCDIFF` | byte-compare two files | `CCDIFF <a> <b>` |
+| `CCSPLIT` / `CCJOIN` | split a file / rejoin the parts | `CCSPLIT <file> <size>[K]` · `CCJOIN <out> <base>` |
+| `CCREN` | wildcard batch rename | `CCREN <srcmask> <dstmask>` |
+| `CCTOUCH` | set a file's date/time | `CCTOUCH <file> [YYYY-MM-DD [HH:MM[:SS]]]` |
+
+**Viewers** (`F3` on a mapped extension, else the built-in text/hex pager)
+
+| Tool | Views | Extensions |
+|---|---|---|
+| `CCHEX` | hex + ASCII dump | (any, via the built-in F3 hex mode) |
+| `CCIMG` | images, VGA mode 13h | `.bmp` `.pcx` `.gif` |
+| `CCWAV` | PCM audio, Sound Blaster | `.wav` |
+
+**Archives & containers** — press `Enter` to browse one *as a folder*, `F5` to
+extract a member:
+
+| Tool | Container | Extension |
+|---|---|---|
+| `CCZIP` | ZIP archive | `.zip` |
+| `CCD64` / `CCT64` | C64 disk / tape image | `.d64` `.t64` |
+| `CCARJ` | ARJ archive | `.arj` |
+| `CCRAR` | RAR 4.x archive | `.rar` |
+
+**Gold Box game data** (SSI AD&D: Pool of Radiance, the Krynn trilogy, …) — the
+helpers browse/view the data files of these games in place:
+
+| Tool | Handles | Extension |
+|---|---|---|
+| `CCGLB` | `.glb` master library — a dispatcher that sniffs each chunk and hands it to CCSND / CCHLIB / CCGEO | `.glb` (Enter) |
+| `CCGEO` | area maps | `.geo` (F3) / GEO members of a `.glb` |
+| `CCHLIB` | image master libraries | `.tlb` (Enter) · `.hti` (F3) |
+| `CCDAA` | data records | `.daa` (Enter) · `.dai` (F3) |
+| `CCSND` | DIG4 digitized sound | dispatched from `CCGLB` |
+| `CCGB` | game images | `.gbi` (F3) |
+| `CCGBC` | DAX container | `.dax` (Enter) |
+
+**Adding your own** — associations live in `cc.ini`, read at startup, so a new
+file type needs **no recompile of `cc.com`**: drop the helper `.COM` on the drive
+and add one line.
+
+- `[open]` — `ext = HELPER` → `Enter` browses that type as a folder (the helper
+  lists members; cc shows them in a panel).
+- `[view]` — `ext = HELPER` → `F3` runs your viewer instead of the text pager.
+- `[tools]` — `Label = PROG [key]` → adds a Tools-menu entry / hotkey that runs
+  `PROG <cursor-file>`.
+
+Each is `HELPER <file>`; unknown or missing helpers are ignored, so the routing
+is safe even when a tool isn't installed.
+
+---
+
 ## Keyboard reference
 
 | Key | Action | Key | Action |
@@ -239,6 +305,16 @@ rows, optional menu entry, handlers, and `.bss` — adding a feature is one
 
 ### External helpers (separate binaries)
 
-`cce.asm`→CCEDIT · `cfind.asm`→CCFIND · `czip.asm`→CCZIP · `cgrep.asm`→CCGREP ·
-`chex.asm`→CCHEX · `csum.asm`→CCSUM. Each is standalone (`nasm -f bin`), invoked
-through cc's `run_command` EXEC path or by typing its name at the prompt.
+Each helper is a standalone `nasm -f bin` `.COM`, invoked through cc's
+`run_command` EXEC path, by typing its name at the prompt, or via a `cc.ini`
+association — see **Bundled tools & file associations** above for what each one
+does. Source → binary:
+
+- in-tree: `cce`→CCEDIT · `cfind`→CCFIND · `czip`→CCZIP · `cgrep`→CCGREP ·
+  `chex`→CCHEX · `chexed`→CCHEXED · `csum`→CCSUM · `cdiff`→CCDIFF ·
+  `csplit`→CCSPLIT · `cjoin`→CCJOIN · `cren`→CCREN · `ctouch`→CCTOUCH ·
+  `cd64`→CCD64 · `ct64`→CCT64 · `carj`→CCARJ · `crar`→CCRAR · `cimg`→CCIMG ·
+  `cwav`→CCWAV.
+- Gold Box helpers (`CCGLB/CCGEO/CCHLIB/CCDAA/CCSND/CCGB/CCGBC`) build from the
+  GoldBox modding project's `native/src`; `package.ps1` assembles them into the
+  distribution (falling back to prebuilt `.COM`s if the source tree is absent).
