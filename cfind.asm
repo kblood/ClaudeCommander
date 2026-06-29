@@ -20,6 +20,7 @@ start:
         cld
         mov     sp, stacktop
         call    parse_tail          ; -> pattern, startdir (default ".")
+        call    probe_lfn           ; detect LFN support
         ; seed the queue with the start directory
         mov     word [qhead], qbuf
         mov     word [qtail], qbuf
@@ -75,6 +76,8 @@ parse_tail:
 ; ----------------------------------------------------------------------------
 ; scan_dir: list [curpath], print matching files, enqueue subdirectories.
 scan_dir:
+        cmp     byte [lfn_avail], 1
+        je      scan_dir_lfn
         mov     dx, dta
         mov     ah, 1Ah
         int     21h                 ; set DTA
@@ -276,18 +279,116 @@ wildmatch:
         clc
         ret
 
+; ----------------------------------------------------------------------------
+; probe_lfn: call INT 21h/714Eh on "."; set lfn_avail=1 if CF=0, else 0.
+probe_lfn:
+        push    ds
+        pop     es
+        mov     ax, 714Eh
+        mov     cx, 10h
+        xor     bx, bx
+        mov     dx, s_dot
+        mov     di, wfd
+        int     21h
+        jc      .no
+        mov     byte [lfn_avail], 1
+        mov     bx, ax              ; handle from 714Eh
+        mov     ax, 71A1h
+        int     21h
+        ret
+.no:
+        mov     byte [lfn_avail], 0
+        ret
+
+; scan_dir_lfn: enumerate curpath using LFN FindFirst/FindNext (714Eh/714Fh).
+; Prints the long filename (WIN32_FIND_DATA+44) for matched files.
+scan_dir_lfn:
+        call    build_search        ; srchbuf = curpath + "\*.*"
+        push    ds
+        pop     es
+        mov     ax, 714Eh
+        mov     cx, 10h             ; include directories
+        xor     bx, bx
+        mov     dx, srchbuf
+        mov     di, wfd
+        int     21h
+        jc      .ret
+        mov     [lfn_handle], ax
+.loop:
+        cmp     byte [wfd+44], '.'  ; skip "." and ".."
+        je      .next
+        test    byte [wfd], 10h     ; dwFileAttributes bit 4 = directory
+        jnz     .dir
+        ; file: wildmatch against the long name
+        mov     si, pattern
+        mov     di, wfd+44
+        call    wildmatch
+        jnc     .next
+        ; print: curpath + "\" + long name + CRLF
+        mov     si, curpath
+        mov     di, linebuf
+        call    catz_di
+        cmp     byte [di-1], '\'
+        je      .pnm
+        mov     byte [di], '\'
+        inc     di
+.pnm:
+        mov     si, wfd+44
+        call    catz_di
+        mov     word [di], 0A0Dh
+        add     di, 2
+        mov     cx, di
+        sub     cx, linebuf
+        mov     ah, 40h
+        mov     bx, 1               ; stdout
+        mov     dx, linebuf
+        int     21h
+        jmp     .next
+.dir:
+        ; enqueue: curpath + "\" + long directory name
+        mov     si, curpath
+        mov     di, tmppath
+        call    catz_di
+        cmp     byte [di-1], '\'
+        je      .enm
+        mov     byte [di], '\'
+        inc     di
+.enm:
+        mov     si, wfd+44
+        call    catz_di
+        mov     byte [di], 0
+        mov     si, tmppath
+        call    enqueue
+.next:
+        push    ds
+        pop     es
+        mov     ax, 714Fh
+        mov     bx, [lfn_handle]
+        mov     di, wfd
+        int     21h
+        jnc     .loop
+        mov     ax, 71A1h
+        mov     bx, [lfn_handle]
+        int     21h
+.ret:
+        ret
+
 ; ============================================================================
 s_star      db '*.*',0
+s_dot       db '.',0
 
 section .bss
 align 2
 pattern     resb 16
 startdir    resb 80
-curpath     resb 80
-tmppath     resb 128
-srchbuf     resb 96
-linebuf     resb 144
+curpath     resb 300            ; enlarged: LFN directory names up to ~255 chars
+tmppath     resb 400            ; enlarged: curpath + "\" + LFN child name
+srchbuf     resb 300            ; enlarged for LFN paths
+linebuf     resb 400            ; enlarged: curpath + "\" + LFN (260) + CRLF
 dta         resb 64
+lfn_avail   resb 1              ; 1 if INT 21h/714Eh is supported, else 0
+lfn_handle  resw 1              ; handle returned by 714Eh
+wfd         resb 318            ; WIN32_FIND_DATA; long name at offset +44
 qhead       resw 1
 qtail       resw 1
 qbuf        resb QMAX

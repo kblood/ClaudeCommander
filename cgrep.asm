@@ -24,6 +24,7 @@ start:
         cld
         mov     sp, stacktop
         call    parse_tail          ; -> needle, startdir, filemask
+        call    probe_lfn           ; detect LFN support
         call    measure_needle      ; -> nlen
         cmp     word [nlen], 0
         je      .done               ; empty needle: nothing to do
@@ -182,6 +183,36 @@ grep_file:
         mov     bx, [fh]
         mov     ah, 3Eh
         int     21h
+        ; LFN: if available, resolve long name for fpath before printing
+        cmp     byte [lfn_avail], 1
+        jne     .scan
+        push    ds
+        pop     es
+        mov     ax, 714Eh
+        mov     cx, 27h             ; include readonly/hidden/system/archive
+        xor     bx, bx
+        mov     dx, fpath           ; resolve the 8.3 path we just built
+        mov     di, wfd
+        int     21h
+        jc      .scan               ; no LFN for this file; use 8.3 name
+        mov     bx, ax              ; save LFN handle
+        ; rebuild fpath = curpath + "\" + long name (WIN32_FIND_DATA+44)
+        push    bx
+        mov     si, curpath
+        mov     di, fpath
+        call    catz_di
+        cmp     byte [di-1], '\'
+        je      .lfnm
+        mov     byte [di], '\'
+        inc     di
+.lfnm:
+        mov     si, wfd+44          ; long filename from WIN32_FIND_DATA
+        call    catz_di
+        mov     byte [di], 0
+        pop     bx
+        mov     ax, 71A1h
+        int     21h
+.scan:
         call    scan_buffer
         ret
 .close:
@@ -488,8 +519,30 @@ wildmatch:
         clc
         ret
 
+; ----------------------------------------------------------------------------
+; probe_lfn: call INT 21h/714Eh on "."; set lfn_avail=1 if CF=0, else 0.
+probe_lfn:
+        push    ds
+        pop     es
+        mov     ax, 714Eh
+        mov     cx, 10h
+        xor     bx, bx
+        mov     dx, s_dot
+        mov     di, wfd
+        int     21h
+        jc      .no
+        mov     byte [lfn_avail], 1
+        mov     bx, ax
+        mov     ax, 71A1h
+        int     21h
+        ret
+.no:
+        mov     byte [lfn_avail], 0
+        ret
+
 ; ============================================================================
 s_star      db '*.*',0
+s_dot       db '.',0
 
 section .bss
 align 2
@@ -497,16 +550,18 @@ needle      resb 80
 nlen        resw 1
 startdir    resb 80
 filemask    resb 16
-curpath     resb 80
-tmppath     resb 128
-fpath       resb 144
-srchbuf     resb 96
-linebuf     resb 280
+curpath     resb 300            ; enlarged: LFN directory names up to ~255 chars
+tmppath     resb 400            ; enlarged: curpath + "\" + LFN child name
+fpath       resb 600            ; enlarged: curpath + "\" + LFN (260) + null
+srchbuf     resb 300            ; enlarged for LFN paths
+linebuf     resb 900            ; enlarged: fpath(600) + lineno + line text
 fh          resw 1
 flen        resw 1
 le_save     resw 1
 lineno      resw 1
 dta         resb 64
+lfn_avail   resb 1              ; 1 if INT 21h/714Eh is supported, else 0
+wfd         resb 318            ; WIN32_FIND_DATA; long name at offset +44
 qhead       resw 1
 qtail       resw 1
 qbuf        resb QMAX
