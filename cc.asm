@@ -255,6 +255,9 @@ TOOLBIT_REN   equ 0020h
 %ifdef FEAT_LFN
   %define FEAT_INI
 %endif
+%ifdef FEAT_LFN_FULL
+  %define FEAT_LFN    ; LFN_FULL implies basic LFN cursor display
+%endif
 %ifdef FEAT_ATTR
   %define FEAT_INI
 %endif
@@ -1423,16 +1426,19 @@ read_dir:
         jmp     vfs_relist          ; virtual panel -> re-list the container
 .notvfs:
 %endif
+%ifndef FEAT_LFN_FULL
         ; set DTA = dta_buf
         push    dx
         mov     ah, 1Ah
         mov     dx, dta_buf
         int     21h
         pop     dx
+%endif
         ; build search string "PATH\*.*"
         call    build_search        ; -> srchbuf
         mov     word [_count], 0
-        ; FindFirst
+%ifndef FEAT_LFN_FULL
+        ; FindFirst (standard DTA)
         mov     ah, 4Eh
         mov     cx, 37h             ; RO|Hidden|System|Dir|Archive
         mov     dx, srchbuf
@@ -1443,6 +1449,33 @@ read_dir:
         mov     ah, 4Fh
         int     21h
         jnc     .loop
+%else
+        ; LFN FindFirst (714Eh) -> WIN32_FIND_DATA in copybuf, handle in BX
+        push    es
+        push    ds
+        pop     es                  ; ES = DS for copybuf
+        mov     ax, 714Eh
+        mov     cx, 37h             ; same attrmask: RO|Hidden|System|Dir|Archive
+        xor     si, si              ; date format = local time
+        mov     dx, srchbuf         ; DS:DX = search spec
+        mov     di, copybuf         ; ES:DI = WIN32_FIND_DATA (318 bytes)
+        int     21h
+        pop     es
+        jc      .finish
+        mov     bx, ax              ; BX = search handle
+.lfn_loop:
+        push    bx                  ; preserve handle across accept_lfn
+        call    accept_lfn
+        pop     bx
+        push    ds
+        pop     es                  ; ES = DS for FindNext output buffer
+        mov     ax, 714Fh
+        mov     di, copybuf         ; ES:DI = WIN32_FIND_DATA
+        int     21h
+        jnc     .lfn_loop
+        mov     ax, 71A1h           ; LFN FindClose
+        int     21h
+%endif
 .finish:
         mov     bx, [ppanel]
         mov     ax, [_count]
@@ -1505,6 +1538,63 @@ accept_dta:
         inc     word [_count]
 .skip:
         ret
+
+%ifdef FEAT_LFN_FULL
+; copy one WIN32_FIND_DATA result (in copybuf) into the panel entry array.
+; Mirrors accept_dta but reads from the LFN 714Eh/714Fh output buffer.
+; WIN32_FIND_DATA offsets: attrs+0, nFileSizeHigh+28, nFileSizeLow+32,
+;   cFileName+44 (long), cAlternateFileName+304 (8.3, up to 14 bytes).
+accept_lfn:
+        ; skip "." always (use cAlternateFileName at copybuf+304)
+        mov     al, [copybuf+304]
+        cmp     al, '.'
+        jne     .keep
+        mov     al, [copybuf+305]
+        or      al, al
+        jz      .skip               ; "."  -> skip
+        cmp     al, '.'
+        jne     .keep
+        ; ".." -> skip if at root
+        mov     bx, [ppanel]
+        lea     si, [bx+P_PATH]
+        call    strlen
+        cmp     ax, 3               ; "C:\" == root
+        jbe     .skip
+.keep:
+        mov     ax, [_count]
+        cmp     ax, MAX_FILES
+        jae     .skip
+        call    entry_ptr           ; ax=index -> si = dest entry
+        mov     di, si
+        ; copy 8.3 name from cAlternateFileName (copybuf+304), max 13 bytes
+        mov     si, copybuf+304
+        mov     cx, 13
+.cpn:
+        lodsb
+        mov     [di], al
+        inc     di
+        or      al, al
+        jz      .nend
+        loop    .cpn
+        mov     byte [di], 0
+.nend:
+        ; attr: low byte of dwFileAttributes at copybuf+0
+        mov     ax, [_count]
+        call    entry_ptr           ; -> si = dest entry base
+        mov     al, [copybuf+0]
+        mov     [si+E_ATTR], al
+        ; size: low word then high word of nFileSizeLow (DWORD at copybuf+32)
+        mov     ax, [copybuf+32]
+        mov     [si+E_SIZE], ax
+        mov     ax, [copybuf+34]
+        mov     [si+E_SIZE+2], ax
+        ; time/date not in DOS packed format in WIN32_FIND_DATA -- zero out
+        mov     word [si+E_TIME], 0
+        mov     word [si+E_DATE], 0
+        inc     word [_count]
+.skip:
+        ret
+%endif
 
 ; build "PATH\*.*" ASCIIZ into srchbuf (panel = [ppanel]) ---------------------
 build_search:
@@ -1944,7 +2034,7 @@ format_entry:
         mov     ax, [si+E_SIZE]
         mov     dx, [si+E_SIZE+2]
         ; di -> field start; produce into numbuf then right-justify
-        call    u32toa              ; dx:ax -> numbuf, returns cx=len, si=numbuf
+        call    fmt_size            ; dx:ax -> human-readable "nnn U" in numbuf
 .numjust:
         mov     bx, SIZEW
         sub     bx, cx              ; leading spaces
@@ -2003,6 +2093,63 @@ u32toa:
         sub     cx, si              ; length = end - start
         pop     di                  ; restore caller's di
         ret
+
+; human-readable size: dx:ax -> "nnn U" right-justified in SIZEW=8 chars.
+; Uses same interface as u32toa: returns si=start in numbuf, cx=length.
+; Thresholds: <1K -> B, <1M -> K, <1G -> M, else G.
+; Any 32-bit value converges within 3 shifts (4GB>>30 = 3 < 1024).
+fmt_size:
+        push    di
+        mov     si, .suffixes       ; si -> 'B','K','M','G'
+.loop:
+        or      dx, dx
+        jnz     .do_shift           ; dx != 0 means >= 64K, keep shifting
+        cmp     ax, 1024
+        jb      .write_num          ; value < 1024, done
+.do_shift:
+        mov     cx, dx
+        shl     cx, 6               ; carry high bits into low result
+        shr     ax, 10
+        or      ax, cx              ; ax = low 16 bits of (dx:ax >> 10)
+        shr     dx, 10
+        inc     si                  ; advance to next unit
+        jmp     .loop
+.write_num:
+        mov     bl, [si]            ; bl = unit char (B/K/M/G)
+        mov     di, numbuf+15
+        mov     byte [di], 0        ; null terminator
+        dec     di
+        mov     [di], bl            ; unit char at +14
+        dec     di
+        mov     byte [di], ' '      ; space at +13
+        dec     di                  ; di -> slot for last digit (starts at +12)
+        or      dx, dx              ; dx should be 0; guard against overflow
+        jz      .digits
+        mov     ax, 9999
+        xor     dx, dx
+.digits:
+        mov     bx, 10
+        or      ax, ax
+        jnz     .dl
+        mov     byte [di], '0'      ; special case: value == 0
+        dec     di
+        jmp     .done
+.dl:
+        xor     dx, dx
+        div     bx                  ; ax=quotient, dx=remainder digit
+        add     dl, '0'
+        mov     [di], dl
+        dec     di
+        or      ax, ax
+        jnz     .dl
+.done:
+        inc     di                  ; di -> first digit
+        mov     si, di              ; return: si = start of result in numbuf
+        mov     cx, numbuf+15
+        sub     cx, si              ; return: cx = length (excl. null)
+        pop     di
+        ret
+.suffixes: db 'B','K','M','G'
 
 ; ============================================================================
 ;  SMALL HELPERS
@@ -2878,7 +3025,11 @@ key_rename:
         pop     es
         mov     dx, targpath        ; ds:dx old
         mov     di, targpath2       ; es:di new
+%ifndef FEAT_LFN_FULL
         mov     ah, 56h
+%else
+        mov     ax, 7156h           ; LFN Rename/Move
+%endif
         int     21h
         call    refresh_panels
 .ret:   ret
@@ -2920,14 +3071,30 @@ copy_file:
         mov     byte [ow_cancel], 1
         ret
 .open:
+%ifndef FEAT_LFN_FULL
         mov     ax, 3D00h           ; open src read-only
         mov     dx, targpath
+%else
+        mov     ax, 716Ch           ; LFN Extended Open: open existing read-only
+        mov     bx, 0               ; access: read-only
+        mov     cx, 0               ; attributes: normal
+        mov     dx, 0001h           ; action: open-existing
+        mov     si, targpath        ; DS:SI = path
+%endif
         int     21h
         jc      .ret
         mov     [fh_src], ax
+%ifndef FEAT_LFN_FULL
         xor     cx, cx              ; create dst (normal attr)
         mov     ah, 3Ch
         mov     dx, targpath2
+%else
+        mov     ax, 716Ch           ; LFN Extended Open: open-or-create write
+        mov     bx, 1               ; access: write-only
+        mov     cx, 0               ; attributes: normal
+        mov     dx, 0012h           ; action: open-or-create
+        mov     si, targpath2       ; DS:SI = path
+%endif
         int     21h
         jc      .closesrc
         mov     [fh_dst], ax
@@ -3110,6 +3277,7 @@ A_VBAR      equ 030h           ; black on cyan bottom bar
 %endif
 %ifdef FEAT_LFN
 %include "mod/lfn.inc"
+%include "mod/lfnview.inc"
 %endif
 
 ; ============================================================================

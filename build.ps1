@@ -22,7 +22,7 @@ if (-not (Test-Path $nasm)) { $nasm = "nasm" }              # fall back to PATH
 $KB = 1024
 $profiles = @{
     min  = @{ Flag="FEAT_MIN";  Out="ccmin.com";  CodeMax=(8*$KB);  ResMax=$null }
-    std  = @{ Flag="FEAT_STD";  Out="cc.com";     CodeMax=(18*$KB); ResMax=(63*$KB) }
+    std  = @{ Flag="FEAT_STD";  Out="cc.com";     CodeMax=(19*$KB); ResMax=(63*$KB) }
     full = @{ Flag="FEAT_FULL"; Out="ccfull.com"; CodeMax=$null;    ResMax=(63.5*$KB) }
 }
 
