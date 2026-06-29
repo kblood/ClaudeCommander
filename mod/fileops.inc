@@ -12,7 +12,11 @@ key_mkdir:
         je      .ret
         call    build_target_path
         mov     dx, targpath2
+%ifndef FEAT_LFN_FULL
         mov     ah, 39h
+%else
+        mov     ax, 7139h           ; LFN Make Directory
+%endif
         int     21h
         call    refresh_panels
 .ret:   ret
@@ -88,8 +92,14 @@ delete_one:
 .file:
         mov     si, targpath
         call    busy_name
+%ifndef FEAT_LFN_FULL
         mov     ah, 41h
         mov     dx, targpath
+%else
+        mov     ax, 7141h           ; LFN Delete
+        mov     dx, targpath
+        xor     si, si              ; SI=0 required
+%endif
         int     21h
 .ret:   ret
 
@@ -300,7 +310,11 @@ move_one_paths:
         pop     es
         mov     dx, targpath        ; ds:dx old name
         mov     di, targpath2       ; es:di new name
+%ifndef FEAT_LFN_FULL
         mov     ah, 56h
+%else
+        mov     ax, 7156h           ; LFN Rename/Move
+%endif
         int     21h
         jnc     .ret                ; moved (and renamed) in one step
         ; rename failed: cross-drive, or destination exists. Copy across, then
@@ -317,8 +331,14 @@ move_one_paths:
         call    del_tree
         ret
 .delfile:
+%ifndef FEAT_LFN_FULL
         mov     ah, 41h
         mov     dx, targpath
+%else
+        mov     ax, 7141h           ; LFN Delete
+        mov     dx, targpath
+        xor     si, si              ; SI=0 required
+%endif
         int     21h
 .ret:   ret
 
