@@ -41,8 +41,9 @@ That is ~0.5 % of a 1.44 MB floppy, and ~3.6 % of the 200 KB budget. How:
 1. **Flat `.COM`, not `.EXE`.** No MZ header, no relocations, no segment
    tables. `org 100h`, one segment, code+data+stack share 64 KB.
 2. **Reserved buffers live in `section .bss` (`nobits`).** The directory
-   arrays (two panels × 512 entries × 24 bytes ≈ 12 KB each), the 16 KB
-   viewer buffer, the line table, key/dump scratch — none of it is emitted
+   arrays (two panels × 512 entries × 24 bytes ≈ 12 KB each), the 8 KB
+   viewer buffer, the search-results path heap, the line table, key/dump
+   scratch — none of it is emitted
    into the file. The `.COM` only carries *code + initialized strings*; the
    working RAM is claimed at runtime and zeroed by us as needed. This is the
    single biggest size lever: without it the file would be tens of KB of
@@ -166,8 +167,17 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - **Language** — `cc.lng` translates the F-key bar (`da.lng` Danish sample).
 - **Long file names** — the cursor file's long name shows on the command row
   when an LFN provider is active (8.3 otherwise).
-- **Launchers** — `F4` edit (CCEDIT), `Alt-F7` find (CCFIND), `Alt-F8` grep
-  (CCGREP), `Ctrl-F9` list archive (CCZIP).
+- **Search results panel** — `Alt-F7` (find by name, CCFIND) and `Alt-F8`
+  (grep contents, CCGREP) run the helper silently and load the results into the
+  other panel as a browsable list — the same virtual-panel mechanism as the zip
+  browser, no screen takeover. Find lists every matching file; grep lists each
+  file that contains a match (one row per file, with its first-match line shown
+  in the size column). `Enter` on a find row jumps the panel to that file's
+  folder (cursor on it); `Enter` on a grep row opens the F3 viewer at the first
+  matching line. The list opens with a `..` row at the top — `Esc` (or `Enter`
+  on `..`) leaves it and re-lists the real folder, just like backing out of a
+  zip.
+- **Launchers** — `F4` edit (CCEDIT), `Ctrl-F9` list archive (CCZIP).
 
 **External tools** (type the name at the prompt, or via the keys above)
 - `CCEDIT <file>` — full-screen text editor.
@@ -182,8 +192,8 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - Full `MSG(id)` string-table i18n (only the F-key bar is translated today).
 - F2 user menu (`cc.mnu`), remappable keys, command-line history, bookmarks,
   colour themes, file associations.
-- Touch, copy/move progress %, file compare, split/combine, multi-rename.
-- Viewer: hex mode in-place, files larger than 16 KB (seek windowing), search.
+- Copy/move progress %.
+- Viewer: files larger than the 8 KB buffer cap (seek windowing), in-pager search.
 
 ---
 
@@ -268,8 +278,8 @@ is safe even when a tool isn't installed.
 | `F9` | menu bar (pop-up in CCPOP) | `Ctrl-A` | edit attributes (R/H/S/A) |
 | `Ctrl-F1..F4` | sort name/ext/size/date | `Ctrl-F5` | cycle column |
 | `Ctrl-F6` | quick-search | `Ctrl-F7/F8` | tag/untag by mask |
-| `Ctrl-F10` / `Alt-F3` | toggle brief 3-column view | `Alt-F7` | find files (CCFIND) |
-| `Alt-F8` | grep contents (CCGREP) | `Ctrl-F9` | list archive (CCZIP) |
+| `Ctrl-F10` / `Alt-F3` | toggle brief 3-column view | `Alt-F7` | find files → results panel |
+| `Alt-F8` | grep contents → results panel | `Ctrl-F9` | list archive (CCZIP) |
 | click | select entry | dbl-click | open entry |
 | right-click | tag entry | click F-bar | invoke that F-key |
 | click menu title | open that menu (no F9 needed) | | |
@@ -317,7 +327,7 @@ The repo includes a headless regression harness used during development:
 
 `shell` `fileops` `recurse` `mouse` `viewer` `harness` (core splits) ·
 `clock` `sort` `cols` `free` `search` `menu` `menubar` `views` `mask` `edit`
-`find` `grep` `zip` `ini` `help` `lang` `lfn` `attr` (features). Each owns its keybind
+`find` `grep` `results` `zip` `ini` `help` `lang` `lfn` `attr` (features). Each owns its keybind
 rows, optional menu entry, handlers, and `.bss` — adding a feature is one
 `%include` + one tier `%define`.
 

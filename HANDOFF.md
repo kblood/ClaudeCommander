@@ -10,11 +10,34 @@ push only when the user explicitly asks.
 
 ---
 
-## ⚠ Latest session (2026-06-29): UX fixes & features — UNCOMMITTED
+## ⚠ Current uncommitted work (2026-06-29): search-results panel
 
-Nine fixes/features from the last session. **All changes are in the working tree
-only — nothing is committed yet.** The `FEAT_STD` (`CC.COM`) and the
-`FEAT_MENU`/no-menubar `CCPOP.COM` builds both pass via `package.ps1` (exit 0).
+`FEAT_RESULTS` is now enabled in the default STD build, so **Alt-F7 (find) and
+Alt-F8 (grep) land in a browsable results panel** instead of a screen takeover —
+the same virtual-panel mechanism as the zip browser (`P_SRC` enum).
+
+- **Find** lists every matching file; Enter jumps the panel to the file's folder.
+- **Grep** lists **one row per matching FILE** (deduped — CCGREP groups matches
+  per file, so consecutive same-path lines collapse), with the first-match line
+  shown in the size column; Enter opens the F3 viewer at that line. The matched
+  text is no longer stored, and the per-line grep renderer (`format_entry_grep`)
+  was deleted; the find-vs-grep discriminator is now `E_RES_LINE` (0 = find).
+- The list opens with a synthetic `..` row (cursor starts on the first match);
+  **Esc or Enter-on-`..` leaves it** and re-lists the real folder
+  (`results_leave` → `go_parent`; `on_esc` forks on `SRC_RESULT`).
+
+To fit alongside `FEAT_VFS` under the 63 KB wall, `RESHEAP_MAX` was trimmed
+4096→3072 and `VIEW_MAX` 12288→8192. Build green (resident 63,026 B; code
+18,218 B; both budgets PASS). Verified end-to-end under the `/T` harness (find →
+folder jump; grep → file list → viewer-at-line; grep → Esc → back to folder).
+Possible follow-up: in-viewer next/prev-match stepping ('n'/'N') keyed off the
+stored search word. **Uncommitted.**
+
+## v1.0.5 (2026-06-29, committed b5aa3cb, released): UX fixes & features
+
+Nine fixes/features, all **committed and shipped as release v1.0.5**. The
+`FEAT_STD` (`CC.COM`) and the `FEAT_MENU`/no-menubar `CCPOP.COM` builds both pass
+via `package.ps1` (exit 0).
 
 | # | Change | Where |
 |---|---|---|
@@ -201,15 +224,14 @@ Total-Commander-style packer plugins; ext→helper map in cc.ini `[open]`.
 
 ## State
 
-- Branch `main`, latest commit `324785f` (README bundled-tools reference).
-  Recent: `0d74e43`/`a226440`/`c92e20c` Gold Box helpers + file-type routing.
-  All local, **none pushed**.
-- **Uncommitted working tree:** the nine UX fixes in the §"Latest session" table
-  above (`cc.asm`, `mod/{clock,ini,mouse,menubar,views}.inc`, the VIDEO→`vseg`
-  sweep across the `.inc`s, `cc.ini`) plus the docs refreshed this turn
-  (`README.md`, `ROADMAP.md`, `cc.hlp`, this `HANDOFF.md`). Plus pre-existing
-  scratch dirs (`_*test/`, `_dump_*.txt`, `ai-out/…`) that are not part of the
-  feature work — don't stage those.
+- Branch `main`, latest commit `b5aa3cb` (the nine UX fixes), pushed; released as
+  **v1.0.5** with a `cc-v1.0.5.zip` asset.
+- **Uncommitted working tree:** the search-results panel (FEAT_RESULTS enabled in
+  the std tier in `cc.asm`; `RESHEAP_MAX`/`VIEW_MAX` trims; `mod/results.inc`
+  header note) plus the docs refreshed for it (`README.md`, `ROADMAP.md`,
+  `cc.hlp`, this `HANDOFF.md`). Plus pre-existing scratch dirs (`_*test/`,
+  `_dump_*.txt`, `ai-out/…`) and test fixtures (`keys_results.bin`,
+  `keys_grep.bin`) — don't stage the scratch dirs.
 - `build.ps1` / `package.ps1` → both `CC.COM` (FEAT_STD) and `CCPOP.COM`
   (FEAT_MENU, no menubar) build green (exit 0). All external helpers assemble
   clean. Try the dist interactively with `.\run_cc.ps1`.

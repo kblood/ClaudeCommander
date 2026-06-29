@@ -26,8 +26,16 @@
     Alt-F1/F2 ....... change drive (left / right panel)
     Alt-F5 .......... pack tagged/cursor into an archive (other panel);
                       tagged folders are packed recursively
-    Alt-F7 .......... find files by name (CCFIND)
-    Alt-F8 .......... search file contents / grep (CCGREP)
+    Alt-F7 .......... find files by name -> the matches fill the other panel as
+                      a browsable list (like a ZIP); Enter on a row jumps to that
+                      file's folder. (Uses CCFIND.)
+    Alt-F8 .......... search file contents / grep -> the other panel lists each
+                      FILE that contains a match (one row per file; its first-
+                      match line shows in the size column). Enter on a file opens
+                      the F3 viewer at that line. (Uses CCGREP.)
+                      To leave a results list and return to the normal folder
+                      view, press Esc (or Enter on its ".." row), just like
+                      backing out of a ZIP.
     Alt-F9 .......... extract a whole archive to the other panel
     Alt-F10 ......... directory-tree browser: a full-screen list of every
                       sub-folder under the active panel's path. Up/Dn/PgUp/

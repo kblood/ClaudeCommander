@@ -104,13 +104,16 @@ E_DATE      equ 22         ; word
 ; P_SRC==SRC_RESULT everywhere they are read). HAZARD: a future date/time column
 ; feature must not read these on a results panel.
 E_RES_OFF   equ 20         ; (= E_TIME) near offset of the full path in res_heap
-E_RES_LINE  equ 22         ; (= E_DATE) line number (0 for find; used by W2 grep)
-E_RES_TEXT  equ 16         ; (= E_SIZE low word) near offset of the matched-line text
-                           ;   in res_heap. 0 on a find row, nonzero on a grep row --
-                           ;   this is also the find-vs-grep row discriminator.
+E_RES_LINE  equ 22         ; (= E_DATE) first matching line, and the row-type
+                           ;   discriminator: 0 = find row (Enter -> jump to the
+                           ;   file's folder); >0 = grep file row (Enter -> open
+                           ;   the F3 viewer at this line). Grep lists one row per
+                           ;   FILE, so the matched text is no longer stored.
+E_RES_TEXT  equ 16         ; (= E_SIZE low word) alias; on a grep file row E_SIZE
+                           ;   holds the line number so it shows in the size column.
 E_ATTR_STATUS equ 08h      ; E_ATTR bit for a non-selectable status row
                            ;   (unused by 10h dir / 20h archive / 40h tagged)
-RESHEAP_MAX equ 4096       ; packed full-path bytes for the results panel
+RESHEAP_MAX equ 3072       ; packed full-path bytes for the results panel
 
 ; --- data-driven key dispatch -------------------------------------------------
 ; Each binding is a 4-byte row: db class, db code, dw handler. A module can
@@ -223,6 +226,7 @@ TOOLBIT_REN   equ 0020h
     %define FEAT_VIEWS
     %define FEAT_TREE
     %define FEAT_TOOLS          ; "Tools" menu-bar pull-down (CCSUM/CCDIFF/...)
+    %define FEAT_RESULTS        ; Alt-F7/Alt-F8 land in a browsable results panel
   %endif
   %if _TIER >= 3             ; ---- FULL adds (reserved for heavy features) ----
   %endif
@@ -545,6 +549,15 @@ on_enter:
         jmp     key_enter
 
 on_esc:
+        cmp     word [cmdlen], 0
+        jne     .clear              ; text on the command line -> just clear it
+%ifdef FEAT_RESULTS
+        mov     bx, [active]
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        jne     .clear              ; empty line, regular panel -> nothing to do
+        jmp     go_parent           ; empty line on a results panel -> leave it
+%endif
+.clear:
         mov     word [cmdlen], 0
         ret
 
@@ -1854,19 +1867,9 @@ rank_of:
 ;   name left-justified, then size (or <DIR>/<UP>) right-justified.
 SIZEW       equ 8
 format_entry:
-%ifdef FEAT_RESULTS
-        ; a grep row on a results panel renders the matched text + line number
-        ; instead of basename + size (find rows keep E_RES_TEXT=0 -> normal path).
-        mov     bx, [ppanel]
-        cmp     byte [bx+P_SRC], SRC_RESULT
-        jne     .normal
-        test    byte [si+E_ATTR], E_ATTR_STATUS
-        jnz     .normal
-        cmp     word [si+E_RES_TEXT], 0
-        je      .normal
-        jmp     format_entry_grep
-.normal:
-%endif
+        ; Results rows (find and grep-file) render through the normal path: the
+        ; basename in the name field and a number in the size field (size for real
+        ; files; the first-match line number for grep-file rows, stashed in E_SIZE).
         push    si
         mov     di, rowbuf
         ; name field width = pcw - SIZEW - 1
@@ -1957,46 +1960,6 @@ format_entry:
 .ret:
         ret
 
-%ifdef FEAT_RESULTS
-; render a grep result row: matched text in the name field, line number right-
-; justified in the size field. si = entry ptr.
-format_entry_grep:
-        push    si
-        mov     di, rowbuf
-        movzx   cx, byte [pcw]
-        sub     cx, SIZEW+1         ; name-field width
-        mov     si, [si+E_RES_TEXT] ; matched-line text in res_heap
-.tl:
-        mov     al, [si]
-        or      al, al
-        jz      .tdone
-        mov     [di], al
-        inc     di
-        inc     si
-        loop    .tl
-.tdone:
-        pop     si
-        ; size field = line number, right-justified in SIZEW
-        movzx   bx, byte [pcw]
-        sub     bx, SIZEW
-        lea     di, [rowbuf+bx]
-        mov     ax, [si+E_RES_LINE]
-        xor     dx, dx
-        call    u32toa              ; dx:ax -> numbuf, returns si=first digit, cx=len
-        mov     bx, SIZEW
-        sub     bx, cx
-        add     di, bx
-.cp:
-        mov     al, [si]
-        or      al, al
-        jz      .ret
-        mov     [di], al
-        inc     di
-        inc     si
-        jmp     .cp
-.ret:
-        ret
-%endif
 
 ; fill rowbuf with [pcw] spaces, null-terminate
 clear_rowbuf:
@@ -3043,12 +3006,12 @@ set_panel_drive:
 ; ============================================================================
 ;  F3 -- FILE VIEWER  (reads up to VIEW_MAX bytes, scrolls by line)
 ; ============================================================================
-VIEW_MAX    equ 12288           ; built-in pager byte cap (12 KB; larger files
+VIEW_MAX    equ 8192            ; built-in pager byte cap (8 KB; larger files
                                 ;   truncate, as before -- external [view] tools
-                                ;   handle big files). Trimmed 16->14->12 KB to
+                                ;   handle big files). Trimmed 16->14->12->8 KB to
                                 ;   keep the resident image under the std 63 KB
                                 ;   wall as resident widgets (menu bar, Tools,
-                                ;   hex view) were added.
+                                ;   hex view, FEAT_RESULTS search panel) were added.
 MAX_VLINES  equ 1024
 VIEW_ROWS   equ 23             ; text rows 1..23 (row 0 header, row 24 bar)
 VIEW_TOP    equ 1              ; viewer content first row -- the full-screen pager
@@ -3468,7 +3431,7 @@ rl_namebuf  resb 14            ; basename to land the cursor on after a jump
 rl_grep     resb 1             ; 0 = find list (FINDOUT.TXT), 1 = grep list (GREPOUT.TXT)
 rl_fname    resw 1             ; ptr to the input filename for results_load
 rl_line     resw 1             ; parsed line number of the grep row being built
-rl_text     resw 1             ; res_heap ptr of the matched text being built
+rl_lastpath resw 1             ; res_heap ptr of the last emitted file (grep dedup)
 view_start_line resw 1         ; 1-based line to open the F3 viewer at (grep jump); 0 = top
 res_heap    resb RESHEAP_MAX   ; packed ASCIIZ full paths (+ matched text for grep)
 %endif

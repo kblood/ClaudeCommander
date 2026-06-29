@@ -49,6 +49,7 @@ name at cc's prompt — `on_enter` already shells out via `run_command`).
 | Language: translate F-key bar via `cc.lng` | — | lang.inc | 20e8692 |
 | LFN: cursor file's long name on command row | — | lfn.inc | c3a93ad |
 | Grep contents (launches CCGREP) | Alt-F8 | grep.inc | 0ddd13c |
+| Find/grep matches → browsable results panel | Alt-F7/F8 + Enter | results.inc | uncommitted |
 | Attribute editor (R/H/S/A) | Ctrl-A | attr.inc | 671ba32 |
 
 **External helpers (Layer 3, separate `.COM`, zero resident cost):**
