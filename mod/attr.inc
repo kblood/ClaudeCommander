@@ -82,7 +82,7 @@ key_attr:
 ; draw the editor status on the command row.  es=VIDEO set here.
 attr_overlay:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     di, CMD_ROW*ROW_BYTES
         mov     ax, (A_CMD<<8)|' '      ; clear the row

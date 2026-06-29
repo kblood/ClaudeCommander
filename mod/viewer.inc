@@ -336,7 +336,7 @@ render_view:
         jmp     render_view_hex
 .text:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         ; clear to text attr
         xor     di, di
@@ -459,7 +459,7 @@ render_view:
 ; process -- the CCHEX.COM helper stays for command-line/redirect use.
 render_view_hex:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         xor     di, di                      ; clear screen to text attr
         mov     ax, (A_VTXT<<8)|' '

@@ -1,12 +1,38 @@
 # Claude Commander (`cc`) — session handoff
 
 Cold-start brief for a fresh session. Read this first, then `ROADMAP.md` §0
-(the delivered-feature table) and `README.md`. Last updated 2026-06-23.
+(the delivered-feature table) and `README.md`. Last updated 2026-06-29.
 
 `cc` is a Norton/Volkov-style two-panel DOS file manager in hand-written 16-bit
 x86 NASM assembly, built as a flat `.COM`. The repo root **is** a git repo
-(branch `master`); all feature work is committed locally but **not pushed** —
+(branch `main`); all feature work is committed locally but **not pushed** —
 push only when the user explicitly asks.
+
+---
+
+## ⚠ Latest session (2026-06-29): UX fixes & features — UNCOMMITTED
+
+Nine fixes/features from the last session. **All changes are in the working tree
+only — nothing is committed yet.** The `FEAT_STD` (`CC.COM`) and the
+`FEAT_MENU`/no-menubar `CCPOP.COM` builds both pass via `package.ps1` (exit 0).
+
+| # | Change | Where |
+|---|---|---|
+| 1 | **PgDn now == Right arrow.** `key_pgdn` reloaded the page count that `VD_PAGE` had clobbered in `cl`. | `cc.asm` `key_pgdn` |
+| 2 | **Flicker-free rendering.** Double-buffer: `render_all` composes into `bufseg` then `blit_buf` does one `rep movsw` to VRAM. `vseg`/`bufseg` vars; buffer alloc via `AH=48h` (250 paras) after the `AH=4Ah` shrink; `clear_bg` moved to startup. All `mov ax,VIDEO` → `mov ax,[vseg]` across `cc.asm` + 9 `.inc`s. | `cc.asm`, all `mod/*.inc` |
+| 3 | **Top-right corner glyph.** `frame_row` used `imul ax,…;mov di,ax`, clobbering AL (the corner char). Now `imul bx,ROW_BYTES;mov di,bx`. | `cc.asm` `frame_row` |
+| 4 | **Configurable clock.** `clock = cmdrow\|topright\|off` in `cc.ini`. `clock_pos` 0/1/2; `CLK_TR_ROW` guarded so the no-menubar CCPOP build still assembles. | `mod/clock.inc`, `mod/ini.inc`, `cc.ini` |
+| 5 | **Mouse opens menus.** Click a bar title (Files/Commands/Options/Tools) from the file view → `mb_bar_hit` returns a synthetic F9 with `mb_click` set; `key_menubar` consumes it. In-menu modal loop also polls the mouse (pick item / hop menus / outside-click closes). | `mod/mouse.inc`, `mod/menubar.inc` |
+| 6 | **3-column brief view reachable.** Always existed but `Ctrl-F10` is eaten by DOSBox → added `Alt-F3` keybind (scan 6Ah) + an Options-menu entry. | `cc.asm` keytab, `mod/menubar.inc` |
+| 7 | **3-col LEFT-panel names visible.** `draw_panel_brief` gave cols 0,1 the full `pcw`, so the right panel's column wrapped onto the left panel's row. Now cols 0,1 = `BRIEF_PITCH` wide, last col takes the remainder. | `mod/views.inc` |
+| 8 | **Mouse cursor can't get "lost".** `mouse_hide`/`mouse_show` are idempotent against a new `mouse_vis` flag so the INT 33h show/hide counter only sits at 0 or −1. | `mod/mouse.inc`, `cc.asm` `.bss` |
+| 9 | **Clock paints over menubar** for `topright`: `mb_bar_draw` widget ordered before `draw_clock` in `wtab`. | `cc.asm` `wtab` |
+
+**Verified headlessly** (`/D`, `/T` byte-identical dumps; budget green; CCPOP
+build green). **NOT verifiable headlessly** — needs a real DOSBox run via
+`.\run_cc.ps1`: actual mouse clicks (the `/T` harness injects keystrokes only,
+never INT 33h events) and the visual absence of flicker. Ask the user to
+sanity-check those interactively before committing.
 
 ---
 
@@ -87,10 +113,12 @@ module (costs resident bytes — mind the wall) and a `cc.hlp` line.
 
 ## Delivered (see ROADMAP.md §0 for the full table + commits)
 
-Resident modules: clock · sort (Ctrl-F1..F4) · columns size/date/time/attrs
-(Ctrl-F5) · free+tagged footer · quick-search (Ctrl-F6) · F9 menu · tag-by-mask
-(Ctrl-F7/F8) · attribute editor R/H/S/A (Ctrl-A) · F1 help · language/F-key-bar
-(cc.lng) · LFN cursor long-name · launchers F4/Alt-F7/Alt-F8/Ctrl-F9.
+Resident modules: clock (cmdrow/topright/off via cc.ini) · sort (Ctrl-F1..F4) ·
+columns size/date/time/attrs (Ctrl-F5) · free+tagged footer · quick-search
+(Ctrl-F6) · F9 pull-down menu bar (mouse-openable) · brief 3-col view
+(Ctrl-F10/Alt-F3) · tag-by-mask (Ctrl-F7/F8) · attribute editor R/H/S/A (Ctrl-A) ·
+F1 help · language/F-key-bar (cc.lng) · LFN cursor long-name · launchers
+F4/Alt-F7/Alt-F8/Ctrl-F9. Rendering is double-buffered (flicker-free).
 
 External helpers: CCEDIT · CCFIND · CCZIP · CCGREP · CCHEX · CCSUM.
 
@@ -173,9 +201,17 @@ Total-Commander-style packer plugins; ext→helper map in cc.ini `[open]`.
 
 ## State
 
-- Branch `master`, latest commit `9594ef8` (container browser + ZIP browse).
-  Recent: `6510e14` F5/F6 copy-move-rename, `e8ba410` dist packager. All local,
-  **none pushed**.
-- `build.ps1` → FEAT_STD PASS (61,902 B; ~2.6 KB headroom). All external helpers
-  assemble clean. `package.ps1` → browsable dist (CC.COM + CCZIP.COM + cc.ini
-  with `[open]`). Try it interactively with `.\run_cc.ps1`.
+- Branch `main`, latest commit `324785f` (README bundled-tools reference).
+  Recent: `0d74e43`/`a226440`/`c92e20c` Gold Box helpers + file-type routing.
+  All local, **none pushed**.
+- **Uncommitted working tree:** the nine UX fixes in the §"Latest session" table
+  above (`cc.asm`, `mod/{clock,ini,mouse,menubar,views}.inc`, the VIDEO→`vseg`
+  sweep across the `.inc`s, `cc.ini`) plus the docs refreshed this turn
+  (`README.md`, `ROADMAP.md`, `cc.hlp`, this `HANDOFF.md`). Plus pre-existing
+  scratch dirs (`_*test/`, `_dump_*.txt`, `ai-out/…`) that are not part of the
+  feature work — don't stage those.
+- `build.ps1` / `package.ps1` → both `CC.COM` (FEAT_STD) and `CCPOP.COM`
+  (FEAT_MENU, no menubar) build green (exit 0). All external helpers assemble
+  clean. Try the dist interactively with `.\run_cc.ps1`.
+- **Before committing:** have the user verify the mouse-driven menu open/select
+  and the flicker fix in a real DOSBox session (neither is headless-testable).

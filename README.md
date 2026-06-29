@@ -77,11 +77,15 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
   name. Sizes shown right-justified; `<DIR>` / `<UP>` labels.
 - Colour coding: files grey, directories white, **tagged** entries yellow,
   cursor cyan (active) / grey (inactive).
+- **Flicker-free**: each frame is composed off-screen in a back buffer and
+  blitted to `B800:0000` in one `rep movsw`, so moving the cursor never shows a
+  partial repaint (it degrades gracefully to live drawing if the buffer can't be
+  allocated).
 
 **Navigation**
 - `↑ ↓`, `PgUp PgDn`, `Home End` move the cursor (scroll follows).
-- `← →` act as PgUp/PgDn (the panels are single-column, so the left/right
-  arrows would otherwise do nothing).
+- `← →` page through the list in the full view (so `PgDn` and `→` now move by
+  exactly the same step); in the 3-column brief view they step a whole column.
 - `Tab` switches the active panel.
 - `Enter` on a directory descends; on `..` goes up; on an `.EXE/.COM/.BAT`
   runs it from the panel's directory.
@@ -93,8 +97,14 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - Click an entry to select it and activate its panel.
 - Double-click an entry to open it (same as `Enter`).
 - Right-click an entry to tag/untag it.
+- Click a title on the menu bar (Files / Commands / Options / Tools) to drop
+  that menu straight from the file view — no need to press `F9` first. Inside an
+  open menu the mouse picks items, hops between menus along the bar, and an
+  outside click closes it.
 - Click a label on the function-key bar to invoke that key.
 - The modal dialogs are fully clickable too (see below).
+- The cursor show/hide is reference-counted against our own flag, so it can no
+  longer get "lost" (invisible-but-present) after a file op or an alt-tab.
 
 **Command line**
 - Type a command after the `path>` prompt; `Enter` shells out through
@@ -135,14 +145,21 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
   the screen never looks frozen.
 
 **Modular features (FEAT_STD default build)**
-- **Clock** — live `HH:MM:SS` top-right.
+- **Clock** — live `HH:MM:SS`, placement set in `cc.ini` (`clock = cmdrow` on
+  the command row, default; `topright` over the menu bar; `off` to hide it).
+- **Brief 3-column view** — toggle the panel body between the full single-column
+  list and a names-only 3-column layout (`Ctrl-F10`, or `Alt-F3` which DOSBox
+  doesn't swallow; also under the Options menu). Each panel toggles independently.
 - **Sort** — by name / extension / size / date (`Ctrl-F1..F4`); initial order
   from `cc.ini`.
 - **Columns** — cycle the right column size / date / time / attributes
   (`Ctrl-F5`); initial column from `cc.ini`.
 - **Footer** — per-panel file count, free space, and tagged count in the border.
 - **Quick-search** — Norton-style incremental jump-to (`Ctrl-F6`).
-- **F9 menu** — data-driven pop-up command menu.
+- **Menu bar / F9 menu** — the `FEAT_STD` build shows a pull-down menu bar
+  (Files / Commands / Options / Tools); `F9` drops the current menu, the arrows
+  navigate, and the mouse opens/picks items directly. The `CCPOP.COM` build
+  ships the classic single pop-up menu instead.
 - **Tag by mask** — select / deselect by `*.wildcard` (`Ctrl-F7/F8`).
 - **Attribute editor** — toggle Read-only/Hidden/System/Archive (`Ctrl-A`).
 - **F1 help** — pages `cc.hlp` through the viewer.
@@ -241,20 +258,21 @@ is safe even when a tool isn't installed.
 | Key | Action | Key | Action |
 |---|---|---|---|
 | ↑ ↓ / PgUp PgDn / Home End | move cursor | `Tab` | switch panel |
-| ← → | PgUp / PgDn | `Backspace` | parent folder (empty cmd line) |
+| ← → | page (full view) / column (brief view) | `Backspace` | parent folder (empty cmd line) |
 | `Enter` | enter dir / run program | `Esc` | clear cmd line |
 | `F3` | view file | `F5` | copy (tagged set or cursor) |
 | `F6` | rename / move | `F7` | make directory |
 | `F8` | delete (tagged set or cursor) | `Insert` | tag entry |
 | `Alt+F1` / `Alt+F2` | left / right drive | `F10` | quit |
 | `F1` | help (`cc.hlp`) | `F4` | edit file (CCEDIT) |
-| `F9` | pop-up menu | `Ctrl-A` | edit attributes (R/H/S/A) |
+| `F9` | menu bar (pop-up in CCPOP) | `Ctrl-A` | edit attributes (R/H/S/A) |
 | `Ctrl-F1..F4` | sort name/ext/size/date | `Ctrl-F5` | cycle column |
 | `Ctrl-F6` | quick-search | `Ctrl-F7/F8` | tag/untag by mask |
-| `Alt-F7` | find files (CCFIND) | `Alt-F8` | grep contents (CCGREP) |
-| `Ctrl-F9` | list archive (CCZIP) | | |
+| `Ctrl-F10` / `Alt-F3` | toggle brief 3-column view | `Alt-F7` | find files (CCFIND) |
+| `Alt-F8` | grep contents (CCGREP) | `Ctrl-F9` | list archive (CCZIP) |
 | click | select entry | dbl-click | open entry |
 | right-click | tag entry | click F-bar | invoke that F-key |
+| click menu title | open that menu (no F9 needed) | | |
 
 ---
 
@@ -284,7 +302,7 @@ The repo includes a headless regression harness used during development:
 |---|---|
 | Start / arg parse / memory shrink / mouse init | `start` |
 | Key dispatch | `dispatch`, `key_*`, `on_*` |
-| Render | `render_all`, `draw_frames`, `draw_panel`, `pick_attr`, `draw_titles`, `draw_cmdline`, `draw_fkeys` |
+| Render | `render_all` (composes into the back buffer), `blit_buf` (one-shot blit to VRAM), `widgets_draw`, `draw_frames`, `draw_panel`, `pick_attr`, `draw_titles`, `draw_cmdline`, `draw_fkeys` |
 | Directory model | `read_dir`, `accept_dta`, `build_search`, `sort_panel`, `order_cmp` |
 | Paths | `path_append`, `path_up`, `go_parent`, `bp_copy_dir`, `bp_copy_name`, `build_entry_path`, `build_target_path`, `build_other_path` |
 | Modal dialogs | `dlg_box`, `dlg_input`, `dlg_confirm`, `dlg_draw_buttons`, `dlg_overwrite`, `ow_draw_buttons`, `dlg_field`, `busy_box`, `busy_name` |
@@ -298,8 +316,8 @@ The repo includes a headless regression harness used during development:
 ### Modules (`mod/*.inc`, gated by `%ifdef FEAT_*`)
 
 `shell` `fileops` `recurse` `mouse` `viewer` `harness` (core splits) ·
-`clock` `sort` `cols` `free` `search` `menu` `mask` `edit` `find` `grep`
-`zip` `ini` `help` `lang` `lfn` `attr` (features). Each owns its keybind
+`clock` `sort` `cols` `free` `search` `menu` `menubar` `views` `mask` `edit`
+`find` `grep` `zip` `ini` `help` `lang` `lfn` `attr` (features). Each owns its keybind
 rows, optional menu entry, handlers, and `.bss` — adding a feature is one
 `%include` + one tier `%define`.
 

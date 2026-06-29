@@ -90,6 +90,13 @@ ini_load:
         call    kw_match
         jc      .docols
         pop     si
+%ifdef FEAT_CLOCK
+        push    si
+        mov     di, k_clock
+        call    kw_match
+        jc      .doclock
+        pop     si
+%endif
 %ifdef FEAT_EDIT
         push    si
         mov     di, k_editor
@@ -106,6 +113,12 @@ ini_load:
         add     sp, 2
         call    set_cols_val
         jmp     .skip
+%ifdef FEAT_CLOCK
+.doclock:
+        add     sp, 2
+        call    set_clock_val
+        jmp     .skip
+%endif
 %ifdef FEAT_EDIT
 .doeditor:
         add     sp, 2
@@ -296,6 +309,26 @@ set_editor_val:
         jmp     .cp
 .end:
         mov     byte [di], 0
+        ret
+%endif
+
+%ifdef FEAT_CLOCK
+set_clock_val:
+        mov     di, v_cmdrow
+        call    val_is
+        jc      .c
+        mov     di, v_topright
+        call    val_is
+        jc      .t
+        mov     di, v_off
+        call    val_is
+        jc      .o
+        ret
+.c:     mov     byte [clock_pos], 0
+        ret
+.t:     mov     byte [clock_pos], 1
+        ret
+.o:     mov     byte [clock_pos], 2
         ret
 %endif
 
@@ -640,6 +673,9 @@ map_lookup:
 s_ininame   db 'cc.ini',0
 k_sort      db 'sort',0
 k_cols      db 'columns',0
+%ifdef FEAT_CLOCK
+k_clock     db 'clock',0
+%endif
 %ifdef FEAT_EDIT
 k_editor    db 'editor',0
 %endif
@@ -656,3 +692,8 @@ v_size      db 'size',0
 v_date      db 'date',0
 v_time      db 'time',0
 v_attr      db 'attr',0
+%ifdef FEAT_CLOCK
+v_cmdrow    db 'cmdrow',0
+v_topright  db 'topright',0
+v_off       db 'off',0
+%endif

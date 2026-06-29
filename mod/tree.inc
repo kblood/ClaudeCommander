@@ -348,7 +348,7 @@ tree_render:
 ; Clear the whole screen to A_NORM spaces.
 tree_clear:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         xor     di, di
         mov     cx, SCR_W*SCR_H

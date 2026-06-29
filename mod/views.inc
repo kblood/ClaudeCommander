@@ -173,10 +173,14 @@ draw_panel_brief:
         div     cx
         mov     [brief_col], ax
         mov     [brief_row], dx
-        ; cell width: cols 0,1 = PITCH; last col gets pcw - 2*PITCH
-        movzx   cx, byte [pcw]
+        ; cell width: cols 0,1 = PITCH; last col gets pcw - 2*PITCH. Using pcw
+        ; for cols 0,1 (the old bug) made each write the full panel width, so the
+        ; right panel's col 1 ran past col 79 and wrapped onto the next row's
+        ; left side -- blanking the left panel's names.
+        mov     cx, BRIEF_PITCH
         cmp     ax, BRIEF_COLS-1
         jb      .havew
+        movzx   cx, byte [pcw]
         sub     cx, (BRIEF_COLS-1)*BRIEF_PITCH
 .havew:
         mov     [brief_cw], cx

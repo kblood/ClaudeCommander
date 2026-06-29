@@ -48,8 +48,23 @@ mb_key:
 ; The bar itself is drawn every frame by mb_bar_draw (the widget seam); this
 ; just sets mb_active so the bar highlights the current menu, then renders the
 ; drop-down and runs the 2D key loop.
+;
+; Live mode with a mouse driver: we poll the keyboard and mouse ourselves so
+; we can hit-test bar titles and the open drop-down. Test-harness mode (/T)
+; still delegates to get_key (which replays cc.key), preserving the existing
+; automated test path exactly. mb_mlb tracks the left-button "was-down" state
+; for edge detection (separate from m_lb used by the browser).
 key_menubar:
-        mov     word [mb_cur], 0
+        ; Opened by a bar click (mb_bar_hit stashed the menu index) or by F9
+        ; (mb_click left at 0FFFFh -> default to Files/0). Consume mb_click so the
+        ; next open starts fresh.
+        mov     ax, [mb_click]
+        mov     word [mb_click], 0FFFFh
+        cmp     ax, 0FFFFh
+        jne     .haveidx
+        xor     ax, ax
+.haveidx:
+        mov     [mb_cur], ax
         mov     byte [mb_active], 1
         call    mb_recount              ; -> mb_n, mb_sel=0, mb_col, mb_items
 .loop:
@@ -61,7 +76,100 @@ key_menubar:
         je      .live
         call    dump_screen
 .live:
+        cmp     byte [test_mode], 0
+        jne     .do_getkey              ; /T harness: replay cc.key, preserve dumps
+        cmp     byte [mouse_ok], 0
+        je      .kbonly                 ; no mouse driver: busy-wait on keyboard
+; ---- live mode with mouse: poll keyboard and mouse on each iteration --------
+.poll:
+        call    widgets_tick            ; allow the clock widget to tick
+        mov     ah, 1
+        int     16h                     ; BIOS: key waiting in buffer?
+        jnz     .kbread                 ; yes -> consume it
+        ; poll mouse (INT 33h AX=3 -> bx=buttons, cx=x pixels, dx=y pixels)
+        mov     ax, 3
+        int     33h
+        mov     al, bl
+        and     al, 1                   ; al = current left-button state
+        mov     ah, [mb_mlb]            ; ah = previous state (was-down)
+        mov     [mb_mlb], al            ; update state
+        or      al, al
+        jz      .poll                   ; button up -> no event
+        or      ah, ah
+        jnz     .poll                   ; was already down -> not a new edge
+        ; ---- LEFT DOWN EDGE detected: cx=x(px), dx=y(px) ----
+        shr     cx, 3                   ; cx = click column (cell)
+        shr     dx, 3                   ; dx = click row (cell)
+        or      dx, dx
+        jnz     .mb_drop_hit            ; row > 0 -> check dropdown / outside
+        ; === click on the menu bar (row 0): identify which title was clicked ===
+        push    si                      ; preserve caller's si across scan
+        xor     bx, bx                  ; bx = menu index k (0..MB_MENUS-1)
+.bar_loop:
+        cmp     bx, MB_MENUS
+        jae     .bar_miss               ; no title matched -> ignore click
+        mov     ax, bx
+        call    mb_menu_ptr             ; si -> 6-byte menu row
+        mov     ax, [si+4]              ; ax = anchor column A
+        cmp     cx, ax                  ; click_col < anchor?
+        jb      .bar_next               ; yes -> this menu starts to the right
+        push    cx                      ; save click col during strlen
+        mov     si, [si]                ; si = title string ptr
+        xor     cx, cx                  ; cx = title length counter
+.bar_len:
+        cmp     byte [si], 0
+        je      .bar_done
+        inc     si
+        inc     cx
+        jmp     .bar_len
+.bar_done:                              ; cx = len, ax = anchor A
+        add     ax, cx                  ; ax = A + len (first col past title)
+        pop     cx                      ; restore click col
+        cmp     cx, ax
+        jae     .bar_next               ; click beyond this title -> try next
+        pop     si                      ; match: restore si
+        mov     ax, bx                  ; ax = matched menu index
+        jmp     .setmenu
+.bar_next:
+        inc     bx
+        jmp     .bar_loop
+.bar_miss:
+        pop     si                      ; no title matched -> restore si
+        jmp     .poll                   ; click on bar gap -> keep polling
+; === click not on bar: check open dropdown ===
+.mb_drop_hit:
+        cmp     dx, MB_TOP+1            ; row < first item row?
+        jb      .mb_outside             ; hit the top border -> close
+        mov     ax, [mb_n]
+        add     ax, MB_TOP              ; ax = row of last dropdown item
+        cmp     dx, ax
+        ja      .mb_outside             ; below last item (border or below) -> close
+        mov     ax, [mb_col]
+        cmp     cx, ax
+        jb      .mb_outside             ; left of left border -> close
+        add     ax, MB_DROPW+1          ; ax = right-border column
+        cmp     cx, ax
+        ja      .mb_outside             ; right of right border -> close
+        ; inside dropdown: select item and execute
+        mov     ax, dx
+        sub     ax, MB_TOP+1            ; item index = row - (MB_TOP+1)
+        mov     [mb_sel], ax
+        jmp     .pick                   ; -> mb_handler + invoke
+.mb_outside:
+        jmp     .close                  ; click outside menu -> close
+; ---- keyboard-only polling (live mode, no mouse driver) --------------------
+.kbonly:
+        call    widgets_tick
+        mov     ah, 1
+        int     16h                     ; BIOS peek
+        jz      .kbonly                 ; no key yet
+.kbread:
+        mov     ah, 0
+        int     16h                     ; read key: al=ascii, ah=scan
+        jmp     .got_key
+.do_getkey:
         call    get_key
+.got_key:
         or      al, al
         jnz     .asc
         ; --- extended keys (al=0) ---
@@ -131,6 +239,50 @@ key_menubar:
         call    mouse_show
         ret
 
+; Browser-mode click on the menu-bar row (called from mouse_left when a click
+; lands on MENUBAR_ROW, BEFORE F9 is pressed). [m_col] = clicked cell column.
+; If it hits a menu title, stash that menu index in mb_click and return a
+; synthetic F9 (al=0, ah=43h) so dispatch routes through mb_key -> key_menubar,
+; which opens the bar at the clicked menu. A miss returns ax=0 (harmless re-poll).
+; mb_mlb is seeded to 1 (button currently down) so the menu's own poll doesn't
+; mistake this still-held press for a fresh click inside the drop-down.
+mb_bar_hit:
+        mov     cx, [m_col]
+        xor     bx, bx                  ; menu index
+.l:
+        cmp     bx, MB_MENUS
+        jae     .miss
+        mov     ax, bx
+        call    mb_menu_ptr             ; si -> row (preserves bx,cx)
+        mov     ax, [si+4]              ; anchor col A
+        cmp     cx, ax
+        jb      .next                   ; click is left of this title
+        push    cx
+        mov     si, [si]                ; title string ptr
+        xor     cx, cx                  ; strlen
+.len:
+        cmp     byte [si], 0
+        je      .done
+        inc     si
+        inc     cx
+        jmp     .len
+.done:
+        add     ax, cx                  ; A + len = first col past the title
+        pop     cx
+        cmp     cx, ax
+        jae     .next                   ; click is past this title
+        mov     [mb_click], bx          ; hit menu bx
+        mov     byte [mb_mlb], 1        ; press is still down -> not a fresh edge
+        mov     al, 0
+        mov     ah, 43h                 ; synthetic F9
+        ret
+.next:
+        inc     bx
+        jmp     .l
+.miss:
+        xor     ax, ax
+        ret
+
 ; ax = menu index -> si = &mb_menus row. Preserves ax,bx,cx,dx.
 mb_menu_ptr:
         push    ax
@@ -178,7 +330,7 @@ mb_handler:
 mb_bar_draw:
         push    es
         push    bp
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     di, MENUBAR_ROW*ROW_BYTES
         mov     cx, SCR_W
@@ -221,7 +373,7 @@ mb_bar_draw:
 mb_drop_draw:
         push    es
         push    bp
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     bp, MB_TOP              ; top border just under the bar
         mov     bx, [mb_col]
@@ -382,6 +534,9 @@ mb_opts:
 %ifdef FEAT_ATTR
         dw      mb_l_attr, key_attr
 %endif
+%ifdef FEAT_VIEWS
+        dw      mb_l_view3, key_view_toggle
+%endif
         dw      0
 
 %ifdef FEAT_TOOLS
@@ -435,3 +590,8 @@ mb_l_cmp    db 'Compare (other panel)', 0
 mb_l_split  db 'Split file...', 0
 mb_l_ren    db 'Wildcard rename...', 0
 %endif
+%ifdef FEAT_VIEWS
+mb_l_view3  db '3-col view (Ctrl-F10)', 0
+%endif
+mb_mlb      db 0                ; left-button state tracking (menu mouse support)
+mb_click    dw 0FFFFh           ; menu index from a browser-mode bar click (FFFF=none)

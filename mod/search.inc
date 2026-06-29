@@ -92,7 +92,7 @@ qs_find:
 ; Draw "Search: <prefix>_" at the left of the command row (es=VIDEO set here).
 qs_overlay:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     di, CMD_ROW*ROW_BYTES   ; col 0 (fully cover the C:\> prompt)
         mov     ah, 0Fh                 ; bright white on black

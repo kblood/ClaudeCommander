@@ -32,7 +32,9 @@ name at cc's prompt — `on_enter` already shells out via `run_command`).
 
 | Feature | Key | Module | Commit |
 |---|---|---|---|
-| Clock (top-right HH:MM:SS) | — | clock.inc | c007c84 |
+| Clock (HH:MM:SS; cmdrow/topright/off via cc.ini) | — | clock.inc | c007c84 (+uncommitted) |
+| Brief 3-column body view | Ctrl-F10 / Alt-F3 | views.inc | uncommitted |
+| Pull-down menu bar + mouse open/select | F9 / click | menubar.inc | uncommitted |
 | Sort: name/ext/size/date | Ctrl-F1..F4 | sort.inc | 70c044d |
 | Columns: size/date/time/attrs | Ctrl-F5 | cols.inc | 3e299b0 / 1ff023b |
 | File-count + free-space + tagged footer | — | free.inc | f4dffce |
@@ -76,9 +78,11 @@ Notes on the two hard ones:
 
 **Still open** (would need resident reclaim or stay external): full `MSG` string
 table, F2 user menu (`cc.mnu`), remappable keys, command-line history,
-bookmarks, colour themes, file associations, copy progress %, file
-compare (CCDIFF), split/combine, multi-rename, brief/full/info view modes.
-(Touch shipped as the CCTOUCH.COM helper, commit 8c004dc.)
+bookmarks, colour themes, copy progress %, and an info/tree body view mode.
+(Touch shipped as the CCTOUCH.COM helper, commit 8c004dc; file compare as
+CCDIFF; split/combine as CCSPLIT/CCJOIN; multi-rename as CCREN; file
+associations via the `cc.ini` `[open]`/`[view]`/`[tools]` maps; the brief
+3-column view shipped in views.inc.)
 
 ---
 

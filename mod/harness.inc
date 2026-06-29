@@ -13,7 +13,7 @@ snap_vram:
         mov     ax, cs              ; our segment (COM: cs=ds=ss=es)
         mov     es, ax
         mov     di, snapbuf
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     ds, ax
         xor     si, si
         mov     cx, 2000            ; 4000 bytes = 2000 words

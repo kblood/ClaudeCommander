@@ -12,7 +12,7 @@
 draw_foot:
         push    es
         push    bp
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     bx, panelL
         mov     cx, L_CONX

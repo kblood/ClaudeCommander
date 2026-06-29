@@ -14,8 +14,10 @@
      flight. Shift-F6 renames the file in place (same folder).
     F9 / menu bar: the top row shows a pull-down menu bar (Files / Commands /
      Options / Tools). Press F9 to drop the current menu down; Left/Right switch
-     menus, Up/Down pick an item, Enter runs it, Esc closes. (The classic single
-     pop-up menu is available instead in the CCPOP.COM build.)
+     menus, Up/Down pick an item, Enter runs it, Esc closes. You can also just
+     CLICK a menu title to open it (no F9 first), then click an item to run it or
+     click outside to close. (The classic single pop-up menu is available instead
+     in the CCPOP.COM build.)
      The Tools menu runs the bundled helpers on the cursor / panel files so
      they feel built in: Hex dump (the F3 pager in hex mode), Checksum (CRC-32
      via CCSUM), Compare (CCDIFF, this panel's file vs the other panel's),
@@ -67,12 +69,15 @@
     Ctrl-F7/F8 ...... tag / untag files by *.mask
     Panel footer .... shows "<n> Files <free>K free"; once you tag files it
                       shows "<n> selected  <total> bytes" instead. The clock
-                      (command row, right) ticks once a second on its own.
+                      ticks once a second on its own; its position is set in
+                      cc.ini (clock = cmdrow | topright | off).
     Ctrl-A .......... edit file attributes (Read-only/Hidden/System/Archive)
     Ctrl-F9 ......... list archive contents (CCZIP)
     Ctrl-F10 ........ toggle the panel body between the full list and a brief
-                      3-column names-only view. In brief view Left/Right move
-                      between columns (they page in the full view).
+    (or Alt-F3)       3-column names-only view (each panel toggles on its own).
+                      In brief view Left/Right move between columns (they page in
+                      the full view). Use Alt-F3 under DOSBox, which intercepts
+                      Ctrl-F10. Also on the Options menu.
 
   DISPLAY (cont.)
     Long names ...... the cursor file's long name shows on the command row
@@ -94,7 +99,8 @@
     CCREN src dst ... wildcard multi-rename, e.g. CCREN *.TXT *.BAK
 
   CONFIG
-    cc.ini .......... set initial "sort" and "columns" options, and the
+    cc.ini .......... set initial "sort" and "columns" options, the clock
+                      position (clock = cmdrow | topright | off), and the
                       editor F4 launches:  editor = CCEDIT  (the default),
                       editor = EDIT (DOS Editor), editor = CCHEXED (hex
                       editor), or any editor on the PATH.

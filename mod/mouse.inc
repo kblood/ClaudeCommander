@@ -9,9 +9,20 @@
 ;    dbl click   : open (Enter)         right click : tag/untag the entry
 ;    click F-bar : invoke that F-key
 ; ============================================================================
+; mouse_hide / mouse_show are IDEMPOTENT against our own mouse_vis flag: the
+; INT 33h driver keeps an internal show/hide *counter* (each hide decrements,
+; each show only increments up to 0), so an imbalance -- e.g. a file-op path that
+; hides twice but shows once -- leaves the counter stuck negative and the cursor
+; permanently invisible, since the main loop's single show-per-frame can never
+; climb back. Gating on mouse_vis guarantees one hide is paired with one show, so
+; the counter only ever sits at 0 (shown) or -1 (hidden) and the cursor can't get
+; "lost". mouse_vis is seeded to 1 by the startup show.
 mouse_hide:
         cmp     byte [mouse_ok], 0
         je      .r
+        cmp     byte [mouse_vis], 0
+        je      .r                  ; already hidden -> don't decrement again
+        mov     byte [mouse_vis], 0
         push    ax
         mov     ax, 2
         int     33h
@@ -21,6 +32,9 @@ mouse_hide:
 mouse_show:
         cmp     byte [mouse_ok], 0
         je      .r
+        cmp     byte [mouse_vis], 0
+        jne     .r                  ; already shown -> don't increment again
+        mov     byte [mouse_vis], 1
         push    ax
         mov     ax, 1
         int     33h
@@ -130,11 +144,19 @@ mouse_hit:
 mouse_left:
         call    mouse_hit           ; computes m_row/m_col; CF=1 -> bx,ax
         jc      .onrow
-        ; not on a row: maybe the function-key bar
+        ; not on a panel row: maybe the menu bar (row 0) or the function-key bar
+%ifdef FEAT_MENUBAR
+        cmp     word [m_row], MENUBAR_ROW
+        je      .menubar
+%endif
         cmp     word [m_row], FKEY_ROW
         je      .fbar
         xor     ax, ax
         ret
+%ifdef FEAT_MENUBAR
+.menubar:
+        jmp     mb_bar_hit          ; -> ax = synthetic F9 for the clicked menu (or 0)
+%endif
 .onrow:
         mov     [active], bx
         mov     [bx+P_CUR], ax

@@ -80,7 +80,7 @@ menu_count:
 menu_draw:
         push    es
         push    bp
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     bp, MENU_R0         ; top border
         xor     dl, dl

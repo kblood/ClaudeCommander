@@ -340,6 +340,17 @@ start:
         mov     ah, 4Ah
         int     21h                 ; resize PSP block (ES=PSP at entry)
 
+        ; --- allocate the off-screen back-buffer (4000 bytes = 250 paragraphs).
+        ;     render_all draws here then block-copies to VRAM in one shot, so the
+        ;     visible page never shows a half-painted frame (no flicker). If the
+        ;     alloc fails, bufseg stays 0 and render_all paints straight to VRAM.
+        mov     ah, 48h
+        mov     bx, 250
+        int     21h
+        jc      .nobuf
+        mov     [bufseg], ax
+.nobuf:
+
         ; --- save original video mode, switch to 80x25 colour text ---
         mov     ah, 0Fh
         int     10h
@@ -412,6 +423,7 @@ start:
 
         ; --- mouse init (live mode only) ---
         mov     byte [mouse_ok], 0
+        mov     byte [mouse_vis], 0
         mov     byte [mouse_mode], MM_BROWSER
         mov     byte [m_lb], 0
         mov     byte [m_rb], 0
@@ -425,7 +437,9 @@ start:
         mov     byte [mouse_ok], 1
         mov     ax, 1
         int     33h                 ; show mouse cursor
+        mov     byte [mouse_vis], 1 ; seed the idempotent-visibility flag (shown)
 .nomouse:
+        call    clear_bg            ; one-time full screen clear before entering the loop
 
 ; ---- main loop -------------------------------------------------------------
 main_loop:
@@ -626,6 +640,7 @@ key_pgdn:
         mov     ax, [bx+P_CUR]
         add     ax, VIS_ROWS-1
 %endif
+        mov     cx, [bx+P_COUNT]    ; reload count (VD_PAGE clobbered cl above)
         cmp     ax, cx
         jb      .ok
         mov     ax, cx
@@ -844,8 +859,40 @@ set_active_cwd:
 ;  RENDER
 ; ============================================================================
 render_all:
-        call    clear_bg
+        cmp     word [bufseg], 0
+        je      .live               ; no back-buffer -> paint straight to VRAM
+        mov     ax, [bufseg]
+        mov     [vseg], ax          ; redirect all widget writes to the buffer
         call    widgets_draw        ; walk wtab in draw order (panels..frames..overlays)
+        mov     word [vseg], VIDEO  ; restore live target before the blit
+        jmp     blit_buf            ; one atomic copy buffer -> VRAM (tail-call)
+.live:
+        call    widgets_draw
+        ret
+
+; copy the whole 80x25 back-buffer to video memory in one rep movsw. Done with
+; the mouse hidden by the caller (main loop / modal loops all wrap render_all in
+; mouse_hide/mouse_show), so the cursor cell isn't clobbered mid-copy. Preserves
+; ds (callers rely on ds = our data segment).
+blit_buf:
+        push    ds
+        push    si
+        push    di
+        push    cx
+        push    es
+        mov     ax, [bufseg]
+        mov     ds, ax
+        mov     ax, VIDEO
+        mov     es, ax
+        xor     si, si
+        xor     di, di
+        mov     cx, SCR_W*SCR_H
+        rep     movsw
+        pop     es
+        pop     cx
+        pop     di
+        pop     si
+        pop     ds
         ret
 
 ; The widget descriptor table -- listed in draw order (= the literal old
@@ -859,11 +906,11 @@ wtab:
 %ifdef FEAT_FREE
         WIDGET  draw_foot,   0,          0,           WR_FOOT,  WF_NONE
 %endif
-%ifdef FEAT_CLOCK
-        WIDGET  draw_clock,  clock_tick, 0,           WR_CMD,   WF_NONE
-%endif
 %ifdef FEAT_MENUBAR
         WIDGET  mb_bar_draw, 0,          mb_key,      WR_TOP,   WF_NONE
+%endif
+%ifdef FEAT_CLOCK
+        WIDGET  draw_clock,  clock_tick, 0,           WR_CMD,   WF_NONE
 %endif
 wtab_end:
 
@@ -944,7 +991,7 @@ draw_panelR:
 ; fill whole screen with blue spaces ------------------------------------------
 clear_bg:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         xor     di, di
         mov     ax, (A_BG<<8) | ' '
@@ -956,7 +1003,7 @@ clear_bg:
 ; draw both panel frames (single line, shared divider) ------------------------
 draw_frames:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         ; top row
         mov     bx, TOP_ROW
@@ -997,9 +1044,8 @@ draw_frames:
 ; (es already = VIDEO)
 frame_row:
         push    bx
-        mov     ax, bx
-        imul    ax, ROW_BYTES
-        mov     di, ax
+        imul    bx, ROW_BYTES       ; bx = row * ROW_BYTES (al = corner char preserved)
+        mov     di, bx
         pop     bx
         push    cx                  ; save right/tee
         ; left corner
@@ -1048,7 +1094,7 @@ draw_titles:
 ; bx=panel, cx=content x, dx=content w
 one_title:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         ; attr: active panel title highlighted
         mov     al, A_TITLEI
@@ -1199,7 +1245,7 @@ draw_info:
         ; build "[ name ]" small? For v1 show name in bottom frame title.
         ; We'll just show the highlighted file name centered in bottom border.
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         movzx   ax, byte [pcx]
         add     ax, 1               ; start a bit in
@@ -1231,7 +1277,7 @@ draw_info:
 ; command line (row 23): show active path + ">"
 draw_cmdline:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     di, CMD_ROW*ROW_BYTES
         ; clear row
@@ -1274,7 +1320,7 @@ draw_cmdline:
 ; read as separated buttons.
 draw_fkeys:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         ; clear the row to grey-on-black (the gaps between buttons)
         mov     di, FKEY_ROW*ROW_BYTES
@@ -2094,7 +2140,7 @@ rc_to_off:
 putbuf:
         push    es
         push    ax
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         pop     ax                  ; restore ah=attr
 .l:
@@ -2151,7 +2197,7 @@ dump_screen:
 .row:
         cmp     bp, SCR_H
         jae     .sep
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     ax, bp
         mov     dx, ROW_BYTES
@@ -2275,7 +2321,7 @@ MM_OWRITE   equ 3
 ; draw the double-line dialog box + clear interior
 dlg_box:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     bx, DLG_R0
 .row:
@@ -2339,7 +2385,7 @@ dlg_cell:
 putzstr:
         push    es
         push    ax
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         pop     ax
 .l:     mov     al, [si]
@@ -2376,7 +2422,7 @@ busy_box:                       ; ds:si = title
 busy_name:                      ; ds:si = ASCIIZ name/path (clipped to box width)
         pusha
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     ax, DLG_R0+2
         mov     bx, DLG_C0+2
@@ -2458,7 +2504,7 @@ dlg_input_pre:                      ; enter here with dlgbuf/dlglen preset
 ; redraw the input field row with current dlgbuf + trailing cursor
 dlg_field:
         push    es
-        mov     ax, VIDEO
+        mov     ax, [vseg]
         mov     es, ax
         mov     ax, DLG_R0+2
         mov     bx, DLG_C0+2
@@ -3174,6 +3220,7 @@ keytab:
 %endif
 %ifdef FEAT_VIEWS
         KEYBIND_EXT 67h, key_view_toggle ; Ctrl-F10 toggle full / brief body view
+        KEYBIND_EXT 6Ah, key_view_toggle ; Alt-F3   brief-view toggle (DOSBox-safe)
 %endif
 %ifdef FEAT_TREE
         KEYBIND_EXT 71h, key_tree       ; Alt-F10  modal directory-tree browser
@@ -3236,6 +3283,10 @@ s_cchexed   db 'CCHEXED',0
 
 active      dw 0
 ppanel      dw 0
+vseg        dw VIDEO        ; current draw target segment: VIDEO normally, the
+                            ; off-screen buffer only during render_all's widget
+                            ; pass (double-buffering: kills full-screen flicker)
+bufseg      dw 0            ; allocated back-buffer segment (0 = none -> draw live)
 quit_flag   db 0
 test_mode   db 0
 want_keys   db 0
@@ -3383,6 +3434,7 @@ findpat     resb 132
 dta_stack   resb MAX_DEPTH*DTASZ
 ; --- mouse state ---
 mouse_ok    resb 1
+mouse_vis   resb 1         ; software cursor-shown flag (idempotent hide/show)
 mouse_mode  resb 1         ; MM_BROWSER / MM_OFF / MM_CONFIRM / MM_OWRITE
 dlg_focus   resb 1         ; confirm dialog: 0=Yes 1=No
 ow_focus    resb 1         ; overwrite dialog: 0=Overwrite 1=Skip 2=All 3=Cancel
