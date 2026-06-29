@@ -1,0 +1,4 @@
+To build CC from source on DOS:
+1. Install NASM for DOS on your PATH
+2. Run INSTALL.BAT and answer the prompts
+3. The built CC.COM (or CC-LFN.COM) will appear in the current directory
