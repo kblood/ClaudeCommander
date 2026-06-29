@@ -23,7 +23,9 @@
      via CCSUM), Compare (CCDIFF, this panel's file vs the other panel's),
      Split file (CCSPLIT, prompts for a piece size) and Wildcard rename
      (CCREN, prompts for source + destination masks).
-    Alt-F1/F2 ....... change drive (left / right panel)
+    Alt-F1/F2 ....... show all available drives in the left / right panel as a
+                      list; Enter on a drive opens its root, Esc (or "..") goes
+                      back to the folder you were in
     Alt-F5 .......... pack tagged/cursor into an archive (other panel);
                       tagged folders are packed recursively
     Alt-F7 .......... find files by name -> the matches fill the other panel as

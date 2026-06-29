@@ -2975,10 +2975,21 @@ key_tag:
 ; Alt+F1 / Alt+F2 -- switch a panel's drive (prompt for a letter)
 key_drive_l:
         mov     bx, panelL
-        jmp     set_panel_drive
+%ifdef FEAT_RESULTS
+        jmp     drives_show         ; Alt-F1 -> browsable drive list (NC-style)
+%else
+        jmp     set_panel_drive     ; (no results panel -> fall back to the prompt)
+%endif
 key_drive_r:
         mov     bx, panelR
+%ifdef FEAT_RESULTS
+        jmp     drives_show
+%else
         jmp     set_panel_drive
+%endif
+%ifndef FEAT_RESULTS
+; Text-prompt drive switch (used only when the browsable drive list -- which
+; needs the SRC_RESULT machinery in results.inc -- is not built, e.g. CCPOP).
 set_panel_drive:
         push    bx
         mov     si, s_drive
@@ -3002,6 +3013,7 @@ set_panel_drive:
         mov     word [bx+P_TOP], 0
         call    read_dir
 .ret:   ret
+%endif
 
 ; ============================================================================
 ;  F3 -- FILE VIEWER  (reads up to VIEW_MAX bytes, scrolls by line)
@@ -3222,7 +3234,9 @@ s_runmsg    db 0Dh,0Ah,'[Claude Commander] running command...',0Dh,0Ah,'$'
 s_anykey    db 0Dh,0Ah,'Press any key to return to Claude Commander...',0Dh,0Ah,'$'
 s_mkdir     db 'Create directory:',0
 s_rename    db 'Rename/move current entry to:',0
+%ifndef FEAT_RESULTS
 s_drive     db 'Switch to drive (A-Z):',0
+%endif
 s_delconf   db 'Delete the current entry?',0
 s_copyto    db 'Copy to other panel as:',0
 s_moveto    db 'Move to other panel as:',0
@@ -3432,6 +3446,7 @@ rl_grep     resb 1             ; 0 = find list (FINDOUT.TXT), 1 = grep list (GRE
 rl_fname    resw 1             ; ptr to the input filename for results_load
 rl_line     resw 1             ; parsed line number of the grep row being built
 rl_lastpath resw 1             ; res_heap ptr of the last emitted file (grep dedup)
+drv_cur     resb 1             ; drive number (1=A) while building the drives list
 view_start_line resw 1         ; 1-based line to open the F3 viewer at (grep jump); 0 = top
 res_heap    resb RESHEAP_MAX   ; packed ASCIIZ full paths (+ matched text for grep)
 %endif

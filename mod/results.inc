@@ -67,6 +67,81 @@ results_show_common:
 results_leave:
         jmp     go_parent
 
+; ===========================================================================
+;  DRIVES VIEW -- Alt-F1/F2 show every available drive in a panel, reusing the
+;  SRC_RESULT virtual panel: each existing drive is a row that opens its root on
+;  Enter, and ".." / Esc leaves back to the folder you were in (P_PATH is kept).
+;  Existence is probed with IOCTL 4409h, which does NOT touch the media, so an
+;  empty floppy still lists without a "drive not ready" prompt.
+; ===========================================================================
+; bx = the panel to fill with the drive list (and focus).
+drives_show:
+        mov     [active], bx
+        mov     byte [bx+P_SRC], SRC_RESULT
+        call    drives_load
+        mov     bx, [active]
+        cmp     word [bx+P_COUNT], 1
+        jbe     .nc
+        mov     word [bx+P_CUR], 1      ; start on the first drive, not ".."
+.nc:
+        ret
+
+; bx = panel -> fill entries with a ".." row + one row per existing drive. Each
+; drive row carries the dir bit (renders "<DIR>") and a heap "X:\" path; Enter
+; runs the find-style jump (E_RES_LINE = 0) which lists that drive's root.
+drives_load:
+        mov     [ppanel], bx
+        mov     word [bx+P_COUNT], 0
+        mov     word [bx+P_TOP], 0
+        mov     word [bx+P_CUR], 0
+        ; ".." leave row
+        xor     ax, ax
+        call    entry_ptr               ; si = &entry[0]  (preserves bx)
+        mov     word [si+E_NAME], '..'
+        mov     byte [si+E_NAME+2], 0
+        mov     byte [si+E_ATTR], 10h
+        mov     word [si+E_RES_LINE], 0
+        inc     word [bx+P_COUNT]
+        mov     di, res_heap            ; pack the "X:\" paths here
+        mov     byte [drv_cur], 1       ; 1 = A:
+.next:
+        cmp     byte [drv_cur], 26
+        ja      .done
+        mov     bl, [drv_cur]
+        mov     ax, 4409h               ; IOCTL: block device remote? (no media I/O)
+        int     21h
+        jc      .skip                   ; CF=1 -> invalid / absent drive
+        mov     bx, [ppanel]
+        mov     ax, [bx+P_COUNT]
+        cmp     ax, MAX_FILES-1
+        jae     .done
+        call    entry_ptr               ; si = &entry[count]; di preserved
+        mov     al, [drv_cur]
+        add     al, 'A'-1
+        mov     [si+E_NAME], al
+        mov     byte [si+E_NAME+1], ':'
+        mov     byte [si+E_NAME+2], 0
+        mov     byte [si+E_ATTR], 10h   ; "<DIR>" -- openable like a folder
+        mov     [si+E_RES_OFF], di      ; -> "X:\" path in the heap
+        mov     word [si+E_RES_LINE], 0 ; line 0 -> Enter does the find-style jump
+        mov     al, [drv_cur]
+        add     al, 'A'-1
+        mov     [di], al                ; "X"
+        inc     di
+        mov     byte [di], ':'
+        inc     di
+        mov     byte [di], '\'
+        inc     di
+        mov     byte [di], 0
+        inc     di
+        mov     bx, [ppanel]
+        inc     word [bx+P_COUNT]
+.skip:
+        inc     byte [drv_cur]
+        jmp     .next
+.done:
+        ret
+
 ; results_load: bx = the results panel. Parse [rl_fname] (find: "<path>\r\n";
 ; grep: "<path>:<line>:<text>\r\n") into entries + res_heap. Truncates with a
 ; single status row when entries or heap fill.
@@ -405,9 +480,12 @@ results_enter:
         call    cur_entry_ptr           ; si = entry, ppanel = bx
         test    byte [si+E_ATTR], E_ATTR_STATUS
         jnz     .ret
-        test    byte [si+E_ATTR], 10h   ; the synthetic ".." row -> leave results
-        jnz     results_leave
-        cmp     word [si+E_RES_LINE], 0 ; line 0 = find row -> folder jump;
+        cmp     byte [si+E_NAME], '.'   ; the synthetic ".." row -> leave results
+        jne     .notup                  ; (matched by name so drive rows, which
+        cmp     byte [si+E_NAME+1], '.' ;  also carry the dir bit, are not caught)
+        je      results_leave
+.notup:
+        cmp     word [si+E_RES_LINE], 0 ; line 0 = find/drive row -> folder/root jump;
         je      .findjump               ; line > 0 = grep file row -> open viewer
         jmp     results_view_at_line
 .findjump:

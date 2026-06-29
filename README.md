@@ -122,7 +122,10 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - `F8`  **Delete** — delete files or whole directory trees. Acts on the
   tagged set if any, otherwise the cursor entry (Y/N confirm).
 - `Insert` — tag/untag the current entry (cursor advances).
-- `Alt+F1` / `Alt+F2` — switch the left / right panel to another drive.
+- `Alt+F1` / `Alt+F2` — show all available drives in the left / right panel as a
+  browsable list (`A:` `B:` `C:` …); `Enter` on one opens that drive's root,
+  `Esc` / `..` returns to where you were. (In the CCPOP build, which lacks the
+  results-panel machinery, these keys fall back to a type-the-letter prompt.)
 - `F10` — quit.
 
 **Recursive directory copy / delete**
@@ -273,7 +276,7 @@ is safe even when a tool isn't installed.
 | `F3` | view file | `F5` | copy (tagged set or cursor) |
 | `F6` | rename / move | `F7` | make directory |
 | `F8` | delete (tagged set or cursor) | `Insert` | tag entry |
-| `Alt+F1` / `Alt+F2` | left / right drive | `F10` | quit |
+| `Alt+F1` / `Alt+F2` | left / right drive list | `F10` | quit |
 | `F1` | help (`cc.hlp`) | `F4` | edit file (CCEDIT) |
 | `F9` | menu bar (pop-up in CCPOP) | `Ctrl-A` | edit attributes (R/H/S/A) |
 | `Ctrl-F1..F4` | sort name/ext/size/date | `Ctrl-F5` | cycle column |

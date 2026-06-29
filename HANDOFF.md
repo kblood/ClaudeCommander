@@ -10,7 +10,23 @@ push only when the user explicitly asks.
 
 ---
 
-## ⚠ Current uncommitted work (2026-06-29): search-results panel
+## ⚠ Current uncommitted work (2026-06-29): drives view
+
+**Alt-F1 / Alt-F2 now show a browsable list of all available drives** in the
+left/right panel instead of a type-the-letter prompt (Norton-Commander style).
+It reuses the `SRC_RESULT` virtual panel: `drives_show`/`drives_load`
+(results.inc) probe drive letters with IOCTL 4409h (no media access, so empty
+floppies still list), build a `..` row + one `<DIR>` row per drive whose heap
+path is `X:\`. Enter on a drive runs the existing find-style jump (E_RES_LINE=0)
+to open its root; `..`/Esc leaves back to the folder you were in (`P_PATH` is
+left untouched). The `..`-leave detection in `results_enter` moved from the
+`10h` attr bit to a name compare so drive rows can carry `10h` (render `<DIR>`).
+The old text prompt (`set_panel_drive`/`s_drive`) is now guarded
+`%ifndef FEAT_RESULTS` (kept only for CCPOP). Build green: resident 63,126 B,
+code 18,317 B (both PASS). Verified under `/T` (Alt-F1 → list; Enter → opens
+`A:\`; Esc → back to `C:\`). **Uncommitted.**
+
+## Shipped v1.0.6 (2026-06-29, committed c25a15d, released): search-results panel
 
 `FEAT_RESULTS` is now enabled in the default STD build, so **Alt-F7 (find) and
 Alt-F8 (grep) land in a browsable results panel** instead of a screen takeover —
@@ -31,7 +47,7 @@ To fit alongside `FEAT_VFS` under the 63 KB wall, `RESHEAP_MAX` was trimmed
 18,218 B; both budgets PASS). Verified end-to-end under the `/T` harness (find →
 folder jump; grep → file list → viewer-at-line; grep → Esc → back to folder).
 Possible follow-up: in-viewer next/prev-match stepping ('n'/'N') keyed off the
-stored search word. **Uncommitted.**
+stored search word. **Shipped in v1.0.6.**
 
 ## v1.0.5 (2026-06-29, committed b5aa3cb, released): UX fixes & features
 
@@ -224,16 +240,16 @@ Total-Commander-style packer plugins; ext→helper map in cc.ini `[open]`.
 
 ## State
 
-- Branch `main`, latest commit `b5aa3cb` (the nine UX fixes), pushed; released as
-  **v1.0.5** with a `cc-v1.0.5.zip` asset.
-- **Uncommitted working tree:** the search-results panel (FEAT_RESULTS enabled in
-  the std tier in `cc.asm`; `RESHEAP_MAX`/`VIEW_MAX` trims; `mod/results.inc`
-  header note) plus the docs refreshed for it (`README.md`, `ROADMAP.md`,
-  `cc.hlp`, this `HANDOFF.md`). Plus pre-existing scratch dirs (`_*test/`,
-  `_dump_*.txt`, `ai-out/…`) and test fixtures (`keys_results.bin`,
-  `keys_grep.bin`) — don't stage the scratch dirs.
+- Branch `main`, latest commit `c25a15d` (search-results panel), pushed; released
+  as **v1.0.6**. Earlier: `b5aa3cb` → **v1.0.5** (nine UX fixes).
+- **Uncommitted working tree:** the drives view (`drives_show`/`drives_load` in
+  `mod/results.inc`; `results_enter` `..` detection by name; `key_drive_l/r`
+  fork in `cc.asm`; `set_panel_drive`/`s_drive` guarded `%ifndef FEAT_RESULTS`;
+  `drv_cur` .bss) plus the docs refreshed for it (`README.md`, `ROADMAP.md`,
+  `cc.hlp`, this `HANDOFF.md`). Pre-existing scratch dirs (`_*test/`,
+  `_dump_*.txt`, `ai-out/…`) are untracked — don't stage them.
 - `build.ps1` / `package.ps1` → both `CC.COM` (FEAT_STD) and `CCPOP.COM`
   (FEAT_MENU, no menubar) build green (exit 0). All external helpers assemble
   clean. Try the dist interactively with `.\run_cc.ps1`.
-- **Before committing:** have the user verify the mouse-driven menu open/select
-  and the flicker fix in a real DOSBox session (neither is headless-testable).
+- **Interactive sanity-check still owed** (not headless-testable): mouse-driven
+  menu open/select, the flicker fix, and now the drives view + search panels.
