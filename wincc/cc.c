@@ -458,6 +458,25 @@ static void view_scroll(int d)
 }
 
 /* ---------------------------------------------------------------- rendering */
+
+/* Human-readable size: fits result into exactly 'width' chars (right-aligned
+ * number + space + unit letter).  Caller must supply a buffer of width+1.
+ * val is clamped to (width-2) decimal digits so snprintf never truncates.
+ * E.g. width=9 → "9999999 G" caps at ~9.3 PB, which is fine for display. */
+static void fmt_size(UINT64 sz, char *out, int width)
+{
+    const char *unit; UINT64 val;
+    if      (sz < 1024ULL)           { val = sz;       unit = "B"; }
+    else if (sz < 1024ULL*1024)      { val = sz >> 10; unit = "K"; }
+    else if (sz < 1024ULL*1024*1024) { val = sz >> 20; unit = "M"; }
+    else                             { val = sz >> 30; unit = "G"; }
+    /* clamp to (width-2) digits so the snprintf output is exactly 'width' chars */
+    UINT64 maxval = 1;
+    { int d; for (d = 0; d < width - 2; d++) maxval *= 10; }
+    if (val >= maxval) val = maxval - 1;
+    snprintf(out, (size_t)(width + 1), "%*llu %s", width-2, (unsigned long long)val, unit);
+}
+
 static void render_panel(Panel *p, int px, int pw, int active)
 {
     int ph = g_rows - 2;                 /* panel box height (rows above status) */
@@ -492,8 +511,16 @@ static void render_panel(Panel *p, int px, int pw, int active)
         puts_at(px + 1, y, nm, at);
 
         wchar_t sz[16];
-        if (e->is_dir) wcscpy(sz, L"<DIR>");
-        else _snwprintf(sz, 16, L"%llu", e->size);
+        if (e->is_dir) {
+            wcscpy(sz, L"<DIR>");
+        } else {
+            char buf[16];
+            fmt_size(e->size, buf, 9);
+            /* fmt_size produces ASCII-only output; widen char-by-char */
+            int k;
+            for (k = 0; k < 15 && buf[k]; k++) sz[k] = (wchar_t)(unsigned char)buf[k];
+            sz[k] = L'\0';
+        }
         int slen = (int)wcslen(sz);
         puts_at(px + (pw - 1) - slen, y, sz, at);
     }
