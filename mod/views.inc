@@ -25,7 +25,11 @@ VD_SCROLL   equ 2
 VD_PAGE     equ 4
 VD_HSTEP    equ 6
 VDSIZE      equ 8
-VIEW_COUNT  equ 2              ; full(0), brief(1)   [tree(2) registers later]
+%ifdef FEAT_LFN
+VIEW_COUNT  equ 3              ; full(0), brief(1), lfn(2)
+%else
+VIEW_COUNT  equ 2              ; full(0), brief(1)
+%endif
 
 BRIEF_COLS  equ 3              ; columns in the brief view
 BRIEF_PITCH equ 13             ; column-to-column step; cells tile (no gutter gap)
@@ -36,6 +40,10 @@ view_tab:
         dw      draw_panel_full, fix_scroll_full, VIS_ROWS-1, VIS_ROWS-1
         ; P_VIEW=1 : brief 3-column names-only
         dw      draw_panel_brief, fix_scroll_brief, VIS_ROWS*BRIEF_COLS, VIS_ROWS
+%ifdef FEAT_LFN
+        ; P_VIEW=2 : LFN long-name view (mod/lfnview.inc)
+        dw      draw_panel_lfn, fix_scroll_lfn, VIS_ROWS-1, VIS_ROWS-1
+%endif
 
 ; --- dispatch helpers --------------------------------------------------------
 ; bx = panel, cl = VD_* field -> ax = that descriptor word (value or fn ptr).
