@@ -3,7 +3,7 @@
 # CCX.KEY that types  A B C D  (overwrites byte0=AB, auto-advances, byte1=CD)
 # then F2 (save). Script exhaustion = Esc (quit). Then verifies AAA.BIN on disk.
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }

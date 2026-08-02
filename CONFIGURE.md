@@ -14,12 +14,16 @@ the resident size scales with exactly what you choose.
 .\configure.ps1 -Base std -Remove CLOCK,LANG -Out cc-lean.com
 .\configure.ps1 -Base min -Add SORT,COLS,VIEWS,HELP -Out cc-tiny.com
 .\configure.ps1 -Only WIDGETS,CLOCK,FREE,SORT,VIEWS  -Out cc-bare.com
+.\configure.ps1 -Base std -Add TOOLS_INI -Remove LANG,LFN,RESULTS -Out ccuser.com
 ```
 
 - `-Base std` starts from the full widget set; `-Base min` from the bare core.
 - `-Add` / `-Remove` adjust that base; `-Only` specifies the whole set explicitly.
 - Hard dependencies are pulled in automatically (e.g. `CLOCK` needs `WIDGETS`,
   `VFS`/`VIEW` need `INI`), so any selection links.
+- `TOOLS_INI` adds runtime `[tools]` rows to the Tools menu, but the full STD
+  set plus `TOOLS_INI` is over the resident wall. The example above trims
+  language/LFN/results-panel support to make room for user batch tools.
 
 ## Where the catalogue comes from
 

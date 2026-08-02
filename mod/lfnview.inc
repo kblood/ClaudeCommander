@@ -1,7 +1,3 @@
-; @feature LFN
-; @title   LFN panel view (P_VIEW=2): long name + ext + size columns
-; @cost    ~340
-;
 ; mod/lfnview.inc  --  FEAT_LFN extension
 ; Adds P_VIEW=2: a single-column panel body view that queries WIN32_FIND_DATA
 ; via INT 21h AX=714Eh (LFN FindFirst) for every visible row and shows the long

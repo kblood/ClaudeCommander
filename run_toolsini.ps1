@@ -1,15 +1,15 @@
 # run_toolsini.ps1 -- /T harness for FEAT_TOOLS_INI (W5 cc.ini [tools] registry).
 # Build cc with FEAT_TOOLS_INI; stage a dir whose cc.ini declares a user tool
-# under [tools] with a hotkey:  "ZZHELLO = HELLO.COM Alt-F3".
+# under [tools] with a hotkey:  "ZZHELLO = HELLO.BAT Alt-F3".
 #   MENU   : open the bar (F9), walk to the Tools pull-down, dump it. The dropdown
 #            must show BOTH the built-in rows (e.g. "Checksum") AND the user row
 #            ("ZZHELLO") -- the [tools] line was folded into the menu, no rebuild.
 #   HOTKEY : press Alt-F3 (its scan, unbound by any built-in). It must run
-#            HELLO.COM, a tiny .COM that creates RAN.TXT -- so RAN.TXT's existence
-#            proves the runtime keybinding fired and EXEC'd the program.
+#            HELLO.BAT, which creates RAN.TXT -- so RAN.TXT's existence proves
+#            the runtime keybinding fired through COMMAND.COM /C.
 #   EMPTY  : an empty [tools] adds no row (the splice is conditional).
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
@@ -18,32 +18,14 @@ if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 if ($LASTEXITCODE -ne 0) { Write-Host "ASSEMBLE FAILED"; exit 1 }
 Write-Host ("BUILD OK: cctini.com {0} bytes" -f (Get-Item "$dir\cctini.com").Length)
 
-# HELLO.COM: create RAN.TXT (INT 21h/3Ch), close, exit. ~ a dozen bytes.
-$hello = @'
-org 100h
-        mov     ah, 3Ch
-        xor     cx, cx
-        mov     dx, fname
-        int     21h
-        mov     bx, ax
-        mov     ah, 3Eh
-        int     21h
-        mov     ax, 4C00h
-        int     21h
-fname   db 'RAN.TXT', 0
-'@
-Set-Content -Path "$dir\_hello.asm" -Value $hello -Encoding ASCII
-& $nasm -f bin "$dir\_hello.asm" -o "$dir\_hello.com" 2>&1
-if ($LASTEXITCODE -ne 0) { Write-Host "HELLO.COM ASSEMBLE FAILED"; exit 1 }
-
 function Stage($withTool) {
     $td = "$dir\_tini"
     if (Test-Path $td) { Remove-Item $td -Recurse -Force }
     New-Item -ItemType Directory -Path $td | Out-Null
     [IO.File]::WriteAllText("$td\DATA.TXT","hello")
     if ($withTool) {
-        [IO.File]::WriteAllText("$td\cc.ini","[tools]`r`nZZHELLO = HELLO.COM Alt-F3`r`n")
-        Copy-Item "$dir\_hello.com" "$td\HELLO.COM"
+        [IO.File]::WriteAllText("$td\cc.ini","[tools]`r`nZZHELLO = HELLO.BAT Alt-F3`r`n")
+        [IO.File]::WriteAllText("$td\HELLO.BAT","@echo off`r`necho ran %1 > RAN.TXT`r`n")
     } else {
         [IO.File]::WriteAllText("$td\cc.ini","[tools]`r`n")
     }
@@ -100,11 +82,11 @@ $eUser  = $empty -match 'ZZHELLO'
 
 Write-Host ("`nmenu  : user row 'ZZHELLO' on Tools menu = {0}  (expect True)"  -f $mUser)
 Write-Host ("menu  : built-in 'Checksum' still there = {0}  (expect True)"  -f $mBuilt)
-Write-Host ("hotkey: Alt-F3 ran HELLO.COM (RAN.TXT)  = {0}  (expect True)"  -f $ranExists)
+Write-Host ("hotkey: Alt-F3 ran HELLO.BAT (RAN.TXT)  = {0}  (expect True)"  -f $ranExists)
 Write-Host ("empty : user row 'ZZHELLO' shown        = {0}  (expect False)" -f $eUser)
 
 if ($mUser -and $mBuilt -and $ranExists -and (-not $eUser)) {
-    Write-Host "`nTOOLS_INI HARNESS: PASS -- [tools] row on the menu AND its Alt-F3 hotkey fires"
+    Write-Host "`nTOOLS_INI HARNESS: PASS -- [tools] row on the menu AND its Alt-F3 .BAT hotkey fires"
 } else {
     Write-Host "`nTOOLS_INI HARNESS: FAIL"
     Write-Host "----- menu dump -----"; Write-Host $menu

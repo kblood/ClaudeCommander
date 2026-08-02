@@ -7,7 +7,7 @@
 # Witnesses: a frame shows the matched line text + its line number in the panel,
 # and a later (viewer) frame shows the file open with the matched line visible.
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }

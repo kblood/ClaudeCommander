@@ -1,12 +1,12 @@
 param(
     [int]$waitMs = 4500,
-    [string]$out = "C:\LLM\cc\shot.png",
-    [string]$exe = "C:\LLM\cc\dbstaging\dosbox-staging-v0.82.2\dosbox.exe",
-    [string]$conf = "C:\LLM\cc\shot.conf",
+    [string]$out = "C:\LLM\DOS\cc\shot.png",
+    [string]$exe = "C:\LLM\DOS\cc\dbstaging\dosbox-staging-v0.82.2\dosbox.exe",
+    [string]$conf = "C:\LLM\DOS\cc\shot.conf",
     [string]$ccArgs = ""
 )
 $ErrorActionPreference = "Stop"
-$dir = "C:\LLM\cc"
+$dir = "C:\LLM\DOS\cc"
 
 # assemble fresh
 & "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe" -f bin "$dir\cc.asm" -o "$dir\cc.com" 2>&1 | Out-Null
@@ -61,7 +61,7 @@ public class WinCap {
     bmp.Dispose();
   }
 }
-"@ -ReferencedAssemblies System.Drawing
+"@ -ReferencedAssemblies System.Drawing.Common, System.Drawing.Primitives
 
 $p = Start-Process -FilePath $exe -ArgumentList @("-conf",$conf,"-noprimaryconf") -PassThru
 Start-Sleep -Milliseconds $waitMs

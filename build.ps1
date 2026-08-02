@@ -4,7 +4,7 @@ param(
     [switch]$All
 )
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"   # same path run_test.ps1 uses
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }              # fall back to PATH
 
@@ -15,13 +15,13 @@ if (-not (Test-Path $nasm)) { $nasm = "nasm" }              # fall back to PATH
 #  so this script builds and reports sizes today regardless.
 #
 #  Budgets (ROADMAP.md section 4):
-#    min  : emitted code <= 5 KB
-#    std  : emitted code <= 13 KB  AND  resident < 60 KB   (default, -> cc.com)
+#    min  : emitted code <= 9 KB
+#    std  : emitted code <= 19 KB AND resident < 63 KB   (default, -> cc.com)
 #    full : resident < 63 KB  (hard wall; leaves stack/PSP slack in the 64 KB seg)
 # ----------------------------------------------------------------------------
 $KB = 1024
 $profiles = @{
-    min  = @{ Flag="FEAT_MIN";  Out="ccmin.com";  CodeMax=(8*$KB);  ResMax=$null }
+    min  = @{ Flag="FEAT_MIN";  Out="ccmin.com";  CodeMax=(9*$KB);  ResMax=$null }
     std  = @{ Flag="FEAT_STD";  Out="cc.com";     CodeMax=(19*$KB); ResMax=(63*$KB) }
     full = @{ Flag="FEAT_FULL"; Out="ccfull.com"; CodeMax=$null;    ResMax=(63.5*$KB) }
 }

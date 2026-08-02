@@ -3,7 +3,7 @@
 # containing exactly one viewable text file, then drives: Down -> F3 -> h (hex)
 # -> Down (scroll) -> Esc, dumping every frame to CCDUMP.TXT.
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }

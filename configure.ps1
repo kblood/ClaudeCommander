@@ -41,7 +41,7 @@ param(
     [switch]$Quiet              # suppress chatter; used by run_configurator.ps1
 )
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 . "$dir\tools\measure.ps1"

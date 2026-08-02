@@ -23,6 +23,9 @@
      via CCSUM), Compare (CCDIFF, this panel's file vs the other panel's),
      Split file (CCSPLIT, prompts for a piece size) and Wildcard rename
      (CCREN, prompts for source + destination masks).
+     The optional CCUSER.COM build also reads cc.ini [tools] rows and appends
+     them to this menu. Those rows run "<program> <cursor-file>", so .BAT
+     scripts receive the selected file as %1. See TOOLSAMP in the distribution.
     Alt-F1/F2 ....... show all available drives in the left / right panel as a
                       list; Enter on a drive opens its root, Esc (or "..") goes
                       back to the folder you were in
@@ -55,6 +58,10 @@
     bundled hex editor. cc reloads the file when the editor exits.
     Shipped viewers: CCIMG (bmp/pcx/gif, VGA mode 13h) and CCWAV (PCM
     .wav via the Sound Blaster). Press a key / ESC to return to cc.
+    CCMDL (Quake .mdl, F3): 3D model viewer; arrows rotate, Space spins,
+    A animates, N/P step frames, ESC/Q/F3 quit. F3 on a .mdl member inside
+    a browsed .pak opens it in place (no extraction); direct usage is
+    CCMDL <file.mdl>.
 
   ARCHIVES (the [open] map in cc.ini selects a packer per extension)
     Enter on a .zip . browse it like a folder, INCLUDING sub-folders
@@ -71,6 +78,10 @@
                       members (compressed members are listed, not yet decoded).
     Enter on a .rar . browse a RAR 4.x archive; F5 / Alt-F9 extract STORED
                       members (RAR compression is proprietary -- browse-first).
+    Enter on a .pak . browse a Quake PAK archive, sub-folders included; F5 /
+                      Alt-F9 extract (sub-path preserved). F3 on a member
+                      opens it with its own [view] helper without extracting
+                      (e.g. a .mdl member opens straight in CCMDL).
 
   DISPLAY / SELECT
     Ctrl-F1..F4 ..... sort by name / ext / size / date
@@ -114,6 +125,8 @@
                       editor F4 launches:  editor = CCEDIT  (the default),
                       editor = EDIT (DOS Editor), editor = CCHEXED (hex
                       editor), or any editor on the PATH.
+                      In CCUSER.COM, cc.ini [tools] lines have the form
+                      Label = PROG [key], e.g. File info = INFO.BAT Shift-F3.
     cc.lng .......... translate the F-key bar (copy da.lng to cc.lng)
 
   Scroll this help with Up/Down/PgUp/PgDn; press Esc, q, F1 or F10 to close.

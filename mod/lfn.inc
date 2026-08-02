@@ -1,7 +1,7 @@
 ; @feature LFN
-; @title   long-filename display when an LFN provider is active
+; @title   long-filename cursor display and panel view when an LFN provider is active
 ; @needs   INI
-; @cost    90
+; @cost    430
 ;
 ; mod/lfn.inc  --  FEAT_LFN
 ; On-demand long-name display for the CURSOR entry only.  Storing a 255-byte

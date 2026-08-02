@@ -227,6 +227,7 @@ the name at cc's command line, or automatically through a file association.
 | `CCHEX` | hex + ASCII dump | (any, via the built-in F3 hex mode) |
 | `CCIMG` | images, VGA mode 13h | `.bmp` `.pcx` `.gif` |
 | `CCWAV` | PCM audio, Sound Blaster | `.wav` |
+| `CCMDL` | Quake .mdl 3D model viewer (arrows rotate, Space spin, A animate, N/P frames) | `.mdl` (F3), or in-place from a browsed `.pak` |
 
 **Archives & containers** — press `Enter` to browse one *as a folder*, `F5` to
 extract a member:
@@ -237,6 +238,7 @@ extract a member:
 | `CCD64` / `CCT64` | C64 disk / tape image | `.d64` `.t64` |
 | `CCARJ` | ARJ archive | `.arj` |
 | `CCRAR` | RAR 4.x archive | `.rar` |
+| `CCPAK` | Quake PAK archive (F3 on a `.mdl` member opens it in `CCMDL` in place, no extraction) | `.pak` |
 
 **Gold Box game data** (SSI AD&D: Pool of Radiance, the Krynn trilogy, …) — the
 helpers browse/view the data files of these games in place:
@@ -259,7 +261,9 @@ and add one line.
   lists members; cc shows them in a panel).
 - `[view]` — `ext = HELPER` → `F3` runs your viewer instead of the text pager.
 - `[tools]` — `Label = PROG [key]` → adds a Tools-menu entry / hotkey that runs
-  `PROG <cursor-file>`.
+  `PROG <cursor-file>`. This is an opt-in build feature (`FEAT_TOOLS_INI`);
+  the packaged `CCUSER.COM` build includes it and ships `TOOLSAMP\*.BAT`
+  examples that receive the selected file as `%1`.
 
 Each is `HELPER <file>`; unknown or missing helpers are ignored, so the routing
 is safe even when a tool isn't installed.

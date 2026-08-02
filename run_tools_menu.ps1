@@ -5,7 +5,7 @@
 # Witnesses: the Tools dropdown renders its items, and Tools->Hex dump
 # dispatches into the built-in hex pager (no external process).
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }

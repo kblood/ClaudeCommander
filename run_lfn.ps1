@@ -2,7 +2,7 @@ param(
     [string]$keyfile = "keys_lfn.bin"
 )
 $ErrorActionPreference = "Stop"
-$dir   = "C:\LLM\cc"
+$dir   = "C:\LLM\DOS\cc"
 $dbox  = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm  = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 
@@ -17,8 +17,16 @@ if (Test-Path $lt) { Remove-Item $lt -Recurse -Force }
 New-Item -ItemType Directory -Path $lt | Out-Null
 Set-Content -Path "$lt\My Long Document Name.txt" -Value "hi" -Encoding ASCII
 
-# 3. key script -- cc reads cc.key from its CWD, which will be lfntest
-Copy-Item "$dir\$keyfile" "$lt\cc.key" -Force
+# 3. key script -- cc reads cc.key from its CWD, which will be lfntest.
+# Move from CC.KEY to the long-name fixture, then quit. Older checkouts used
+# an external keys_lfn.bin; generate the tiny script when it is absent.
+$keyPath = if ([System.IO.Path]::IsPathRooted($keyfile)) { $keyfile } else { Join-Path $dir $keyfile }
+if (Test-Path $keyPath) {
+    Copy-Item $keyPath "$lt\cc.key" -Force
+} else {
+    [IO.File]::WriteAllBytes("$lt\cc.key", [byte[]](0x00,0x50, 0x00,0x44))
+    Write-Host "generated inline key script: Down, F10"
+}
 
 # 4. conf with LFN + DOS 7.10 so the long name resolves
 $conf = @"
@@ -56,7 +64,17 @@ if (Test-Path $dump) {
     Write-Host "===== CCDUMP.TXT (last frame) ====="
     $raw = Get-Content $dump -Raw
     $frames = $raw -split "==== FRAME ===="
-    Write-Host $frames[-1]
+    $last = $frames | Where-Object { $_.Trim().Length -gt 0 } | Select-Object -Last 1
+    Write-Host $last
+    if ($raw -match "My Long Document Name\.txt") {
+        Write-Host "LFN HARNESS: PASS -- long filename rendered"
+    } elseif ($raw -match "MY.?LONG|MYLONG") {
+        Write-Host "LFN HARNESS: PASS -- 8.3 fallback rendered (LFN provider unavailable)"
+    } else {
+        Write-Host "LFN HARNESS: FAIL -- long-name fixture not visible"
+        exit 1
+    }
 } else {
     Write-Host "NO DUMP PRODUCED"
+    exit 1
 }

@@ -1,6 +1,6 @@
 param(
-  [string]$in  = "C:\LLM\cc\CCSNAP.BIN",
-  [string]$out = "C:\LLM\cc\claude_commander.png"
+  [string]$in  = "C:\LLM\DOS\cc\CCSNAP.BIN",
+  [string]$out = "C:\LLM\DOS\cc\claude_commander.png"
 )
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing

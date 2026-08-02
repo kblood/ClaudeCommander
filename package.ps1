@@ -4,7 +4,7 @@
 # folder you can MOUNT as a DOS drive (DOSBox or real hardware) and run.
 
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 $out  = "$dir\dist"
@@ -15,6 +15,8 @@ $bins = @(
     @{ src = "cce.asm";   com = "CCEDIT.COM" },
     @{ src = "cfind.asm"; com = "CCFIND.COM" },
     @{ src = "czip.asm";  com = "CCZIP.COM"  },
+    @{ src = "cpak.asm";  com = "CCPAK.COM"  },
+    @{ src = "cmdl.asm";  com = "CCMDL.COM"  },
     @{ src = "cgrep.asm"; com = "CCGREP.COM" },
     @{ src = "chex.asm";  com = "CCHEX.COM"  },
     @{ src = "chexed.asm";com = "CCHEXED.COM"},
@@ -59,6 +61,21 @@ $popDefs = @(
 & $nasm -f bin -i "$dir/" @popDefs "$dir\cc.asm" -o "$out\CCPOP.COM" 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: CCPOP.COM"; exit 1 }
 "{0,-12} {1,7:N0} B  <- cc.asm (pop-up menu)" -f "CCPOP.COM", (Get-Item "$out\CCPOP.COM").Length | Write-Host
+
+# User-tools build: enables cc.ini [tools] rows while trimming optional resident
+# features enough to stay under the 63 KB wall. This is the build to use with
+# TOOLSAMP\*.BAT examples.
+Write-Host "`nAlternate user-tools build (CCUSER.COM)"
+$userDefs = @(
+    "-dFEAT_CUSTOM","-dFEAT_WIDGETS","-dFEAT_CLOCK","-dFEAT_FREE","-dFEAT_VIEWS",
+    "-dFEAT_TREE","-dFEAT_SORT","-dFEAT_COLS","-dFEAT_SEARCH","-dFEAT_MASK",
+    "-dFEAT_MENU","-dFEAT_MENUBAR","-dFEAT_HELP","-dFEAT_EDIT","-dFEAT_FIND",
+    "-dFEAT_GREP","-dFEAT_ZIP","-dFEAT_ATTR","-dFEAT_VFS","-dFEAT_VIEW",
+    "-dFEAT_INI","-dFEAT_TOOLS","-dFEAT_TOOLS_INI"
+)
+& $nasm -f bin -i "$dir/" @userDefs "$dir\cc.asm" -o "$out\CCUSER.COM" 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Host "  FAILED: CCUSER.COM"; exit 1 }
+"{0,-12} {1,7:N0} B  <- cc.asm ([tools] menu build)" -f "CCUSER.COM", (Get-Item "$out\CCUSER.COM").Length | Write-Host
 
 # Gold Box (SSI D&D) game-data helpers. Their .asm sources live in the GoldBox
 # modding project (not on main); the cc.ini [open]/[view] routing references
@@ -107,6 +124,13 @@ foreach ($d in $data) {
     }
 }
 
+$sampleSrc = Join-Path $dir "toolsamp"
+if (Test-Path $sampleSrc) {
+    $sampleOut = Join-Path $out "TOOLSAMP"
+    Copy-Item $sampleSrc $sampleOut -Recurse -Force
+    Write-Host "`nCopied user-tool batch samples -> TOOLSAMP\"
+}
+
 # short user note inside the distribution
 $readme = @"
 Claude Commander (cc) -- portable distribution
@@ -119,6 +143,9 @@ CC.COM shows a Norton-style pull-down MENU BAR across the top row
 Left/Right to switch menus, Up/Down + Enter to run an item, Esc to close.
 If you'd rather have the classic single pop-up menu (and one extra file
 row), run CCPOP.COM.
+If you want cc.ini [tools] rows that append your own .BAT/.COM tools to the
+Tools menu, run CCUSER.COM. It trims language/LFN/results-panel features to make
+room for the runtime user-tools registry.
 
 The Tools menu runs the bundled helpers on the cursor / panel files so they
 feel built in: Hex dump (the F3 viewer in hex mode), Checksum, Compare,
@@ -129,6 +156,7 @@ E to edit it (text editor in text mode, CCHEXED hex editor in hex mode).
 Files:
   CC.COM      the file manager (run this) -- top pull-down menu bar on F9
   CCPOP.COM   same, but with the classic single pop-up menu on F9
+  CCUSER.COM  user-tools build: cc.ini [tools] rows add Tools-menu commands
   CCEDIT.COM  text editor       (F4, or type CCEDIT <file>)
   CCFIND.COM  find by name      (Alt-F7, or CCFIND <pattern> [dir])
   CCZIP.COM   list a ZIP        (Ctrl-F9, or CCZIP <zip>)
@@ -141,8 +169,10 @@ Files:
   CCT64.COM   browse C64 .t64   (Enter on a .t64; F5 extracts a file)
   CCARJ.COM   browse .arj       (Enter on a .arj; F5 extracts STORED)
   CCRAR.COM   browse .rar 4.x   (Enter on a .rar; F5 extracts STORED)
+  CCPAK.COM   browse Quake .pak (Enter on a .pak; F5 extracts a member)
   CCIMG.COM   view BMP/PCX/GIF  (F3 on a mapped image; VGA mode 13h)
   CCWAV.COM   play a PCM .wav   (F3 on a .wav; Sound Blaster, ESC stops)
+  CCMDL.COM   view Quake .mdl   (F3 on a .mdl, or in place from a .pak)
   CCDIFF.COM  byte-compare      (type CCDIFF <file1> <file2>)
   CCSPLIT.COM split a file      (type CCSPLIT <file> <size>[K])
   CCJOIN.COM  rejoin parts      (type CCJOIN <output> <base>)
@@ -159,6 +189,7 @@ Files:
   cc.ini      startup options (sort=, columns=)
   cc.hlp      F1 help text
   da.lng      Danish F-key bar sample -- copy to cc.lng to use it
+  TOOLSAMP\   example .BAT tools for CCUSER.COM; selected file is %1
 
 To run on real DOS / MiSTer ao486: copy this whole folder somewhere on the
 DOS drive and run CC. In DOSBox: MOUNT C <thisfolder> then C: then CC.

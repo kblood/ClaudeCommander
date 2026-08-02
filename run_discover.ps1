@@ -1,10 +1,10 @@
 # run_discover.ps1 -- /T harness for FEAT_DISCOVER (W4 tool gating).
 # One cc build (FEAT_DISCOVER + GREP/RESULTS/VIEW); two staged dirs that differ
 # only in whether CCGREP.COM is present. In BOTH, drive Alt-F8 then F10 and dump.
-#   present -> the grep prompt "Search file contents for" appears (key fires).
-#   absent  -> NO prompt, NO "Bad command" (the key is a silent no-op).
+#   present -> CCGREP runs and the results panel is populated.
+#   absent  -> NO results panel, NO "Bad command" (the key is a silent no-op).
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
@@ -61,14 +61,16 @@ exit
 $present = Scenario "present" $true
 $absent  = Scenario "absent"  $false
 
-# present: CCGREP found -> Alt-F8 runs it -> a results row shows the matched line.
+# present: CCGREP found -> Alt-F8 runs it -> results rows are shown. Current
+# grep results list one row per file with the first-match line number, not the
+# old matched-line text.
 # absent : CCGREP not found -> Alt-F8 is a no-op -> no results row, no Bad command.
-$pResults = $present -match 'hello NEEDLE'
-$aResults = $absent  -match 'hello NEEDLE'
+$pResults = $present -match 'GREPOUT\.TXT'
+$aResults = $absent  -match 'GREPOUT\.TXT'
 $aBad     = ($absent -match 'Bad command') -or ($absent -match 'Illegal command')
 
-Write-Host ("`npresent: grep ran, matched-line row shown = {0}  (expect True)" -f $pResults)
-Write-Host ("absent : matched-line row shown            = {0}  (expect False)" -f $aResults)
+Write-Host ("`npresent: grep ran, results panel shown = {0}  (expect True)" -f $pResults)
+Write-Host ("absent : results panel shown           = {0}  (expect False)" -f $aResults)
 Write-Host ("absent : 'Bad command' from the tool       = {0}  (expect False)" -f $aBad)
 
 if ($pResults -and -not $aResults -and -not $aBad) {
@@ -76,4 +78,5 @@ if ($pResults -and -not $aResults -and -not $aBad) {
 } else {
     Write-Host "`nDISCOVER HARNESS: FAIL"
     Write-Host "----- present dump (frames joined) -----"; Write-Host $present
+    exit 1
 }

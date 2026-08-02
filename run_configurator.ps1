@@ -17,7 +17,7 @@
 #>
 param([switch]$NoSmoke)
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"

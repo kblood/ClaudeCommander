@@ -3,7 +3,7 @@
 # Quit cc with F10; DOSBox then closes. This is NOT the headless /T harness.
 
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $out  = "$dir\dist"
 

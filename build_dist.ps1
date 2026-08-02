@@ -3,7 +3,7 @@
 # Builds cc-lfn.com with NASM if it does not already exist.
 
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 $dist = "$dir\dist"

@@ -196,3 +196,19 @@ REDIR_SU.TXT
 SENTINEL.TXT
 _dbg_out.txt
 _dbg_err.txt
+# disc-detection (CCDISC) test scratch
+_disc_absent/
+_disc_present/
+_dump_new.txt
+_dump_old.txt
+# configurator harness test scratch
+_cfgtest/
+# grep / grep-results panel test scratch
+_greptest/
+_grestest/
+# search-results panel (FEAT_RESULTS) test scratch
+_restest/
+# CCDIFF three-way-merge test scratch
+_w3test/
+# AI code-review tool error logs (the .txt reviews themselves are tracked)
+ai-out/*.err

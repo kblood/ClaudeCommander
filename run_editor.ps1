@@ -3,7 +3,7 @@
 # sets cc.ini "editor = TED", then drives: End (cursor -> HEXIN.TXT), F4.
 # If the override worked, cc EXECs "TED <path>" and TED writes TEDOUT.TXT.
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\cc"
+$dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }

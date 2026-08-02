@@ -2,6 +2,7 @@
 ; @title   cc.ini [tools] registry: drop-in helpers become Tools-menu rows + keys
 ; @needs   TOOLS INI
 ; @cost    320
+; @optin   expands the runtime Tools menu and is not part of the canonical STD tier
 ;
 ; mod/toolsini.inc  --  FEAT_TOOLS_INI
 ; The opt-in runtime half of the [tools] registry (architecture doc S8.7): a
