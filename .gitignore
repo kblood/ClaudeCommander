@@ -212,3 +212,12 @@ _restest/
 _w3test/
 # AI code-review tool error logs (the .txt reviews themselves are tracked)
 ai-out/*.err
+
+# third-party / verification tooling dropped into the workspace (local only, not for git)
+pmodew/
+toolsamp/
+watcom/
+verify_exp1/
+verify_mdl/
+verify_mdl_dbg/
+verify_pak/
