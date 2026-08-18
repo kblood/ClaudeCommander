@@ -20,13 +20,15 @@ Decisions locked with the user (2026-06-22):
 
 ---
 
-## 0. Delivered (2026-06-23)
+## 0. Delivered (2026-06-23, rows updated 2026-08-18)
 
 Every feature the user originally asked for is shipped, plus several roadmap
-extras. The default `cc.com` (FEAT_STD) build is **at the resident wall**
-(64,504 B, ~8 B free), so further *resident* features now require buffer
-reclaim; new tools ship as external Layer-3 helpers (invoked by typing their
-name at cc's prompt — `on_enter` already shells out via `run_command`).
+extras. The default `cc.com` (FEAT_STD) build is **near the resident wall**
+(63,562 B resident, ~950 B free; `build.ps1` gates it), so new *resident*
+features need buffer reclaim or must ship as external Layer-3 helpers (invoked
+by typing the name at cc's prompt — `on_enter` already shells out via
+`run_command`). `configure.ps1` can also trade features against each other
+for custom builds.
 
 **Resident modules (Layer 1, `mod/*.inc`, gated by `%ifdef`):**
 
@@ -50,8 +52,14 @@ name at cc's prompt — `on_enter` already shells out via `run_command`).
 | LFN: cursor file's long name on command row | — | lfn.inc | c3a93ad |
 | Grep contents (launches CCGREP) | Alt-F8 | grep.inc | 0ddd13c |
 | Find/grep matches → browsable results panel | Alt-F7/F8 + Enter | results.inc | v1.0.6 |
-| Drives view (all drives as an openable list) | Alt-F1/F2 | results.inc | uncommitted |
+| Drives view (all drives as an openable list) | Alt-F1/F2 | results.inc | ce493f9 |
 | Attribute editor (R/H/S/A) | Ctrl-A | attr.inc | 671ba32 |
+| Modal directory-tree browser | Alt-F10 | tree.inc | 07f0928 |
+| Tools pull-down (runs the bundled helpers) | Tools menu | tools.inc | 0573128 |
+| User `[tools]` menu rows (a-la-carte flag) | — | toolsini.inc | (TOOLS_INI) |
+| Live helper discovery (gates helper keys) | — | discover.inc | 0a97583 |
+| Human-readable size column (K/M/G) | — | cc.asm `fmt_size` | 3bf9d42 |
+| LFN panel view mode (on-demand long names) | view mode | lfnview.inc | 71a8a67 |
 
 **External helpers (Layer 3, separate `.COM`, zero resident cost):**
 
@@ -64,6 +72,16 @@ name at cc's prompt — `on_enter` already shells out via `run_command`).
 | CCHEX.COM | hex + ASCII dump (binary viewer) | 4f4a6ce |
 | CCSUM.COM | CRC-32 + byte size | 01bda41 |
 | CCTOUCH.COM | set file date/time (now or explicit) | 8c004dc |
+| CCHEXED.COM | overwrite-only hex editor | bc3274f |
+| CCD64.COM | browse + extract C64 1541 `.d64` | 45b60fd |
+| CCT64.COM | browse + extract C64 `.t64` | 837766a |
+| CCARJ.COM | browse + extract ARJ (STORED) | 1c6d2e7 |
+| CCRAR.COM | browse + extract RAR 4.x (STORED) | 46d20f7 |
+| CCIMG.COM | image viewer (BMP/PCX/GIF, mode 13h) | 3de016d |
+| CCWAV.COM | WAV player (PCM, Sound Blaster) | c1627f3 |
+| CCDIFF.COM · CCSPLIT/CCJOIN.COM · CCREN.COM | compare / split-join / multi-rename | 3a72ca6 |
+| CCPAK.COM | browse Quake `.pak` | e989435 |
+| CCMDL.COM | Quake `.mdl` 3D model viewer (experimental) | e989435 |
 
 **Runtime data files (Layer 2):** `cc.ini` (sort/columns), `cc.lng` (F-key bar
 translation; `da.lng` shipped as a Danish sample), `cc.hlp` (F1 help text).
@@ -80,11 +98,11 @@ Notes on the two hard ones:
 
 **Still open** (would need resident reclaim or stay external): full `MSG` string
 table, F2 user menu (`cc.mnu`), remappable keys, command-line history,
-bookmarks, colour themes, copy progress %, and an info/tree body view mode.
-(Touch shipped as the CCTOUCH.COM helper, commit 8c004dc; file compare as
-CCDIFF; split/combine as CCSPLIT/CCJOIN; multi-rename as CCREN; file
-associations via the `cc.ini` `[open]`/`[view]`/`[tools]` maps; the brief
-3-column view shipped in views.inc.)
+bookmarks, colour themes, and copy/move progress %.
+(Shipped as helpers/config instead: touch = CCTOUCH.COM (8c004dc); file
+compare = CCDIFF; split/combine = CCSPLIT/CCJOIN; multi-rename = CCREN;
+file associations via the `cc.ini` `[open]`/`[view]`/`[tools]` maps; the
+brief 3-column view (views.inc) and the tree browser (tree.inc) are in.)
 
 ---
 

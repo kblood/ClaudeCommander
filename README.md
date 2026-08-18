@@ -9,7 +9,7 @@ hand-tuned 16-bit x86 assembly. Targets 8086-and-up real mode (assembled for
 nasm -f bin cc.asm -o cc.com
 ```
 
-**The core is one `.COM` file under 11 KB of code** — a full two-panel
+**The core is one `.COM` file of ~18 KB of code** — a full two-panel
 manager with mouse, recursive copy/delete, and overwrite prompts — now grown
 into a **modular** manager: compile-time feature modules (`mod/*.inc` behind
 `%ifdef FEAT_*`), runtime data files (`cc.ini`, `cc.lng`, `cc.hlp`), and a
@@ -26,17 +26,16 @@ Commander (~64 KB)." Claude Commander lands far under that:
 
 | Build | Size |
 |---|---|
-| `cc.com` (FEAT_STD: all modules below) | **~10.4 KB code, 64,504 B resident** |
-| `cc.com` (core: mouse, recursive ops, overwrite prompts) | 7,104 bytes |
+| `cc.com` (FEAT_STD: all modules below) | **18,753 B code, 63,562 B resident** |
+| `cc.com` (earlier core-only build: mouse, recursive ops, overwrite prompts) | 7,104 bytes |
 | Stage B (viewer + snapshot, pre-mouse) | 4,883 bytes |
 | Stage A (panels + nav only) | 3,044 bytes |
 
-The FEAT_STD build sits ~8 bytes under the 64 KB segment wall (`build.ps1`
-enforces it). The emitted `.com` is only ~10 KB; the rest is `.bss` working
-RAM (panels, viewer) claimed at runtime. External helpers carry no resident
+The FEAT_STD build sits ~950 B under the 64 KB segment wall (`build.ps1`
+enforces it). The emitted `.com` is only ~18 KB; the rest is `.bss` working
 cost — they are separate `.COM`s launched on demand.
 
-That is ~0.5 % of a 1.44 MB floppy, and ~3.6 % of the 200 KB budget. How:
+That is ~4 % of a 1.44 MB floppy, and well under the 200 KB budget. How:
 
 1. **Flat `.COM`, not `.EXE`.** No MZ header, no relocations, no segment
    tables. `org 100h`, one segment, code+data+stack share 64 KB.
