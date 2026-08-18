@@ -1,6 +1,7 @@
 param(
     [string]$ccArgs = "/D",
-    [string]$keyfile = ""
+    [string]$keyfile = "",
+    [string]$flags = ""   # e.g. "FEAT_LFN_FULL" -> nasm -dFEAT_LFN_FULL
 )
 $ErrorActionPreference = "Stop"
 $dir   = "C:\LLM\DOS\cc"
@@ -8,7 +9,9 @@ $dbox  = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
 $nasm  = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 
 # 1. assemble
-& $nasm -f bin "$dir\cc.asm" -o "$dir\cc.com" 2>&1
+if ($flags -ne "") { $na = @("-f","bin"); foreach ($f in ($flags -split ";")) { $na += "-d" + $f } }
+else { $na = @("-f","bin") }
+& $nasm $na "$dir\cc.asm" -o "$dir\cc.com" 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Host "ASSEMBLE FAILED"; exit 1 }
 Write-Host ("BUILD OK: {0} bytes" -f (Get-Item "$dir\cc.com").Length)
 

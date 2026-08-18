@@ -1540,6 +1540,178 @@ accept_dta:
         ret
 
 %ifdef FEAT_LFN_FULL
+ft2d_mlen:  db 31,28,31,30,31,30,31,31,30,31,30,31
+
+; ============================================================================
+;  FILETIME -> DOS packed time/date words (FEAT_LFN_FULL only).
+;  WIN32_FIND_DATA carries FILETIMEs (100-ns epochs since 1601-01-01), not
+;  DOS packed words, so LFN directory reads have to convert them:
+;    SI -> { Low DWORD at [si], High DWORD at [si+4] }  (ftLastWriteTime)
+;    -> AX = DOS time word  ((H<<11)|(M<<5)|(S/2))
+;       BX = DOS date word  (((Y-1980)<<9)|(MO<<5)|DAY)
+;  Clobbers AX BX CX DX DI SI (restored). Pure arithmetic; selftested via
+;  the /C selftest against known FILETIMEs, so it needs no LFN provider.
+;  Before 1980-01-01 -> date word 0; after 2095-12-31 -> clamped to
+;  that date (the DOS format cannot do more).
+; ============================================================================
+ft2dos:
+        push    si
+;  seconds = V/10^7 with V = hi*2^32 + lo and 2^32 = 429*10^7 + 4,967,296:
+;      seconds = 429*hi + (4,967,296*hi + lo) / 10^7
+        mov     ecx, 4967296
+        mov     eax, [si+4]             ; hi (<= 2^26)
+        mul     ecx                     ; EDX:EAX = 4,967,296*hi
+        mov     [ft2d_a], eax
+        mov     [ft2d_b], edx
+        mov     eax, [si]               ; add lo, carry into the high part
+        add     [ft2d_a], eax
+        adc     [ft2d_b], 0
+        mov     eax, [ft2d_a]           ; B = ft2d_b:ft2d_a
+        mov     edx, [ft2d_b]
+        mov     ebx, 10000000
+        div     ebx                     ; EAX = B/10^7, EDX discarded
+        mov     [ft2d_a], eax
+        mov     ecx, 429
+        mov     eax, [si+4]
+        mul     ecx                     ; EDX:EAX = 429*hi (<= 2^35)
+        add     eax, [ft2d_a]
+        adc     edx, 0
+        mov     [ft2d_a], eax           ; seconds (<= ~2^36) = ft2d_b:ft2d_a
+        mov     [ft2d_b], edx
+        mov     eax, [ft2d_a]
+        mov     edx, [ft2d_b]
+        mov     ebx, 86400
+        div     ebx                     ; EAX = days since 1601-01-01, EDX = tod
+        mov     [ft2d_a], eax
+        mov     [ft2d_b], edx           ; tod (< 86400, 17 bits)
+        mov     word [ft2d_b+2], 0      ; zero high word (BSS is not initialized)
+;  --- time word from tod (ft2d_b, 32-bit; high word zeroed above) -------
+        mov     eax, [ft2d_b]
+        xor     edx, edx
+        mov     ecx, 3600
+        div     ecx                     ; EAX = hour, EDX = rest (< 3600)
+        mov     [ft2d_h], ax
+        mov     eax, edx
+        xor     edx, edx
+        mov     ecx, 60
+        div     ecx                     ; EAX = minute, EDX = second
+        mov     [ft2d_m], ax
+        mov     [ft2d_s], dl
+;  --- T = (H&31)<<11 | (M&63)<<5 | (S/2)&31 ------------------------------
+        mov     ax, [ft2d_h]
+        and     ax, 001Fh
+        shl     ax, 11
+        mov     bx, [ft2d_m]
+        and     bx, 003Fh
+        shl     bx, 5
+        or      ax, bx
+        mov     bl, [ft2d_s]
+        shr     bl, 1
+        and     bl, 001Fh
+        or      al, bl
+        mov     [ft2d_T], ax
+;  --- date word ------------------------------------------------------------
+        mov     ax, [ft2d_a]            ; low word of days since 1601 (>= high-2 assumption)
+        sub     ax, 7354                ; 138426 = 2*65536+7354 ; 16-bit wrap covers the 2*65536
+        jc      .pre50                  ; pre-1980 -> date word 0
+        cmp     ax, 42523               ; clamp at 2095-12-31
+        jbe     .ok
+        mov     ax, 42523
+.ok:
+        mov     bx, 1980
+        mov     si, ax                  ; si = days left (.isleap clobbers AX)
+.yloop:
+        call    .isleap                 ; CX = 365/366, [ft2d_leap] (clobbers AX/CX/DX)
+        cmp     si, cx
+        jb      .ydone
+        sub     si, cx
+        inc     bx
+        jmp     .yloop
+.ydone:
+        mov     [ft2d_yr], bx
+        mov     [ft2d_doy], si          ; 0-based day-of-year (<= 364)
+        lea     si, [ft2d_mtab]
+        xor     di, di
+        xor     ax, ax
+.mfill:
+        mov     [si], ax
+        mov     bx, [ft2d_mlen+di]
+        and     bx, 0FFh
+        add     ax, bx
+        add     si, 2
+        inc     di
+        cmp     di, 12
+        jb      .mfill
+        cmp     byte [ft2d_leap], 1
+        jne     .scan
+        lea     si, [ft2d_mtab+4]       ; leap day lands in the months after February
+        mov     cx, 10
+.lev:
+        add     word [si], 1
+        add     si, 2
+        loop    .lev
+.scan:
+        xor     si, si                  ; si = 2*month index
+        mov     ax, [ft2d_doy]
+.ms:
+        cmp     word [ft2d_mtab+si], ax
+        ja      .found                  ; first month start ABOVE doy
+        add     si, 2
+        cmp     si, 24
+        jb      .ms
+        mov     si, 24
+.found:
+        sub     si, 2
+        mov     ax, [ft2d_doy]
+        mov     bx, [ft2d_mtab+si]
+        sub     ax, bx
+        inc     ax                      ; 1-based day (<= 31)
+        mov     [ft2d_day], al
+        mov     ax, [ft2d_yr]
+        sub     ax, 1980
+        shl     ax, 9
+        mov     bx, si
+        shr     bx, 1
+        inc     bx                      ; month = si/2 + 1 (1..12)
+        shl     bx, 5
+        or      ax, bx
+        mov     bl, [ft2d_day]
+        or      al, bl
+        mov     bx, ax                  ; BX = DOS date word
+        jmp     .ret
+.pre50:
+        xor     bx, bx                  ; date word 0 (pre-1980)
+.ret:
+        mov     ax, [ft2d_T]            ; AX = DOS time word
+        pop     si
+        ret
+.isleap:
+        mov     ax, bx                  ; year
+        and     ax, 3
+        jnz     .nl
+        mov     ax, bx
+        xor     dx, dx
+        mov     cx, 100
+        div     cx
+        or      dx, dx
+        jz      .c400
+        jmp     .leap
+.c400:
+        mov     ax, bx
+        xor     dx, dx
+        mov     cx, 400
+        div     cx
+        or      dx, dx
+        jz      .leap
+        jmp     .nl
+.leap:
+        mov     byte [ft2d_leap], 1
+        mov     cx, 366
+        ret
+.nl:
+        mov     byte [ft2d_leap], 0
+        mov     cx, 365
+        ret
 ; copy one WIN32_FIND_DATA result (in copybuf) into the panel entry array.
 ; Mirrors accept_dta but reads from the LFN 714Eh/714Fh output buffer.
 ; WIN32_FIND_DATA offsets: attrs+0, nFileSizeHigh+28, nFileSizeLow+32,
@@ -1588,9 +1760,14 @@ accept_lfn:
         mov     [si+E_SIZE], ax
         mov     ax, [copybuf+34]
         mov     [si+E_SIZE+2], ax
-        ; time/date not in DOS packed format in WIN32_FIND_DATA -- zero out
-        mov     word [si+E_TIME], 0
-        mov     word [si+E_DATE], 0
+        ; WIN32_FIND_DATA has FILETIMEs, not DOS words: convert the
+        ; ftLastWriteTime ({Low DWORD @20, High DWORD @24})
+        push    si
+        lea     si, [copybuf+20]
+        call    ft2dos                  ; AX = time word, BX = date word
+        mov     word [si+E_DATE], bx
+        pop     si
+        mov     word [si+E_TIME], ax
         inc     word [_count]
 .skip:
         ret
@@ -2049,7 +2226,6 @@ format_entry:
         jmp     .cp
 .ret:
         ret
-
 
 ; fill rowbuf with [pcw] spaces, null-terminate
 clear_rowbuf:
@@ -3620,6 +3796,22 @@ res_heap    resb RESHEAP_MAX   ; packed ASCIIZ full paths (+ matched text for gr
 %endif
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE
+%ifdef FEAT_LFN_FULL
+ft2d_a      resd 1             ; working 32 (low half of a 64-bit value)
+ft2d_b      resd 1             ; working 32 (high half / seconds-in-day)
+ft2d_T      resw 1             ; DOS time word
+ft2d_yr     resw 1
+ft2d_doy    resw 1
+ft2d_day    resb 1
+ft2d_h      resw 1
+ft2d_m      resw 1
+ft2d_s      resb 1
+dbg_lft_d2  resw 1             ; dbg_lft time-word park             ; seconds-rest between divs (debug) — remove with markers
+ft2d_leap   resb 1
+ft2d_mtab   resw 12            ; cumulative month-day offsets (leap-fixed)
+ft2d_t1     resd 2             ; /C selftest FILETIME vector
+dbg_lft_d   resw 1             ; dbg_lft date-word park
+%endif
 stackspace  resb 1024
 stacktop:
 prog_end:
