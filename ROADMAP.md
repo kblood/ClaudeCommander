@@ -1,8 +1,9 @@
 # Claude Commander — modularity & feature roadmap
 
-Status: **M2–M5 largely delivered.** Last updated 2026-06-23. See §0.
+Status: **M2–M5 largely delivered.** Last updated 2026-09-23. See §0.
 
-This document plans turning `cc` from a monolithic 7 KB `.COM` into a **modular**
+This document plans turning `cc` from a monolithic 7 KB `.COM` (as it was in
+June 2026) into a **modular**
 file manager without breaking the size story. It records the chosen
 architecture, a full feature catalogue (what becomes a module and *how*), the
 memory budget that constrains everything, and a milestone sequence.
@@ -20,28 +21,31 @@ Decisions locked with the user (2026-06-22):
 
 ---
 
-## 0. Delivered (2026-06-23, rows updated 2026-08-18)
+## 0. Delivered (2026-06-23, rows updated 2026-09-23)
 
 Every feature the user originally asked for is shipped, plus several roadmap
-extras. The default `cc.com` (FEAT_STD) build is **near the resident wall**
-(63,562 B resident, ~950 B free; `build.ps1` gates it), so new *resident*
-features need buffer reclaim or must ship as external Layer-3 helpers (invoked
-by typing the name at cc's prompt — `on_enter` already shells out via
-`run_command`). `configure.ps1` can also trade features against each other
-for custom builds.
+extras. The default `cc.com` (FEAT_STD) build is code 18,949 B, resident
+50,448 B vs the 64,512 B budget → **~14 KB free** since the far data segment
+(`xseg`, `plan/memory_map.md`) moved ~13 KB of buffers out of the program
+segment (`build.ps1` gates it). The opt-in `FEAT_LFN_FULL` build
+(`cc-lfn.com`) is at 19,711 / 51,267 B; `CCPOP.COM` (no menu bar)
+16,562 / 48,020 B; `ccmin.com` 8,757 / 39,142 B. Heavy features still ship
+as external Layer-3 helpers (invoked by typing the name at cc's prompt —
+`on_enter` already shells out via `run_command`). `configure.ps1` can also
+trade features against each other for custom builds.
 
 **Resident modules (Layer 1, `mod/*.inc`, gated by `%ifdef`):**
 
 | Feature | Key | Module | Commit |
 |---|---|---|---|
-| Clock (HH:MM:SS; cmdrow/topright/off via cc.ini) | — | clock.inc | c007c84 (+uncommitted) |
-| Brief 3-column body view | Ctrl-F10 / Alt-F3 | views.inc | uncommitted |
-| Pull-down menu bar + mouse open/select | F9 / click | menubar.inc | uncommitted |
+| Clock (HH:MM:SS; cmdrow/topright/off via cc.ini) | — | clock.inc | c007c84 / b5aa3cb |
+| Panel views: full → brief 3-column → LFN (cycle) | Ctrl-F10 / Alt-F3 | views.inc | 8892902 / b5aa3cb |
+| Pull-down menu bar + mouse open/select (STD) | F9 / click | menubar.inc | d581d5a / b1bb15b / b5aa3cb |
 | Sort: name/ext/size/date | Ctrl-F1..F4 | sort.inc | 70c044d |
 | Columns: size/date/time/attrs | Ctrl-F5 | cols.inc | 3e299b0 / 1ff023b |
 | File-count + free-space + tagged footer | — | free.inc | f4dffce |
 | Incremental quick-search | Ctrl-F6 | search.inc | b0fa646 |
-| F9 pop-up command menu | F9 | menu.inc | d096a4a |
+| F9 pop-up command menu (**CCPOP.COM only**; STD has the pull-down bar) | F9 | menu.inc | d096a4a |
 | Tag/untag by `*.mask` | Ctrl-F7/F8 | mask.inc | 8552881 |
 | Edit file (launches CCEDIT) | F4 | edit.inc | b5aa5a4 |
 | Find files (launches CCFIND) | Alt-F7 | find.inc | 0a33090 |
@@ -60,6 +64,8 @@ for custom builds.
 | Live helper discovery (gates helper keys) | — | discover.inc | 0a97583 |
 | Human-readable size column (K/M/G) | — | cc.asm `fmt_size` | 3bf9d42 |
 | LFN panel view mode (on-demand long names) | view mode | lfnview.inc | 71a8a67 |
+| Archive-as-folder browse / extract / pack (`[open]` map) | Enter / F5 / Alt-F9 / Alt-F5 | vfs.inc | 9594ef8 (+ GOALS G1/G2, db1a9de) |
+| F6 move (editable dest) / Shift-F6 rename in place | F6 / Shift-F6 | fileops.inc / cc.asm | 6510e14 |
 
 **External helpers (Layer 3, separate `.COM`, zero resident cost):**
 
@@ -83,8 +89,24 @@ for custom builds.
 | CCPAK.COM | browse Quake `.pak` | e989435 |
 | CCMDL.COM | Quake `.mdl` 3D model viewer (experimental) | e989435 |
 
-**Runtime data files (Layer 2):** `cc.ini` (sort/columns), `cc.lng` (F-key bar
+**Runtime data files (Layer 2):** `cc.ini` (sort/columns, clock, editor, the
+`[open]`/`[view]` association maps, opt-in `[tools]`), `cc.lng` (F-key bar
 translation; `da.lng` shipped as a Danish sample), `cc.hlp` (F1 help text).
+
+**Safety & robustness (2026-09):**
+
+| Area | What landed |
+|---|---|
+| F6 / copy | Move never deletes the source after a failed or partial copy (`cp_fail`); refuses dir-into-own-subdir; copy-onto-self detected via `TRUENAME` |
+| Panel guards | F8 / F6 / Shift-F6 / Ctrl-A / F4 / hex edit refuse on archive, results and drives panels |
+| Host core | Typed commands & Tools run in the active panel's folder; `INT 24h` critical-error handler; bounded cmdline / F-key labels / command tail / `P_PATH`; `.bss` zeroed at startup |
+| Extractors | ZIP/PAK/RAR/ARJ/D64/T64 extraction can't escape the dest dir; extract-all never overwrites |
+| Parsers | Malformed-input hangs/overruns fixed in INFLATE, GIF, BMP, PCX, WAV, RAR, D64 |
+| Editors / tools | CCEDIT safe save (`.$$$` temp + rename) and >48 KB refusal; save-on-quit prompts in CCEDIT/CCHEXED; CCSPLIT/CCJOIN refuse to clobber their inputs; CCREN honours the source dir; CCTOUCH validates dates |
+| Exit codes | CCDIFF 0/1/2; CCGREP 0 = match / 1 = none; extractors 1 on failure |
+| wincc | Move/delete data-loss fixes (dir-into-self, junctions never followed); viewer heap overflow; UTF-8 cd-on-exit |
+| Build / dist | `build_dist.ps1` always rebuilds; failed builds never overwrite binaries; `INSTALL.BAT` DOS-compatible via the `ccpop.asm` wrapper |
+| Tests | `run_all.ps1` gate + `run_safety` / `run_czip_safety` / `run_fileops_safety` / `run_parsers_safety` |
 
 Notes on the two hard ones:
 - **LFN** uses the memory-safe strategy from §3 option (a): panels keep 8.3
@@ -92,6 +114,9 @@ Notes on the two hard ones:
   714Eh) and shown on the command row. Falls back to 8.3 cleanly when no LFN
   provider is present (bare DOS / DOSBox-staging). The fallback is verified;
   live long-name rendering needs an LFN provider (Win9x DOS / DOSLFN).
+  Since then `lfnview.inc` added an on-demand long-name panel view (third
+  step of the Ctrl-F10 cycle), and the opt-in `FEAT_LFN_FULL` build adds LFN
+  file ops + 714Eh/714Fh enumeration with FILETIME→DOS dates (39ccfe0).
 - **Language** currently translates the F-key bar (the most visible UI text)
   via `cc.lng`. A full `MSG(id)` string-table i18n (M1 seam #4) is not done;
   the F-key bar override is the pragmatic subset that fit the resident wall.
@@ -109,35 +134,43 @@ brief 3-column view (views.inc) and the tree browser (tree.inc) are in.)
 ## 1. The hard constraint: the 64 KB segment
 
 A flat `.COM` is **one 64 KB segment** shared by code + data + `.bss` + stack.
-Today (`cc.asm`):
+Current default build (FEAT_STD, 2026-09-23, measured by `build.ps1`):
 
 | Consumer | Size |
 |---|---|
-| Code + initialized data (the emitted `cc.com`) | 7,104 B |
-| `.bss` — `panelL`+`panelR` (2 × `PANELSIZE`, 512 entries × 24 B) | ~24.7 KB |
-| `.bss` — `viewbuf` (`VIEW_MAX`, 16 KB viewer) | 16 KB |
-| `.bss` — `snapbuf` (4000), stack (2048), small scratch | ~7 KB |
-| **Resident image total** (measured by `build.ps1`: `0x100` PSP + code + all `.bss` + 2 KB stack) | **60,714 B (~59.3 KB)** |
-| **Headroom left in the segment** (65,536 − 60,714) | **~4.7 KB** |
+| Code + initialized data (the emitted `cc.com`) | 18,949 B |
+| `.bss` — `panelL`+`panelR` (2 × `PANELSIZE` = 2 × (156 + 512 entries × 24 B)) | 24,888 B |
+| `.bss` — everything else (1 KB stack, DTA stack, ini maps, scratch) | ~6.3 KB |
+| **Resident image total** (`0x100` PSP + code + all `.bss`) | **50,448 B** |
+| **Budget** (`build.ps1` std: resident < 63 KB = 64,512 B) | **~14 KB headroom** |
+| *Outside the segment* — far block `xseg`: `viewbuf` 8 KB, `lineoff` 2 KB, `res_heap` 3 KB | ~13 KB |
 
-> The measured 60,714 B is authoritative — it equals the `mov ax, prog_end`
-> immediate (`0xED2A`) the assembler bakes into `start` (`cc.asm:128`). The
-> README's older "~51 KB" prose under-counted; treat **~4.7 KB** as the real
-> resident headroom for the default build.
+Other profiles (resident): `FEAT_LFN_FULL` (`cc-lfn.com`) 51,267 B (~13 KB
+headroom); `CCPOP.COM` 48,020 B; `FEAT_MIN` 39,142 B.
 
-**Everything resident must fit in that ~4.7 KB.** This is *the* number to
-respect — and it is far tighter than first assumed, which reshapes the plan:
-the full `FEAT_FULL` resident set will **not** fit on top of today's image
-without trading down a big buffer. The realistic levers are (a) push heavy
-features external/overlay, and (b) under `FEAT_*` flags **reclaim** the two
-fat buffers — `viewbuf` (16 KB) and the panel arrays (`MAX_FILES`, 24.7 KB) —
-to make room. `build.ps1` enforces the wall so this can't be violated silently.
+Until 2026-09-23 the three `xseg` buffers were in the `.bss` and the STD
+image was 63,637 B (875 B headroom, 56 B for LFN). Moving them out is step 1
+of `plan/memory_map.md`; step 2 (panel entry arrays → far segment, lifting
+the 512-files cap) and step 3 (code overlays) are designed there.
+
+> The measured resident figure is authoritative — it equals the
+> `mov ax, prog_end` immediate the assembler bakes into `start`. *Historical:*
+> at the M1 refactor (June 2026) the image was 7,104 B code / 60,714 B
+> resident with a 16 KB `viewbuf` and ~4.7 KB headroom; `VIEW_MAX` has since
+> been halved to 8 KB and `snapbuf` gated behind `FEAT_SNAP` to make room.
+
+**Everything new and resident must fit in that ~14 KB** (~13 KB for the LFN
+build). This is *the* number to respect. The realistic levers are (a) push
+heavy features external/overlay, (b) move more data to far blocks (the panel
+arrays, `MAX_FILES` 512, ~24.3 KB, are next), and (c) under `FEAT_*` flags
+reclaim buffers. `build.ps1`
+enforces the budget so this can't be violated silently.
 Consequences, baked into the plan below:
 
 - Cheap resident features (sort, clock, columns, quick-search, menu bar,
-  config loader, string table) each cost hundreds of bytes to ~2 KB — so even
-  these must be **counted against the ~4.7 KB**, and a couple of them together
-  already approach the wall. Build profiles, not "add everything," are how the
+  config loader, string table) each cost hundreds of bytes to ~2 KB — so each
+  new one must be **counted against the remaining headroom**. Build profiles,
+  not "add everything," are how the
   default stays buildable.
 - RAM-hungry features (LFN names, archive directory parsing, a built-in
   editor) either (a) ship as **external** programs, (b) **trade** against
@@ -206,6 +239,10 @@ These are what make Layer 1 "modular" instead of "edit one giant chain":
     ; - its own .bss block (so RAM cost is visible per module)
     ; %endif
 ```
+
+*As built:* modules own their handlers, menu rows and `.bss`, but every
+`KEYBIND_*` row lives in the single `keytab` in `cc.asm` (each wrapped in its
+feature's `%ifdef`); only `FEAT_TOOLS_INI` adds keys at runtime (`ukeytab`).
 
 ### External helper convention (Layer 3)
 
@@ -295,15 +332,21 @@ and "panels = same dir" quick keys; tree-view panel mode; FTP/network panel
 `build.ps1` produces named profiles by passing `-d<flag>` to NASM, and **fails
 the build if the image exceeds budget**:
 
-| Profile | Flags | Intended set | Target size |
-|---|---|---|---|
-| `ccmin.com` | `FEAT_MIN` | nav + view + basic file ops only | ≤ 5 KB |
-| `cc.com` (default) | `FEAT_STD` | min + sort + columns + clock + quick-search + menu + config | ≤ 13 KB code; resident < 60 KB |
-| `ccfull.com` | `FEAT_FULL` | std + LFN + find + hex + attrs + history + bookmarks | resident < 64 KB (hard) |
+| Profile | Flags | Intended set | Budget (enforced) | Current (2026-09-23) |
+|---|---|---|---|---|
+| `ccmin.com` | `FEAT_MIN` | nav + view + basic file ops only | code ≤ 9 KB | 8,757 B code / 39,142 B res. |
+| `cc.com` (default) | `FEAT_STD` | min + every shipped resident module (§0) | code ≤ 19 KB; resident < 63 KB | 18,949 / 50,448 B |
+| `ccfull.com` | `FEAT_FULL` | currently == STD | resident < 63.5 KB | (as STD) |
+| `cc-lfn.com` | `FEAT_STD` + `FEAT_LFN_FULL` | std + LFN file ops/enumeration | resident < 63 KB | 19,711 / 51,267 B |
 
-Budget guardrail: the script computes the resident paragraph count (same math
-as `start` at `cc.asm:130`) and refuses anything that would push the segment
-over ~63 KB, leaving stack room.
+(`CCPOP.COM` is built by `package.ps1`, not `build.ps1`: STD without
+`FEAT_MENUBAR`, 16,562 / 48,020 B.)
+
+Budget guardrail: the script recovers the resident size from the NASM listing
+(same math as the `prog_end` paragraph count in `start`) and refuses anything
+over budget; a failed build never overwrites an existing binary. *Historical
+targets from the June 2026 plan were ≤ 5 KB (min), ≤ 13 KB code / < 60 KB
+resident (std) and < 64 KB (full).*
 
 ---
 

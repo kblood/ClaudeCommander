@@ -23,8 +23,11 @@ Last updated: 2026-06-23 — G1–G10 ALL GREEN. Full backlog complete: 5 archiv
   helpers (Layer-3, zero resident cost) selected by a cc.ini map. Adding a
   format = a new helper + one cc.ini line.
 - **`[open]` map** (done): Enter on a matching extension browses it as a folder;
-  F5 will extract a member. **`[view]` map** (G6): F3 runs a per-type viewer.
-- Resident headroom ~2.6 KB (snapbuf gated behind FEAT_SNAP).
+  F5 extracts a member (G1), Alt-F9 extracts all (G2). **`[view]` map** (G7,
+  done): F3 runs a per-type viewer.
+- Resident headroom: STD 50,448 B vs the 64,512 B budget → **~14 KB**
+  (2026-09-23, after the far data segment `xseg`; it had shrunk to 875 B
+  before that). New formats still stay external.
 
 ## Goals
 

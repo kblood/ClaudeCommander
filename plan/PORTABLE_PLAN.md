@@ -1,7 +1,9 @@
 # Claude Commander — cross-platform plan (Windows + Linux + …)
 
-Status: **planning only, deferred.** No code yet. This captures the agreed
-direction so a later session can pick it up cold.
+Status: **planning only, deferred.** No portable `port/` code yet (the
+Windows-only `wincc/` port exists and is the starting point, see §6). This
+captures the agreed direction so a later session can pick it up cold. (Moved
+from the repo root to `plan/` 2026-09-23.)
 
 ## 1. Goal & non-goals
 
@@ -20,7 +22,7 @@ bare console — while reusing as much of the existing DOS work as is sensible.
 The temptation is "one C codebase compiled for DOS (OpenWatcom) + Win + Linux."
 We are **not** doing that, because of size on the DOS target:
 
-- `cc.com` today is ~16.5 KB of hand-tuned asm, deliberately fighting the 64 KB
+- `cc.com` today is ~18.5 KB (18,949 B, 2026-09) of hand-tuned asm, deliberately fighting the 64 KB
   single-segment wall (see ROADMAP §1, build budgets §4).
 - An OpenWatcom C build links a C runtime + startup and emits less dense code —
   realistically **2–4× larger** for equivalent functionality. A sub-1 KB asm

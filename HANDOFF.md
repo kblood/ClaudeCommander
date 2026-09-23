@@ -1,5 +1,5 @@
 # Claude Commander (`cc`) — session handoff
 
-> **This file is a byte-identical copy of `AGENTS.md`** so tools that read
-> either name both get the current cold-start brief. Edit one, sync the other
-> (see the `AGENTS.md`/`HANDOFF.md` gotcha). Last synced 2026-08-18.
+The cold-start brief lives in **[`agents.md`](agents.md)** (also read as
+`AGENTS.md` on case-insensitive filesystems). This file is only a pointer so
+there is a single brief to keep current — edit `agents.md`, not this file.

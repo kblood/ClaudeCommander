@@ -1,9 +1,11 @@
 # Claude Commander (`cc`)
 
 A Norton/Volkov-Commander-style two-panel file manager for DOS, written in
-hand-tuned 16-bit x86 assembly. Targets 8086-and-up real mode (assembled for
-`386` so it can use `movzx`/`imul-imm` — ideal on the 486-class ao486 core),
-80×25 colour text mode, MS-DOS / FreeDOS / DOSBox.
+hand-tuned 16-bit x86 assembly. Runs in real mode on a **386 or later**
+(the source is assembled with `cpu 386` and uses `movzx` and friends; the
+opt-in `FEAT_LFN_FULL` build also uses 32-bit `mul`/`div` — all 386-legal, and
+ideal on the 486-class ao486 core), 80×25 colour text mode,
+MS-DOS / FreeDOS / DOSBox.
 
 ```
 nasm -f bin cc.asm -o cc.com
@@ -14,8 +16,9 @@ manager with mouse, recursive copy/delete, and overwrite prompts — now grown
 into a **modular** manager: compile-time feature modules (`mod/*.inc` behind
 `%ifdef FEAT_*`), runtime data files (`cc.ini`, `cc.lng`, `cc.hlp`), and a
 family of external Layer-3 helpers (`CCEDIT`, `CCFIND`, `CCZIP`, `CCGREP`,
-`CCHEX`, `CCSUM`). Build tiers: `FEAT_MIN` / `FEAT_STD` (default) / `FEAT_FULL`.
-See `ROADMAP.md` §0 for the full delivered list.
+`CCHEX`, `CCSUM`, … — see **Bundled tools** below). Build tiers:
+`FEAT_MIN` / `FEAT_STD` (default) / `FEAT_FULL`. See `ROADMAP.md` §0 for the
+full delivered list.
 
 ---
 
@@ -26,16 +29,25 @@ Commander (~64 KB)." Claude Commander lands far under that:
 
 | Build | Size |
 |---|---|
-| `cc.com` (FEAT_STD: all modules below) | **18,753 B code, 63,562 B resident** |
-| `cc.com` (earlier core-only build: mouse, recursive ops, overwrite prompts) | 7,104 bytes |
-| Stage B (viewer + snapshot, pre-mouse) | 4,883 bytes |
-| Stage A (panels + nav only) | 3,044 bytes |
+| `cc.com` (FEAT_STD: all modules below) | **18,949 B code, 50,448 B resident** |
+| `cc-lfn.com` (FEAT_STD + FEAT_LFN_FULL) | 19,711 B code, 51,267 B resident |
+| `CCPOP.COM` (FEAT_STD without the menu bar) | 16,562 B code, 48,020 B resident |
+| `ccmin.com` (FEAT_MIN) | 8,757 B code, 39,142 B resident |
+| *historical:* earlier core-only build (mouse, recursive ops, overwrite prompts) | 7,104 bytes |
+| *historical:* Stage B (viewer + snapshot, pre-mouse) | 4,883 bytes |
+| *historical:* Stage A (panels + nav only) | 3,044 bytes |
 
-The FEAT_STD build sits ~950 B under the 64 KB segment wall (`build.ps1`
-enforces it). The emitted `.com` is only ~18 KB; the rest is `.bss` working
-cost — they are separate `.COM`s launched on demand.
+`build.ps1` enforces a **63 KB (64,512 B) resident budget**, which keeps about
+1 KB of slack under the 64 KB segment wall. The FEAT_STD build uses 50,448 B
+of it (~14 KB headroom); the LFN build 51,267 B (~13 KB). The emitted `.com`
+is only ~19 KB; the rest of the resident image is `.bss` working memory
+(panel arrays, heaps, stack) claimed at load time. The big scratch buffers
+(viewer, pager line table, results-path heap, ~13 KB) live outside the
+segment in a far block (`xseg`, see `plan/memory_map.md`). The heavy tools
+cost nothing resident — they are separate `.COM`s launched on demand.
 
-That is ~4 % of a 1.44 MB floppy, and well under the 200 KB budget. How:
+The `.com` itself is ~1.3 % of a 1.44 MB floppy, and well under the 200 KB
+budget. How:
 
 1. **Flat `.COM`, not `.EXE`.** No MZ header, no relocations, no segment
    tables. `org 100h`, one segment, code+data+stack share 64 KB.
@@ -44,11 +56,11 @@ That is ~4 % of a 1.44 MB floppy, and well under the 200 KB budget. How:
    viewer buffer, the search-results path heap, the line table, key/dump
    scratch — none of it is emitted
    into the file. The `.COM` only carries *code + initialized strings*; the
-   working RAM is claimed at runtime and zeroed by us as needed. This is the
+   working RAM is claimed at runtime and zeroed at start-up. This is the
    single biggest size lever: without it the file would be tens of KB of
    zero-padding. (Because a flat `.COM` is one 64 KB segment, the *total*
-   `.bss` is also capped at 64 KB — the resident image lands at ~51 KB, which
-   is why the per-panel entry count is 512 rather than larger.)
+   `.bss` is also capped at 64 KB — which is why the per-panel entry count is
+   512 rather than larger, and why the biggest buffers moved to a far block.)
 3. **No libc, no runtime.** Every service is a raw `INT 21h` / `INT 10h` /
    `INT 16h` call. There is nothing to link.
 4. **Direct video writes to `B800:0000`.** No BIOS TTY, no ANSI driver. The
@@ -61,7 +73,11 @@ That is ~4 % of a 1.44 MB floppy, and well under the 200 KB budget. How:
 
 Runtime memory: after start-up the program shrinks its DOS allocation
 (`INT 21h AH=4Ah`) to just the resident image + stack, freeing the rest of
-the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
+the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room. It then
+allocates two small DOS blocks: the 4,000-byte screen back buffer and the
+~13 KB far data block. In total cc needs about 66 KB of free conventional
+memory; if either allocation fails it prints `Not enough memory.` and exits
+with code 8.
 
 ---
 
@@ -101,7 +117,8 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
   that menu straight from the file view — no need to press `F9` first. Inside an
   open menu the mouse picks items, hops between menus along the bar, and an
   outside click closes it.
-- Click a label on the function-key bar to invoke that key.
+- Click a label on the function-key bar to invoke that key (every bound key's
+  label is clickable; `F2` is unbound, so its slot is blank).
 - The modal dialogs are fully clickable too (see below).
 - The cursor show/hide is reference-counted against our own flag, so it can no
   longer get "lost" (invisible-but-present) after a file op or an alt-tab.
@@ -109,14 +126,20 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 **Command line**
 - Type a command after the `path>` prompt; `Enter` shells out through
   `COMSPEC /C`, with SS:SP and DTA saved/restored across the EXEC.
-- `Esc` clears the line; `Backspace` edits it (or goes to the parent folder
-  when the line is empty).
+- `Esc` clears the line (and, in a search-results or drives panel, leaves it
+  and re-lists the real folder); `Backspace` edits it (or goes to the parent
+  folder when the line is empty).
+- Typed commands (and Tools-menu actions) run in the **active panel's folder**.
 
 **File operations** (each pops a modal dialog and refreshes both panels)
 - `F3`  **View** — scrollable text pager (↑↓, PgUp/PgDn, Home/End, Esc/F3).
 - `F5`  **Copy** — copy to the other panel's directory. Acts on the whole
   **tagged set** if any entries are tagged, otherwise the cursor entry.
-- `F6`  **Rename/Move** — rename or move via an input dialog (`INT 21h 56h`).
+- `F6`  **Move** — move to the other panel's directory; the dialog shows an
+  editable destination name so you can rename in flight. A same-drive move is
+  one atomic DOS rename; a cross-drive move copies, then deletes the source
+  only after a complete, successful copy.
+- `Shift+F6` **Rename** — rename in place (same folder).
 - `F7`  **MkDir** — create a directory (input dialog).
 - `F8`  **Delete** — delete files or whole directory trees. Acts on the
   tagged set if any, otherwise the cursor entry (Y/N confirm).
@@ -125,6 +148,11 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
   browsable list (`A:` `B:` `C:` …); `Enter` on one opens that drive's root,
   `Esc` / `..` returns to where you were. (In the CCPOP build, which lacks the
   results-panel machinery, these keys fall back to a type-the-letter prompt.)
+- `Alt+F5` — pack the tagged set (or cursor entry) into an archive in the other
+  panel (tagged folders recurse); `Alt+F9` — extract a whole archive to the
+  other panel.
+- `Alt+F10` — modal directory tree of the active panel's path; `Enter` jumps
+  the panel there.
 - `F10` — quit.
 
 **Recursive directory copy / delete**
@@ -150,9 +178,11 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 **Modular features (FEAT_STD default build)**
 - **Clock** — live `HH:MM:SS`, placement set in `cc.ini` (`clock = cmdrow` on
   the command row, default; `topright` over the menu bar; `off` to hide it).
-- **Brief 3-column view** — toggle the panel body between the full single-column
-  list and a names-only 3-column layout (`Ctrl-F10`, or `Alt-F3` which DOSBox
-  doesn't swallow; also under the Options menu). Each panel toggles independently.
+- **Panel views** — `Ctrl-F10` (or `Alt-F3`, which DOSBox doesn't swallow;
+  also under the Options menu) **cycles** the panel body through three views:
+  full single-column list → names-only brief 3-column layout → long-name (LFN)
+  view (long names with an LFN provider, else 8.3). Each panel cycles
+  independently.
 - **Sort** — by name / extension / size / date (`Ctrl-F1..F4`); initial order
   from `cc.ini`.
 - **Columns** — cycle the right column size / date / time / attributes
@@ -168,7 +198,9 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - **F1 help** — pages `cc.hlp` through the viewer.
 - **Language** — `cc.lng` translates the F-key bar (`da.lng` Danish sample).
 - **Long file names** — the cursor file's long name shows on the command row
-  when an LFN provider is active (8.3 otherwise).
+  when an LFN provider is active (8.3 otherwise); see also the long-name panel
+  view above. The opt-in `cc-lfn.com` build (`FEAT_LFN_FULL`) adds LFN file
+  operations and long-name enumeration with real dates.
 - **Search results panel** — `Alt-F7` (find by name, CCFIND) and `Alt-F8`
   (grep contents, CCGREP) run the helper silently and load the results into the
   other panel as a browsable list — the same virtual-panel mechanism as the zip
@@ -189,11 +221,24 @@ the 640 KB so shelled-out programs (`COMMAND.COM /C ...`) have room.
 - `CCHEX <file>` — hex + ASCII dump (binary viewer).
 - `CCSUM <file>` — CRC-32 + byte size.
 
+**Safety & robustness** (2026-09 hardening pass; details in `ROADMAP.md` §0)
+- `F6` move never deletes the source after a failed or partial copy, refuses
+  to move a folder into its own subfolder, and detects copy-onto-self (via
+  `TRUENAME`). File ops that make no sense on an archive, search-results or
+  drives panel (`F8`, `F6`, `Shift-F6`, `Ctrl-A`, `F4`, hex edit) refuse there.
+- A critical-error (`INT 24h`) handler, bounded command line / F-key labels /
+  command tail / panel paths, and a zeroed `.bss` at start-up.
+- Helpers: archive extraction can't escape the destination folder and
+  extract-all never overwrites; malformed ZIP/GIF/BMP/PCX/WAV/RAR/D64 input
+  can't hang or overrun; CCEDIT saves via a temp file + rename; CCEDIT/CCHEXED
+  prompt to save on quit; helpers return meaningful exit codes.
+
 ### Still deferred
 
 - Full `MSG(id)` string-table i18n (only the F-key bar is translated today).
 - F2 user menu (`cc.mnu`), remappable keys, command-line history, bookmarks,
-  colour themes, file associations.
+  colour themes. (File associations shipped: the `cc.ini` `[open]` / `[view]`
+  maps below.)
 - Copy/move progress %.
 - Viewer: files larger than the 8 KB buffer cap (seek windowing), in-pager search.
 
@@ -277,15 +322,18 @@ is safe even when a tool isn't installed.
 | ← → | page (full view) / column (brief view) | `Backspace` | parent folder (empty cmd line) |
 | `Enter` | enter dir / run program | `Esc` | clear cmd line |
 | `F3` | view file | `F5` | copy (tagged set or cursor) |
-| `F6` | rename / move | `F7` | make directory |
-| `F8` | delete (tagged set or cursor) | `Insert` | tag entry |
+| `F6` | move to other panel (editable dest name) | `Shift-F6` | rename in place |
+| `F7` | make directory | `F8` | delete (tagged set or cursor) |
+| `Insert` | tag entry | `Esc` (results/drives panel) | leave the list |
 | `Alt+F1` / `Alt+F2` | left / right drive list | `F10` | quit |
 | `F1` | help (`cc.hlp`) | `F4` | edit file (CCEDIT) |
 | `F9` | menu bar (pop-up in CCPOP) | `Ctrl-A` | edit attributes (R/H/S/A) |
 | `Ctrl-F1..F4` | sort name/ext/size/date | `Ctrl-F5` | cycle column |
 | `Ctrl-F6` | quick-search | `Ctrl-F7/F8` | tag/untag by mask |
-| `Ctrl-F10` / `Alt-F3` | toggle brief 3-column view | `Alt-F7` | find files → results panel |
+| `Ctrl-F10` / `Alt-F3` | cycle view: full → brief → long-name | `Alt-F7` | find files → results panel |
 | `Alt-F8` | grep contents → results panel | `Ctrl-F9` | list archive (CCZIP) |
+| `Alt-F5` | pack into archive (other panel) | `Alt-F9` | extract whole archive |
+| `Alt-F10` | directory tree | | |
 | click | select entry | dbl-click | open entry |
 | right-click | tag entry | click F-bar | invoke that F-key |
 | click menu title | open that menu (no F9 needed) | | |
@@ -295,6 +343,13 @@ is safe even when a tool isn't installed.
 ## Build & test
 
 - **Assemble:** `nasm -f bin cc.asm -o cc.com` (NASM 2.x).
+- **Build profiles + size budgets:** `.\build.ps1 -All` builds `min` / `std` /
+  `full` / `lfn` and fails if any exceeds its budget (min code ≤ 9 KB; std code
+  ≤ 19 KB and resident < 63 KB; full resident < 63.5 KB; lfn resident < 63 KB).
+  A failed build never overwrites an existing binary.
+- **Regression gate:** `.\run_all.ps1` (PowerShell 7, from the repo root) runs
+  the budget check and then every headless `run_*.ps1` test, exiting nonzero on
+  any failure. `-Only <pattern>` runs a subset, `-ShowLog` echoes failing logs.
 - **Run:** `cc.com` on any DOS, or `MOUNT C <dir>` in DOSBox.
 
 The repo includes a headless regression harness used during development:
@@ -306,7 +361,7 @@ The repo includes a headless regression harness used during development:
   feature above was verified without a human at the keyboard.
 - `cc.com /S` copies the raw 80×25 video page to `CCSNAP.BIN`;
   `render_snap.ps1` turns it into a colour PNG with the real VGA text
-  palette — used to produce the screenshot above.
+  palette (handy for documentation screenshots).
 - `run_test.ps1 -ccArgs /T -keyfile keys_xxx.bin` assembles, runs the program
   under DOSBox Staging with a timeout, and prints `CCDUMP.TXT`.
 
@@ -322,7 +377,7 @@ The repo includes a headless regression harness used during development:
 | Directory model | `read_dir`, `accept_dta`, `build_search`, `sort_panel`, `order_cmp` |
 | Paths | `path_append`, `path_up`, `go_parent`, `bp_copy_dir`, `bp_copy_name`, `build_entry_path`, `build_target_path`, `build_other_path` |
 | Modal dialogs | `dlg_box`, `dlg_input`, `dlg_confirm`, `dlg_draw_buttons`, `dlg_overwrite`, `ow_draw_buttons`, `dlg_field`, `busy_box`, `busy_name` |
-| File ops | `key_mkdir`, `key_delete`, `key_copy`, `key_rename`, `count_tagged`, `copy_one`, `delete_one`, `copy_file`, `refresh_panels` |
+| File ops | `key_mkdir`, `key_delete`, `key_copy`, `key_move`, `key_rename`, `count_tagged`, `copy_one`, `delete_one`, `copy_file`, `refresh_panels` |
 | Recursive trees | `copy_tree`, `del_tree`, `set_dta_cur`, `cur_dta_ptr`, `make_findpat` |
 | Mouse (INT 33h) | `mouse_poll`, `mouse_hit`, `mouse_left`, `mouse_right`, `mouse_confirm`, `mouse_overwrite`, `mouse_show`, `mouse_hide`, `fbar_to_key` |
 | Viewer | `key_view`, `view_move`, `view_build_lines`, `render_view` |
@@ -332,10 +387,13 @@ The repo includes a headless regression harness used during development:
 ### Modules (`mod/*.inc`, gated by `%ifdef FEAT_*`)
 
 `shell` `fileops` `recurse` `mouse` `viewer` `harness` (core splits) ·
-`clock` `sort` `cols` `free` `search` `menu` `menubar` `views` `mask` `edit`
-`find` `grep` `results` `zip` `ini` `help` `lang` `lfn` `attr` (features). Each owns its keybind
-rows, optional menu entry, handlers, and `.bss` — adding a feature is one
-`%include` + one tier `%define`.
+`clock` `sort` `cols` `free` `widgets` `search` `menu` `menubar` `tools`
+`toolsini` `discover` `views` `tree` `mask` `edit` `find` `grep` `results`
+`zip` `vfs` `ini` `help` `lang` `lfn` `lfnview` `attr` (features). Each owns
+its handlers, optional menu entry, and `.bss`. The key bindings themselves all
+live in the single `keytab` in `cc.asm` (each row inside its feature's
+`%ifdef`), so adding a feature is one `%include`, one tier `%define`, and a
+`keytab` row.
 
 ### External helpers (separate binaries)
 
@@ -347,8 +405,9 @@ does. Source → binary:
 - in-tree: `cce`→CCEDIT · `cfind`→CCFIND · `czip`→CCZIP · `cgrep`→CCGREP ·
   `chex`→CCHEX · `chexed`→CCHEXED · `csum`→CCSUM · `cdiff`→CCDIFF ·
   `csplit`→CCSPLIT · `cjoin`→CCJOIN · `cren`→CCREN · `ctouch`→CCTOUCH ·
-  `cd64`→CCD64 · `ct64`→CCT64 · `carj`→CCARJ · `crar`→CCRAR · `cimg`→CCIMG ·
-  `cwav`→CCWAV.
+  `cd64`→CCD64 · `ct64`→CCT64 · `carj`→CCARJ · `crar`→CCRAR · `cpak`→CCPAK ·
+  `cmdl`→CCMDL · `cimg`→CCIMG · `cwav`→CCWAV. (`experiments/` holds the
+  CCMDL rigging experiments; they are not part of the distribution.)
 - Gold Box helpers (`CCGLB/CCGEO/CCHLIB/CCDAA/CCSND/CCGB/CCGBC`) build from the
   GoldBox modding project's `native/src`; `package.ps1` assembles them into the
   distribution (falling back to prebuilt `.COM`s if the source tree is absent).

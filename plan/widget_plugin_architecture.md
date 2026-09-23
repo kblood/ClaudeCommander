@@ -1,5 +1,10 @@
 # Widget & plugin architecture — the unified component model
 
+> **Budget figures below are point-in-time (June 2026)** — e.g. "~8 B free",
+> 16 KB `viewbuf`. Current numbers live in `ROADMAP.md` §0/§1 (2026-09-23: STD
+> resident 50,448 B, ~14 KB under the 64,512 B budget since the 8 KB `viewbuf`
+> moved to the far block `xseg`).
+
 Status: **W3a + W1 + W2 + W3 + W4 + W5 ALL SHIPPED (commits e98abf2, e72ce71,
 dacc9b2, c4802ce, 0a97583, 993136e + W5b hotkeys). The W1–W5 sequence is
 complete.** Last updated 2026-06-24. Target: `cc.asm` +
