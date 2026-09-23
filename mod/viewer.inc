@@ -58,13 +58,13 @@ key_view:
 %endif
         ; (no [view] map) fall through into the built-in pager
 
-; Open targpath into viewbuf and run the built-in pager. Reached by F3's text
+; Open targpath into x_viewbuf (xseg) and run the built-in pager. Reached by F3's text
 ; path above and (with view_hex preset) by key_hexview from the Tools menu.
 view_open_builtin:
         mov     word [vtop], 0
         mov     byte [view_edit_req], 0
         mov     byte [mouse_mode], MM_OFF  ; ignore panel clicks while viewing
-.reload:                            ; (re)read targpath into viewbuf
+.reload:                            ; (re)read targpath into x_viewbuf
         mov     ax, 3D00h
         mov     dx, targpath
         int     21h
@@ -73,8 +73,12 @@ view_open_builtin:
         mov     bx, ax
         mov     ah, 3Fh
         mov     cx, VIEW_MAX
-        mov     dx, viewbuf
+        mov     dx, x_viewbuf
+        push    ds
+        push    fs
+        pop     ds                  ; DS:DX = xseg:x_viewbuf for the read
         int     21h
+        pop     ds
         jnc     .rdok
         xor     ax, ax              ; read error -> show an empty file
 .rdok:
@@ -308,18 +312,19 @@ view_nrows:
         mov     cx, [vnlines]
         ret
 
-; build the line-offset table over viewbuf[0..vlen) -> lineoff[], vnlines
+; build the line-offset table over x_viewbuf[0..vlen) -> x_lineoff[], vnlines
+; (both in xseg, via FS)
 view_build_lines:
         mov     word [vnlines], 0
         mov     cx, [vlen]
         jcxz    .done
         xor     si, si              ; byte offset
-        mov     word [lineoff], 0   ; line 0 at offset 0
+        mov     word [fs:x_lineoff], 0  ; line 0 at offset 0
         mov     bx, 1               ; nlines
 .scan:
         cmp     si, [vlen]
         jae     .fin
-        mov     al, [viewbuf+si]
+        mov     al, [fs:x_viewbuf+si]
         inc     si
         cmp     al, 0Ah             ; LF -> next line begins at si
         jne     .scan
@@ -329,8 +334,7 @@ view_build_lines:
         jae     .fin
         mov     di, bx
         shl     di, 1
-        add     di, lineoff
-        mov     [di], si
+        mov     [fs:x_lineoff+di], si
         inc     bx
         jmp     .scan
 .fin:
@@ -395,13 +399,12 @@ render_view:
         add     ax, VIEW_TOP
         imul    ax, ROW_BYTES
         mov     di, ax
-        ; si = lineoff[vtop+bp]
+        ; si = x_lineoff[vtop+bp]  (xseg)
         mov     ax, [vtop]
         add     ax, bp
         mov     bx, ax
         shl     bx, 1
-        add     bx, lineoff
-        mov     si, [bx]
+        mov     si, [fs:x_lineoff+bx]
         xor     cx, cx              ; column
         mov     ah, A_VTXT
 .emit:
@@ -409,7 +412,7 @@ render_view:
         jae     .nextrow
         cmp     si, [vlen]
         jae     .nextrow
-        mov     al, [viewbuf+si]
+        mov     al, [fs:x_viewbuf+si]
         cmp     al, 0Ah
         je      .nextrow
         inc     si
@@ -575,7 +578,7 @@ hex_format_row:
         add     bx, cx
         cmp     bx, [vlen]
         jae     .hpad
-        mov     al, [viewbuf+bx]
+        mov     al, [fs:x_viewbuf+bx]
         call    put_hex8
         jmp     .hsp
 .hpad:
@@ -599,7 +602,7 @@ hex_format_row:
         add     bx, cx
         cmp     bx, [vlen]
         jae     .apad
-        mov     al, [viewbuf+bx]
+        mov     al, [fs:x_viewbuf+bx]
         cmp     al, 20h
         jb      .adot
         cmp     al, 7Eh

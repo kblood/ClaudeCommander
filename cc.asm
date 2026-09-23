@@ -3,7 +3,7 @@
 ;  Stage A: B800 renderer, two panels, directory read+sort, navigation.
 ;
 ;  Assemble:  nasm -f bin cc.asm -o cc.com
-;  Target:    DOS, 286+, color text mode (80x25).
+;  Target:    DOS, 386+, color text mode (80x25).
 ;
 ;  Test mode: "cc /T"  -> reads keystroke script cc.key (pairs of bytes
 ;                         al,ah), feeds them to the dispatcher, and appends
@@ -103,7 +103,8 @@ E_DATE      equ 22         ; word
 ; FEAT_RESULTS reuses two entry slots on a SRC_RESULT panel ONLY (fenced hard by
 ; P_SRC==SRC_RESULT everywhere they are read). HAZARD: a future date/time column
 ; feature must not read these on a results panel.
-E_RES_OFF   equ 20         ; (= E_TIME) near offset of the full path in res_heap
+E_RES_OFF   equ 20         ; (= E_TIME) xseg offset of the full path in x_res_heap
+                           ;   (dereference with fs:)
 E_RES_LINE  equ 22         ; (= E_DATE) first matching line, and the row-type
                            ;   discriminator: 0 = find row (Enter -> jump to the
                            ;   file's folder); >0 = grep file row (Enter -> open
@@ -353,7 +354,11 @@ start:
         mov     ax, prog_end
         add     ax, 15
         shr     ax, 4               ; paragraphs of resident image
-        add     ax, 16              ; + a little slack for stack
+        add     ax, 4               ; + slack. Was 16 paras, but the stack lives
+                                    ;   inside the image (sp = stacktop) so it was
+                                    ;   dead memory; the 12 paras now pay for
+                                    ;   xseg's MCB + the fs:-override code growth,
+                                    ;   keeping PSP+bufseg+xseg <= the old total.
         mov     bx, ax
         mov     ah, 4Ah
         int     21h                 ; resize PSP block (ES=PSP at entry)
@@ -368,6 +373,30 @@ start:
         jc      .nobuf
         mov     [bufseg], ax
 .nobuf:
+        ; --- allocate the far data segment (xseg: viewbuf/lineoff/res_heap, see
+        ;     the XSEG LAYOUT block at the end of the data). Allocated LAST so it
+        ;     sits next to the free arena and can later be grown in place with 4Ah.
+        ;     FS = xseg for cc's whole life (reloaded after every EXEC in
+        ;     run_exec). Unlike bufseg this is mandatory -> bail out cleanly.
+        mov     ah, 48h
+        mov     bx, XSEG_PARAS
+        int     21h
+        jnc     .xok
+        mov     dx, s_nomem         ; nothing touched yet (video mode, dump file,
+        mov     ah, 09h             ;   mouse): just say so and exit; DOS frees
+        int     21h                 ;   bufseg and restores INT 24h
+        mov     ax, 4C08h           ; errorlevel 8 = DOS "insufficient memory"
+        int     21h
+.xok:
+        mov     [xseg], ax
+        mov     fs, ax
+        mov     es, ax              ; zero it (DOS hands out dirty memory; the
+        xor     di, di              ;   buffers were zeroed as .bss before)
+        mov     cx, XSEG_PARAS*8
+        xor     ax, ax
+        rep     stosw
+        push    ds
+        pop     es
 
         ; --- save original video mode, switch to 80x25 colour text ---
         mov     ah, 0Fh
@@ -2585,7 +2614,9 @@ get_key:
         mov     ah, 00h             ; legacy read: gray arrows -> al=0, ah=scan
         int     16h
 .mret:
-        ret
+        mov     fs, [xseg]          ; defence in depth: a hotkey TSR / mouse
+        ret                         ;   driver that ran while we idled may have
+                                    ;   left FS changed (EXEC reloads in run_exec)
 
 ; ============================================================================
 ;  COMMAND EXECUTION  (shell out to COMSPEC /C <cmdline>)
@@ -3611,6 +3642,8 @@ vseg        dw VIDEO        ; current draw target segment: VIDEO normally, the
                             ; off-screen buffer only during render_all's widget
                             ; pass (double-buffering: kills full-screen flicker)
 bufseg      dw 0            ; allocated back-buffer segment (0 = none -> draw live)
+xseg        dw 0            ; far data segment (XSEG LAYOUT below); also held in FS
+s_nomem     db 'Not enough memory.',0Dh,0Ah,'$'
 quit_flag   db 0
 test_mode   db 0
 want_keys   db 0
@@ -3629,6 +3662,36 @@ _count      dw 0
 keypos      dw 0
 keylen      dw 0
 dumph       dw 0FFFFh
+
+; ============================================================================
+;  XSEG LAYOUT  -- the far data segment (allocated with INT 21h/48h at startup,
+;  reached through FS, which holds it for cc's whole life; see start / run_exec)
+; ============================================================================
+; Big buffers live here instead of in the 64 KB program segment. Offsets are
+; symbolic (x_*), addressed as [fs:x_viewbuf+si] etc. Rules for code touching
+; them:
+;   * reads/writes need an fs: override. stos/movs write ES:DI (no override):
+;     set ES=FS around them. DOS calls that take DS:DX (3Fh read) need DS=FS
+;     temporarily -- nothing DS-relative may be touched in between.
+;   * pointers into xseg (rl_path, rl_lastpath, E_RES_OFF, tree node ptrs,
+;     vfs_end/vfs_rcur) are xseg offsets: every dereference uses fs:.
+;   * shared DS string helpers (strlen, bp_copy_name, path_append, vfs_cat...)
+;     must NOT be handed an xseg pointer -- copy into a DS scratch first.
+;   * interrupt handlers (crit_fail) must not use FS.
+; Adding a buffer (e.g. the panel entry arrays, the planned next step): append
+; it here; XSEG_PARAS grows automatically. Keep x_end <= 64 KB. x_res_heap must
+; not sit at offset 0 (results.inc uses rl_lastpath = 0 as "none").
+; Placed BEFORE `section .bss` so build.ps1's .bss scan never counts it.
+[absolute 0]
+x_viewbuf   resb VIEW_MAX       ; F3 pager text / cc.ini parse / archive listing /
+                                ;   FINDOUT/GREPOUT parse / tree nodes (all modal,
+                                ;   never live at the same time)
+x_lineoff   resw MAX_VLINES     ; pager line-start offsets (into x_viewbuf)
+%ifdef FEAT_RESULTS
+x_res_heap  resb RESHEAP_MAX    ; packed ASCIIZ full paths of results/drives rows
+%endif
+x_end:
+XSEG_PARAS  equ (x_end + 15) / 16   ; (13,312 B = 832 paras in STD)
 
 ; ============================================================================
 ;  RESERVED BUFFERS  (must stay LAST so the .COM emits no bytes for them)
@@ -3672,8 +3735,9 @@ ukey_n      resw 1          ; dynamically-registered user hotkey count
 ukeytab     resb UTOOL_MAX*4 ; rows: db class, db code, dw utool-index (keytab-shaped)
 %endif
 %ifdef FEAT_INI
-; cc.ini is read into the shared 8 KB viewbuf at startup (before any panel read
-; or F3 view), so no dedicated scratch is reserved here -- see mod/ini.inc.
+; cc.ini is read into the shared 8 KB x_viewbuf (xseg) at startup (before any
+; panel read or F3 view), so no dedicated scratch is reserved here -- see
+; mod/ini.inc.
 ini_n       resw 1
 LNGMAX      equ 160
 lngbuf      resb LNGMAX     ; mod/lang.inc cc.lng label text (repointed in place)
@@ -3697,7 +3761,7 @@ view_n      resw 1
 %ifdef FEAT_VFS
 vfs_pan     resw 1          ; the panel being (re)listed
 vfs_helper  resw 1          ; -> helper name within openmap
-vfs_end     resw 1          ; end of the listing text in viewbuf
+vfs_end     resw 1          ; end of the listing text in x_viewbuf (xseg offset)
 vfs_lpath   resb 96         ; full path of the CCVFS.LST scratch file
 vfs_cpath   resb 96         ; full path of the container being browsed
 vfs_idx     resw 1          ; member index to extract (F5)
@@ -3783,23 +3847,22 @@ vtop        resw 1
 vnlines     resw 1
 view_hex    resb 1             ; 0 = text pager, 1 = hex dump (toggled by H)
 view_edit_req resb 1           ; E in the pager -> launch an editor, then reload
-viewbuf     resb VIEW_MAX
-lineoff     resw MAX_VLINES
+; (the pager text + line table live in xseg: x_viewbuf / x_lineoff)
 %ifdef FEAT_SNAP
 snapbuf     resb 4000
 %endif
 %ifdef FEAT_RESULTS
-rl_end      resw 1             ; bytes read from FINDOUT.TXT into viewbuf
-rl_path     resw 1             ; res_heap ptr of the path currently being parsed
+rl_end      resw 1             ; xseg offset just past the FINDOUT/GREPOUT text
+rl_path     resw 1             ; x_res_heap ptr of the path currently being parsed
 rl_panel    resw 1             ; the panel being turned into a results list
 rl_namebuf  resb 14            ; basename to land the cursor on after a jump
 rl_grep     resb 1             ; 0 = find list (FINDOUT.TXT), 1 = grep list (GREPOUT.TXT)
 rl_fname    resw 1             ; ptr to the input filename for results_load
 rl_line     resw 1             ; parsed line number of the grep row being built
-rl_lastpath resw 1             ; res_heap ptr of the last emitted file (grep dedup)
+rl_lastpath resw 1             ; x_res_heap ptr of the last emitted file (grep dedup)
 drv_cur     resb 1             ; drive number (1=A) while building the drives list
 view_start_line resw 1         ; 1-based line to open the F3 viewer at (grep jump); 0 = top
-res_heap    resb RESHEAP_MAX   ; packed ASCIIZ full paths (+ matched text for grep)
+; (the packed path heap lives in xseg: x_res_heap)
 %endif
 panelL      resb PANELSIZE
 panelR      resb PANELSIZE

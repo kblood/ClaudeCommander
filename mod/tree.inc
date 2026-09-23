@@ -12,8 +12,11 @@
 ; buffer, its own cursor, and its own key loop, and touches NO core file-op or
 ; refresh code. So adding it is purely additive -- one keytab line + this file.
 ;
-; The node buffer is borrowed from viewbuf (the F3 pager's scratch, idle while
-; the tree is up) so the tree costs no new large .bss -- only a few state words.
+; The node buffer is borrowed from x_viewbuf (the F3 pager's scratch in the far
+; xseg, idle while the tree is up) so the tree costs no new large .bss -- only a
+; few state words. Node pointers (tnode_ptr's si, tree_comp[]) are xseg offsets:
+; every node access is fs:, and a node name is copied to DS (numbuf) before it
+; is handed to the DS-only path_append.
 ; A node is {name[14], depth[1]} = TNSIZE bytes; we DFS-preorder the active
 ; panel's dir tree (dirs only) into it, using the recurse.inc DTA-stack idiom.
 ;
@@ -23,19 +26,20 @@
 TN_NAME    equ 0
 TN_DEPTH   equ 14
 TNSIZE     equ 16
-MAX_TNODES equ 512             ; 512*16 = 8 KB, fits inside viewbuf (14 KB)
+MAX_TNODES equ 512             ; 512*16 = 8 KB = exactly x_viewbuf (VIEW_MAX)
+_tree_fits equ 1/(MAX_TNODES*TNSIZE <= VIEW_MAX)  ; assemble-time assert (div by 0)
 TREE_ROWS  equ 23              ; visible list rows (screen rows 1..23)
 TREE_W     equ 78              ; list width (cols 1..78)
 A_TREE_CUR equ 070h            ; cursor row: black on white
 A_TREE_BAR equ 030h            ; title / help bar: black on cyan
 
-; ax = node index -> si = &node (preserves ax,dx).
+; ax = node index -> si = &node, an xseg offset (preserves ax,dx).
 tnode_ptr:
         push    ax
         push    dx
         mov     dx, TNSIZE
         mul     dx                  ; ax = index * TNSIZE
-        mov     si, viewbuf
+        mov     si, x_viewbuf
         add     si, ax
         pop     dx
         pop     ax
@@ -107,24 +111,24 @@ tree_walk:
 tree_add:
         mov     ax, [t_count]
         call    tnode_ptr           ; si = dest node
-        mov     di, si              ; di -> TN_NAME (offset 0)
-        call    cur_dta_ptr         ; bx -> DTA
+        mov     di, si              ; di -> TN_NAME (offset 0), xseg
+        call    cur_dta_ptr         ; bx -> DTA (DS)
         lea     si, [bx+1Eh]        ; DTA filename (ASCIIZ)
         mov     cx, 13              ; name field cap (8.3 fits in 12 + NUL)
 .cn:
         mov     al, [si]
-        mov     [di], al
+        mov     [fs:di], al
         or      al, al
         jz      .dep
         inc     si
         inc     di
         loop    .cn
-        mov     byte [di], 0        ; over-long: force terminate
+        mov     byte [fs:di], 0     ; over-long: force terminate
 .dep:
         mov     ax, [t_count]
         call    tnode_ptr           ; si = node base
         mov     al, [rdepth]        ; rdepth < MAX_DEPTH(24) -> fits a byte
-        mov     [si+TN_DEPTH], al
+        mov     [fs:si+TN_DEPTH], al
         inc     word [t_count]
         ret
 
@@ -245,13 +249,13 @@ tree_fix:
 tree_goto:
         mov     ax, [t_cur]
         call    tnode_ptr
-        movzx   ax, byte [si+TN_DEPTH]
+        movzx   ax, byte [fs:si+TN_DEPTH]
         mov     [t_depth], ax
         xor     bx, bx              ; bx = scan index i
 .scan:
         mov     ax, bx
-        call    tnode_ptr           ; si = node i
-        movzx   ax, byte [si+TN_DEPTH]
+        call    tnode_ptr           ; si = node i (xseg)
+        movzx   ax, byte [fs:si+TN_DEPTH]
         cmp     ax, MAX_DEPTH
         jae     .cont
         shl     ax, 1
@@ -270,7 +274,16 @@ tree_goto:
         ja      .reread
         mov     di, bx
         shl     di, 1
-        mov     di, [tree_comp+di]  ; di -> node name (path_append wants di=name)
+        mov     si, [tree_comp+di]  ; si -> node name (xseg)
+        mov     di, numbuf          ; path_append reads DS: copy the name to
+.nm:                                ;   numbuf first (TN_NAME is <= 13 + NUL)
+        mov     al, [fs:si]
+        mov     [di], al
+        inc     si
+        inc     di
+        or      al, al
+        jnz     .nm
+        mov     di, numbuf          ; path_append wants di = name
         push    bx
         call    path_append         ; appends "\name" to active P_PATH
         pop     bx
@@ -359,9 +372,9 @@ tree_clear:
         ret
 
 ; Build one node line into linebuf: depth*2 indent spaces + name, then space-pad
-; to TREE_W (no NUL). si = node ptr on entry; clobbers ax,bx,cx,di,si.
+; to TREE_W (no NUL). si = node ptr (xseg) on entry; clobbers ax,bx,cx,di,si.
 tree_line:
-        movzx   cx, byte [si+TN_DEPTH]
+        movzx   cx, byte [fs:si+TN_DEPTH]
         shl     cx, 1               ; indent = depth * 2
         cmp     cx, 40
         jbe     .ic
@@ -372,7 +385,7 @@ tree_line:
         rep     stosb               ; emit indent
         lea     si, [si+TN_NAME]
 .cp:
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .pad
         mov     bx, di

@@ -17,8 +17,9 @@
 ; Grep lists ONE row per matching FILE (not per match line): CCGREP groups its
 ; matches per file, so consecutive output lines for the same path are collapsed
 ; into a single entry that records the first match's line number.
-; The full path of each row lives in res_heap; the entry carries the basename
-; (E_NAME, used for the jump and the viewer header), a near offset to the path
+; The full path of each row lives in x_res_heap (the far xseg, read via fs:);
+; the entry carries the basename
+; (E_NAME, used for the jump and the viewer header), an xseg offset to the path
 ; (E_RES_OFF = E_TIME), and a line number (E_RES_LINE = E_DATE) which is 0 for a
 ; find row and >0 for a grep file row -- that is the find-vs-grep discriminator.
 ;
@@ -118,7 +119,7 @@ drives_load:
         mov     byte [si+E_ATTR], 10h
         mov     word [si+E_RES_LINE], 0
         inc     word [bx+P_COUNT]
-        mov     di, res_heap            ; pack the "X:\" paths here
+        mov     di, x_res_heap          ; pack the "X:\" paths here (xseg, fs:)
         mov     byte [drv_cur], 1       ; 1 = A:
 .next:
         cmp     byte [drv_cur], 26
@@ -142,14 +143,10 @@ drives_load:
         mov     word [si+E_RES_LINE], 0 ; line 0 -> Enter does the find-style jump
         mov     al, [drv_cur]
         add     al, 'A'-1
-        mov     [di], al                ; "X"
-        inc     di
-        mov     byte [di], ':'
-        inc     di
-        mov     byte [di], '\'
-        inc     di
-        mov     byte [di], 0
-        inc     di
+        mov     ah, ':'
+        mov     [fs:di], ax             ; "X:"
+        mov     word [fs:di+2], '\'     ; "\",0
+        add     di, 4
         mov     bx, [ppanel]
         inc     word [bx+P_COUNT]
 .skip:
@@ -184,22 +181,30 @@ results_load:
         mov     bx, ax                  ; handle
         mov     ah, 3Fh
         mov     cx, VIEW_MAX
-        mov     dx, viewbuf             ; use the F3 viewbuf only for this parse
+        mov     dx, x_viewbuf           ; use the F3 viewbuf only for this parse
+        push    ds
+        push    fs
+        pop     ds                      ; DS:DX = xseg:x_viewbuf for the read
         int     21h                     ; ax = bytes read
+        pop     ds
+        jnc     .rdok
+        xor     ax, ax                  ; read error -> parse nothing
+.rdok:
         push    ax
         mov     ah, 3Eh
         int     21h                     ; close (bx = handle)
         pop     ax
+        ; Both the text (si, x_viewbuf) and the heap (di, x_res_heap) are xseg
+        ; offsets: every [si]/[di]/[bp] below is fs:. rl_end = end OFFSET.
+        add     ax, x_viewbuf
         mov     [rl_end], ax
         mov     word [rl_lastpath], 0   ; no file emitted yet (grep dedup)
-        mov     si, viewbuf
-        mov     di, res_heap
+        mov     si, x_viewbuf
+        mov     di, x_res_heap
 .line:
-        mov     ax, si
-        sub     ax, viewbuf
-        cmp     ax, [rl_end]
+        cmp     si, [rl_end]
         jae     .done
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, 0Dh
         je      .skipc
         cmp     al, 0Ah
@@ -216,11 +221,9 @@ results_load:
 .find:
         mov     [rl_path], di
 .fcopy:
-        mov     ax, si
-        sub     ax, viewbuf
-        cmp     ax, [rl_end]
+        cmp     si, [rl_end]
         jae     .feol
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, 0Dh
         je      .feol
         cmp     al, 0Ah
@@ -230,7 +233,7 @@ results_load:
         inc     si
         jmp     .fcopy
 .feol:
-        mov     byte [di], 0            ; NUL-terminate the path
+        mov     byte [fs:di], 0         ; NUL-terminate the path
         inc     di
         mov     ax, di
         dec     ax
@@ -259,11 +262,9 @@ results_load:
         mov     [rl_path], di
         xor     bx, bx                  ; colon counter (the drive ':' is #1)
 .gpath:
-        mov     ax, si
-        sub     ax, viewbuf
-        cmp     ax, [rl_end]
+        cmp     si, [rl_end]
         jae     .gmal                   ; EOL before a 2nd colon -> malformed
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, 0Dh
         je      .gmal
         cmp     al, 0Ah
@@ -282,7 +283,7 @@ results_load:
         jmp     .gpath
 .gmal:
         ; no 2nd colon: treat the whole line as a find-style path row
-        mov     byte [di], 0
+        mov     byte [fs:di], 0
         inc     di
         mov     ax, di
         dec     ax
@@ -306,16 +307,14 @@ results_load:
         pop     si
         jmp     .line                   ; si at CR/LF/EOL -> .line handles it
 .gpend:
-        mov     byte [di], 0            ; NUL-terminate path
+        mov     byte [fs:di], 0         ; NUL-terminate path
         inc     di
         ; parse the decimal line number into cx
         xor     cx, cx
 .gnum:
-        mov     ax, si
-        sub     ax, viewbuf
-        cmp     ax, [rl_end]
+        cmp     si, [rl_end]
         jae     .gnumdone
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, '0'
         jb      .gnumdone
         cmp     al, '9'
@@ -337,11 +336,9 @@ results_load:
         ; FILE, not per match -- the text is shown later by opening the file in the
         ; viewer at this line -- so it is not stored in the heap.
 .gtskip:
-        mov     ax, si
-        sub     ax, viewbuf
-        cmp     ax, [rl_end]
+        cmp     si, [rl_end]
         jae     .gemit
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, 0Dh
         je      .gemit
         cmp     al, 0Ah
@@ -357,8 +354,8 @@ results_load:
         jz      .gnew
         mov     bp, [rl_path]
 .gcmp:
-        mov     al, [bp]
-        cmp     al, [bx]
+        mov     al, [fs:bp]             ; both paths are in x_res_heap
+        cmp     al, [fs:bx]
         jne     .gnew
         or      al, al
         jz      .gdup
@@ -422,16 +419,12 @@ results_load:
 .done:
         ret
 
-; store AL into res_heap at di with a bound check. CF=1 (di unchanged) if full.
-; Preserves bx (callers use it for the colon counter / panel ptr).
+; store AL into x_res_heap (xseg) at di with a bound check. CF=1 (di unchanged)
+; if full. Preserves bx (callers use it for the colon counter / panel ptr).
 heap_putc:
-        push    ax
-        mov     ax, di
-        sub     ax, res_heap
-        cmp     ax, RESHEAP_MAX-4       ; reserve room for two NUL terminators
-        pop     ax
+        cmp     di, x_res_heap+RESHEAP_MAX-4 ; reserve room for two NUL terminators
         jae     .full
-        mov     [di], al
+        mov     [fs:di], al
         inc     di
         clc
         ret
@@ -439,13 +432,14 @@ heap_putc:
         stc
         ret
 
-; si = entry ptr; copy basename of [rl_path] into E_NAME (<=12 chars). si preserved.
+; si = entry ptr; copy basename of [rl_path] (xseg heap, fs:) into E_NAME (DS,
+; <=12 chars). si preserved.
 results_set_name:
         push    si
         mov     bp, [rl_path]
         mov     dx, bp                  ; dx = start of basename
 .bn:
-        mov     al, [bp]
+        mov     al, [fs:bp]
         or      al, al
         jz      .bndone
         inc     bp
@@ -458,7 +452,7 @@ results_set_name:
         lea     di, [si+E_NAME]
         mov     cx, 12
 .nc:
-        mov     al, [bp]
+        mov     al, [fs:bp]
         or      al, al
         jz      .nce
         mov     [di], al
@@ -476,10 +470,10 @@ results_set_name:
 results_view_at_line:
         mov     ax, [si+E_RES_LINE]
         mov     [view_start_line], ax
-        mov     si, [si+E_RES_OFF]      ; full path in res_heap
+        mov     si, [si+E_RES_OFF]      ; full path in x_res_heap (xseg)
         mov     di, targpath
 .cp:
-        mov     al, [si]
+        mov     al, [fs:si]
         mov     [di], al
         inc     si
         inc     di
@@ -512,13 +506,13 @@ results_enter:
         lea     si, [si+E_NAME]
         mov     di, rl_namebuf
         call    bp_copy_name
-        pop     si                      ; si = full path in res_heap
+        pop     si                      ; si = full path in x_res_heap (xseg)
         ; copy the full path into the active panel's P_PATH (cap 67 + NUL)
         mov     bx, [active]
         lea     di, [bx+P_PATH]
         mov     cx, 67
 .cp:
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .cpe
         mov     [di], al

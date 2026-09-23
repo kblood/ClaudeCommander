@@ -198,6 +198,8 @@ exec_user_tool:
 ; name returns CF=1 with dl=class (KB_EXT/KB_ASC) and dh=scan/ascii code; else
 ; CF=0. Recognises [Alt-|Ctrl-|Shift-]Fn (n=1..10) and Ctrl-<letter>; the
 ; modifier and the 'F' are case-insensitive. si may be advanced either way.
+; si is an xseg offset (the cc.ini text in x_viewbuf, read via fs:) -- the
+; only caller is ini.inc's tools_add; pk_pfx likewise (its di table is DS).
 parse_key:
         push    bx
         push    cx
@@ -219,12 +221,12 @@ parse_key:
         jnc     .havemod                ; ch stays 0 (no modifier)
         mov     ch, 3
 .havemod:
-        mov     al, [si]
+        mov     al, [fs:si]
         and     al, 0DFh
         cmp     al, 'F'                 ; function key?
         jne     .ctl
         inc     si
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, '0'
         jb      .fail
         cmp     al, '9'
@@ -232,7 +234,7 @@ parse_key:
         sub     al, '0'
         mov     cl, al                  ; cl = first digit
         inc     si
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, '0'
         jb      .fnum
         cmp     al, '9'
@@ -272,7 +274,7 @@ parse_key:
 .ctl:
         cmp     ch, 2                   ; only Ctrl-<letter> for the non-Fn case
         jne     .fail
-        mov     al, [si]
+        mov     al, [fs:si]
         and     al, 0DFh
         cmp     al, 'A'
         jb      .fail
@@ -302,7 +304,7 @@ pk_pfx:
         mov     al, [di]
         or      al, al
         jz      .end
-        mov     ah, [si]
+        mov     ah, [fs:si]
         and     al, 0DFh
         and     ah, 0DFh
         cmp     al, ah
@@ -311,7 +313,7 @@ pk_pfx:
         inc     di
         jmp     .c
 .end:
-        cmp     byte [si], '-'
+        cmp     byte [fs:si], '-'
         jne     .no
         inc     si
         add     sp, 2                   ; commit the advanced si

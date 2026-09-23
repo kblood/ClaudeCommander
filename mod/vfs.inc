@@ -86,8 +86,15 @@ vfs_load:
         mov     bx, ax
         mov     ah, 3Fh
         mov     cx, VIEW_MAX-1
-        mov     dx, viewbuf
+        mov     dx, x_viewbuf
+        push    ds
+        push    fs
+        pop     ds                  ; DS:DX = xseg:x_viewbuf for the read
         int     21h
+        pop     ds
+        jnc     .rdok
+        xor     ax, ax              ; read error -> empty listing
+.rdok:
         push    ax
         mov     ah, 3Eh             ; close (bx still = handle)
         int     21h
@@ -95,13 +102,15 @@ vfs_load:
         mov     dx, vfs_lpath
         int     21h
         pop     ax                  ; bytes read
-        mov     si, viewbuf
+        ; the listing text is in xseg: si (and vfs_end / vfs_rcur, and bx in
+        ; vfs_copy_comp) are xseg offsets -> every listing read is fs:
+        mov     si, x_viewbuf
         add     ax, si
         mov     [vfs_end], ax
 .pl:
         cmp     si, [vfs_end]
         jae     .fin
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .fin
         cmp     al, 0Dh
@@ -155,7 +164,7 @@ vfs_parse_line:
         xor     ax, ax              ; dx:ax = running size
         xor     dx, dx
 .num:
-        mov     bl, [si]
+        mov     bl, [fs:si]         ; (si = listing text in xseg)
         cmp     bl, '0'
         jb      .numd
         cmp     bl, '9'
@@ -183,7 +192,7 @@ vfs_parse_line:
         mov     [vfs_lsize], ax
         mov     [vfs_lsize+2], dx
 .sp:
-        cmp     byte [si], ' '
+        cmp     byte [fs:si], ' '
         jne     .pfx
         inc     si
         jmp     .sp
@@ -195,7 +204,7 @@ vfs_parse_line:
         mov     ah, [di]            ; prefix char
         or      ah, ah
         jz      .matched            ; whole prefix consumed -> at our level
-        mov     al, [si]            ; name char
+        mov     al, [fs:si]         ; name char (xseg); prefix [di] is DS
         or      al, al
         jz      .endline            ; name shorter than prefix -> not here
         cmp     al, 0Dh
@@ -218,7 +227,7 @@ vfs_parse_line:
         mov     bx, si              ; bx = remainder start
         xor     dx, dx              ; dx = first separator pos (0 = none)
 .scan:
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .scend
         cmp     al, 0Dh
@@ -255,7 +264,7 @@ vfs_parse_line:
 .endline:
         ; (prefix mismatch) advance the still-valid listing cursor to the
         ; terminator so the caller resumes on the next line.
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .et2
         cmp     al, 0Dh
@@ -286,7 +295,8 @@ vfs_norm_al:
         sub     al, 20h
 .d:     ret
 
-; copy [bx..si) into vfs_comp, truncated to 13 chars, NUL-terminated. si/bx kept.
+; copy [bx..si) (listing text, xseg) into vfs_comp (DS), truncated to 13 chars,
+; NUL-terminated. si/bx kept.
 vfs_copy_comp:
         push    si
         push    bx
@@ -296,7 +306,7 @@ vfs_copy_comp:
         cmp     bx, si
         jae     .d
         jcxz    .d
-        mov     al, [bx]
+        mov     al, [fs:bx]
         mov     [di], al
         inc     bx
         inc     di

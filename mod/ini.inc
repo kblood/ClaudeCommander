@@ -22,9 +22,13 @@ ini_load:                           ; (startup only: open_n/view_n/utool_n and
         jc      .ret
         mov     bx, ax
         mov     ah, 3Fh
-        mov     cx, VIEW_MAX-1      ; reuse the 8 KB F3/vfs scratch (startup-only,
-        mov     dx, viewbuf         ; runs before any panel read or file view)
+        mov     cx, VIEW_MAX-1      ; reuse the 8 KB F3/vfs scratch in xseg
+        mov     dx, x_viewbuf       ; (startup-only: runs before any panel read
+        push    ds                  ;  or file view)
+        push    fs
+        pop     ds                  ; DS:DX = xseg:x_viewbuf for the read
         int     21h
+        pop     ds
         jc      .close
         mov     [ini_n], ax
 .close:
@@ -33,12 +37,16 @@ ini_load:                           ; (startup only: open_n/view_n/utool_n and
         mov     bx, [ini_n]
         or      bx, bx
         jz      .ret
-        mov     byte [viewbuf+bx], 0 ; NUL-terminate the text
-        mov     si, viewbuf
+        mov     byte [fs:x_viewbuf+bx], 0 ; NUL-terminate the text
+        ; From here on si walks the ini TEXT in xseg: every [si] read in this
+        ; parser (and kw_match/val_is/sect_is/map_add/tools_add/parse_key/
+        ; pk_pfx/set_editor_val, which are only ever handed this text) is fs:.
+        ; di-side keyword tables and the maps/utbuf being filled stay in DS.
+        mov     si, x_viewbuf
 .line:
         ; skip leading blanks
 .lead:
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, ' '
         je      .adv
         cmp     al, 9
@@ -165,7 +173,7 @@ ini_load:                           ; (startup only: open_n/view_n/utool_n and
         jmp     .skip
 %endif
 .skip:
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .done
         cmp     al, 0Ah
@@ -179,14 +187,15 @@ ini_load:                           ; (startup only: open_n/view_n/utool_n and
 .ret:
         ret
 
-; kw_match: di=keyword ASCIIZ, si=text.  On a case-insensitive match of
-; "<keyword> [spaces] = [spaces]", returns CF=1 with si at the value; else CF=0.
+; kw_match: di=keyword ASCIIZ (DS), si=text (xseg, fs:).  On a case-insensitive
+; match of "<keyword> [spaces] = [spaces]", returns CF=1 with si at the value;
+; else CF=0.
 kw_match:
 .cmp:
         mov     al, [di]
         or      al, al
         jz      .kwend
-        mov     ah, [si]
+        mov     ah, [fs:si]
         mov     cl, al
         and     cl, 0DFh
         mov     ch, ah
@@ -198,16 +207,16 @@ kw_match:
         jmp     .cmp
 .kwend:
 .sp1:
-        cmp     byte [si], ' '
+        cmp     byte [fs:si], ' '
         jne     .eq
         inc     si
         jmp     .sp1
 .eq:
-        cmp     byte [si], '='
+        cmp     byte [fs:si], '='
         jne     .no
         inc     si
 .sp2:
-        cmp     byte [si], ' '
+        cmp     byte [fs:si], ' '
         jne     .ok
         inc     si
         jmp     .sp2
@@ -218,15 +227,16 @@ kw_match:
         clc
         ret
 
-; val_is: di=keyword, si=value.  CF=1 if the value token equals keyword
-; (case-insensitive, terminated by space/CR/LF/tab/NUL).  si preserved.
+; val_is: di=keyword (DS), si=value (xseg, fs:).  CF=1 if the value token
+; equals keyword (case-insensitive, terminated by space/CR/LF/tab/NUL).
+; si preserved.
 val_is:
         push    si
 .cmp:
         mov     al, [di]
         or      al, al
         jz      .end
-        mov     ah, [si]
+        mov     ah, [fs:si]
         mov     cl, al
         and     cl, 0DFh
         mov     ch, ah
@@ -237,7 +247,7 @@ val_is:
         inc     di
         jmp     .cmp
 .end:
-        mov     al, [si]
+        mov     al, [fs:si]
         cmp     al, ' '
         je      .ok
         cmp     al, 0Dh
@@ -281,13 +291,13 @@ set_sort_val:
         ret
 
 %ifdef FEAT_EDIT
-; si -> value token -> copy into editor_name (max 15 chars, NUL-terminated),
-; stopping at the first space / tab / CR / LF / NUL.
+; si -> value token (xseg) -> copy into editor_name (DS; max 15 chars,
+; NUL-terminated), stopping at the first space / tab / CR / LF / NUL.
 set_editor_val:
         mov     di, editor_name
         mov     cx, 15
 .cp:
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .end
         cmp     al, ' '
@@ -352,14 +362,14 @@ set_cols_val:
 .a:     mov     byte [col_mode], 3
         ret
 
-; si -> char after '['. di = section name ASCIIZ. CF=1 if the bracketed name
-; matches (case-insensitive) followed by ']'. si/di not preserved.
+; si -> char after '[' (xseg text). di = section name ASCIIZ (DS). CF=1 if the
+; bracketed name matches (case-insensitive) followed by ']'. si/di not preserved.
 sect_is:
         push    si
 .c:     mov     al, [di]
         or      al, al
         jz      .end
-        mov     ah, [si]
+        mov     ah, [fs:si]
         and     al, 0DFh
         and     ah, 0DFh
         cmp     al, ah
@@ -367,7 +377,7 @@ sect_is:
         inc     si
         inc     di
         jmp     .c
-.end:   cmp     byte [si], ']'
+.end:   cmp     byte [fs:si], ']'
         jne     .no
         pop     ax                  ; discard saved si
         stc
@@ -394,7 +404,7 @@ map_add:
         mov     di, bp              ; write cursor for the ext (max 3, upper)
         mov     cx, 3
 .ext:
-        mov     al, [si]
+        mov     al, [fs:si]         ; (si = ini text in xseg)
         or      al, al
         jz      .bad
         cmp     al, 0Dh
@@ -420,7 +430,7 @@ map_add:
         jmp     .ext
 .exte:
         ; skip spaces/tabs and the '='
-.sk:    mov     al, [si]
+.sk:    mov     al, [fs:si]
         cmp     al, ' '
         je      .ska
         cmp     al, 9
@@ -433,7 +443,7 @@ map_add:
 .hel:
         lea     di, [bp+4]          ; helper field (max 13 + NUL)
         mov     cx, 13
-.hl:    mov     al, [si]
+.hl:    mov     al, [fs:si]
         or      al, al
         jz      .hend
         cmp     al, 0Dh
@@ -476,7 +486,7 @@ tools_add:
         mov     di, [ut_pp]             ; write cursor in utbuf
         mov     bx, di                  ; bx = label start (preserved throughout)
 .lbl:
-        mov     al, [si]
+        mov     al, [fs:si]             ; (si = ini text in xseg; di/bx = utbuf, DS)
         or      al, al
         jz      .bad
         cmp     al, 0Dh
@@ -510,7 +520,7 @@ tools_add:
         inc     di
         inc     si                      ; past '='
 .sk:
-        mov     al, [si]                ; skip blanks before the program token
+        mov     al, [fs:si]             ; skip blanks before the program token
         cmp     al, ' '
         je      .ska
         cmp     al, 9
@@ -522,7 +532,7 @@ tools_add:
 .prog:
         mov     dx, di                  ; dx = program start
 .pcp:
-        mov     al, [si]
+        mov     al, [fs:si]
         or      al, al
         jz      .proge
         cmp     al, 0Dh
@@ -552,7 +562,7 @@ tools_add:
         mov     word [utool_key+di], 0  ; default: no hotkey
         ; --- optional 3rd column: a key name (e.g. Alt-F3) -> utool_key ---
 .ksk:
-        mov     al, [si]                ; skip blanks before the key token
+        mov     al, [fs:si]             ; skip blanks before the key token
         cmp     al, ' '
         je      .ksa
         cmp     al, 9

@@ -197,6 +197,7 @@ run_exec:
         sti
         push    ds
         pop     es
+        mov     fs, [xseg]          ; the child may have clobbered FS (xseg ptr)
         ; restore our DTA
         mov     ah, 1Ah
         mov     dx, dta_buf
