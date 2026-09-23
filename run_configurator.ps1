@@ -104,8 +104,8 @@ T.COM /T
 exit
 "@
             Set-Content -Path "$work\_smoke.conf" -Value $conf -Encoding ASCII
-            $pr = Start-Process -FilePath $dbox -ArgumentList @("-conf","$work\_smoke.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-            if (-not $pr.WaitForExit(15000)) { $pr.Kill() | Out-Null }
+            $pr = Start-Process -FilePath $dbox -ArgumentList @("-conf","$work\_smoke.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+            if (-not $pr.WaitForExit(15000)) { $pr.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 15s)"; exit 1 }
             Start-Sleep -Milliseconds 200
             $dump = "$sd\CCDUMP.TXT"
             if ((Test-Path $dump) -and ((Get-Content $dump -Raw) -match 'FRAME')) {

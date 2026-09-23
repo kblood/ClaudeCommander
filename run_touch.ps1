@@ -22,8 +22,12 @@ Write-Host ("CCTOUCH build: {0} bytes" -f (Get-Item "$dir\cctouch.com").Length)
 $td = "$dir\_touchrt"
 New-Item -ItemType Directory -Path $td -Force | Out-Null
 foreach ($f in "EXPL.TXT","NOW.TXT","DONLY.TXT","HM.TXT","RO.TXT") {
+    # a previous run leaves RO.TXT read-only -> clear it so the rewrite succeeds
+    if (Test-Path "$td\$f") { (Get-Item "$td\$f").IsReadOnly = $false }
     [IO.File]::WriteAllText("$td\$f","x")
 }
+# R.TXT is appended to (>>) -- drop the previous run's copy so stale lines can't pass
+if (Test-Path "$td\R.TXT") { Remove-Item "$td\R.TXT" -Force }
 Copy-Item "$dir\cctouch.com" "$td\CCTOUCH.COM" -Force
 
 # host "now" date, for the NOW.TXT assertion (DD.MM.YYYY as DOSBox DIR prints)
@@ -61,8 +65,8 @@ dir RO.TXT >> R.TXT
 exit
 "@
 Set-Content -Path "$td\_run_touch.conf" -Value $conf -Encoding ASCII
-$p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$td\_run_touch.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-if (-not $p.WaitForExit(20000)) { $p.Kill() | Out-Null }
+$p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$td\_run_touch.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+if (-not $p.WaitForExit(20000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 20s)"; exit 1 }
 Start-Sleep -Milliseconds 300
 
 if (-not (Test-Path "$td\R.TXT")) { Write-Host "FAIL: no output produced"; exit 1 }

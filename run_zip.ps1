@@ -1,3 +1,4 @@
+# run_zip.ps1 -- CCZIP lists a known two-member zip; asserts names+sizes+method.
 $ErrorActionPreference = "Stop"
 $dir  = "C:\LLM\DOS\cc"
 $dbox = "$dir\dbstaging\dosbox-staging-v0.82.2\dosbox.exe"
@@ -33,11 +34,24 @@ $confPath = "$dir\_run_zip.conf"
 Set-Content -Path $confPath -Value $conf -Encoding ASCII
 
 if (Test-Path "$dir\ziplist.txt") { Remove-Item "$dir\ziplist.txt" -Force }
-$p = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf") -PassThru -WindowStyle Minimized
-if (-not $p.WaitForExit(12000)) { $p.Kill() | Out-Null }
+$p = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+if (-not $p.WaitForExit(12000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 12s)"; exit 1 }
 Start-Sleep -Milliseconds 300
 
-if (Test-Path "$dir\ziplist.txt") {
-    Write-Host "===== ZIPLIST.TXT ====="
-    Get-Content "$dir\ziplist.txt"
-} else { Write-Host "NO OUTPUT" }
+if (-not (Test-Path "$dir\ziplist.txt")) { Write-Host "NO OUTPUT"; exit 1 }
+Write-Host "===== ZIPLIST.TXT ====="
+Get-Content "$dir\ziplist.txt"
+Write-Host "======================="
+
+# one row per member: name, uncompressed size, method (whitespace-normalised)
+$expected = @("TA.TXT 11 bytes (deflated)", "TB.TXT 5000 bytes (deflated)")
+$got = @(Get-Content "$dir\ziplist.txt" | ForEach-Object { ($_ -replace '\s+', ' ').Trim() } | Where-Object { $_ -ne "" })
+$fail = 0
+foreach ($e in $expected) {
+    if ($got -ccontains $e) { Write-Host "PASS: member '$e'" } else { Write-Host "FAIL: missing member row '$e'"; $fail++ }
+}
+if ($got.Count -eq $expected.Count) { Write-Host "PASS: exactly $($expected.Count) member rows" }
+else { Write-Host ("FAIL: got {0} rows, want {1}" -f $got.Count, $expected.Count); $fail++ }
+if ($fail -gt 0) { Write-Host "ZIP: FAIL ($fail)"; exit 1 }
+Write-Host "ZIP: PASS"
+exit 0

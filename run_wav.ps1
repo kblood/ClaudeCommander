@@ -76,15 +76,16 @@ exit
 "@
     Set-Content -Path "$dir\_run_wav.conf" -Value $conf -Encoding ASCII
     if (Test-Path "$dir\CCWAV.RAW") { Remove-Item "$dir\CCWAV.RAW" -Force }
-    $p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_wav.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-    if (-not $p.WaitForExit(15000)) { $p.Kill() | Out-Null }
+    $p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_wav.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+    if (-not $p.WaitForExit(15000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 15s)"; exit 1 }
     Start-Sleep -Milliseconds 300
     if (-not (Test-Path "$dir\CCWAV.RAW")) { return $null }
     return [IO.File]::ReadAllBytes("$dir\CCWAV.RAW")
 }
 
+$fail = 0
 function Compare-Case($name, $got, $exp) {
-    if ($null -eq $got) { Write-Host ("{0}: NO OUTPUT" -f $name); return }
+    if ($null -eq $got) { Write-Host ("{0}: NO OUTPUT" -f $name); $script:fail++; return }
     $bad = -1
     $n = [Math]::Min($got.Length, $exp.Length)
     for ($i=0; $i -lt $n; $i++) { if ($got[$i] -ne $exp[$i]) { $bad = $i; break } }
@@ -92,6 +93,7 @@ function Compare-Case($name, $got, $exp) {
         Write-Host ("{0}: PASS ({1} bytes)" -f $name, $got.Length)
     } else {
         Write-Host ("{0}: FAIL len got={1} exp={2} firstdiff={3}" -f $name, $got.Length, $exp.Length, $bad)
+        $script:fail++
         if ($bad -ge 0) {
             $lo=[Math]::Max(0,$bad-2); $hi=[Math]::Min($n-1,$bad+6)
             Write-Host ("  got: " + (($lo..$hi | ForEach-Object {"{0:X2}" -f $got[$_]}) -join " "))
@@ -120,3 +122,4 @@ Build-Wav "$dir\TEST2.WAV" 22050 2 16 $pcmB
 $expB = Expected 22050 2 16 $pcmB
 $gotB = Run-Decode "TEST2.WAV"
 Compare-Case "WAV-16bit-stereo" $gotB $expB
+if ($fail -gt 0) { exit 1 } else { exit 0 }

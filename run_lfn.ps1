@@ -55,8 +55,8 @@ Set-Content -Path $confPath -Value $conf -Encoding ASCII
 # 5. run with timeout
 $dump = "$lt\CCDUMP.TXT"
 if (Test-Path $dump) { Remove-Item $dump -Force }
-$p = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf") -PassThru -WindowStyle Minimized
-if (-not $p.WaitForExit(12000)) { $p.Kill() | Out-Null }
+$p = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+if (-not $p.WaitForExit(12000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 12s)"; exit 1 }
 Start-Sleep -Milliseconds 300
 
 # 6. show dump (last frame only)

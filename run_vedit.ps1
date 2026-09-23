@@ -45,13 +45,13 @@ exit
 Set-Content -Path "$dir\_run_vedit.conf" -Value $conf -Encoding ASCII
 
 if (Test-Path "$td\TEDOUT.TXT") { Remove-Item "$td\TEDOUT.TXT" -Force }
-$p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_vedit.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-if (-not $p.WaitForExit(15000)) { $p.Kill() | Out-Null }
+$p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_vedit.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+if (-not $p.WaitForExit(15000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 15s)"; exit 1 }
 Start-Sleep -Milliseconds 300
 
 if (Test-Path "$td\TEDOUT.TXT") {
     $t = (Get-Content "$td\TEDOUT.TXT" -Raw)
     Write-Host "editor ran from pager. tail = [$($t.Trim())]"
-    if ($t -match 'AAA\.TXT') { Write-Host "PASS: F3 pager E key launched the editor on the viewed file" }
-    else { Write-Host "FAIL: editor ran but file path not in tail" }
-} else { Write-Host "FAIL: TEDOUT.TXT not created -- E key did not launch the editor" }
+    if ($t -match 'AAA\.TXT') { Write-Host "PASS: F3 pager E key launched the editor on the viewed file"; exit 0 }
+    else { Write-Host "FAIL: editor ran but file path not in tail"; exit 1 }
+} else { Write-Host "FAIL: TEDOUT.TXT not created -- E key did not launch the editor"; exit 1 }

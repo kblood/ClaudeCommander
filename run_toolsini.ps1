@@ -51,8 +51,8 @@ c:\cctini.com /T
 exit
 "@
     Set-Content -Path "$dir\_run_tini.conf" -Value $conf -Encoding ASCII
-    $p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_tini.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-    if (-not $p.WaitForExit(20000)) { $p.Kill() | Out-Null }
+    $p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_tini.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+    if (-not $p.WaitForExit(20000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 20s)"; exit 1 }
     Start-Sleep -Milliseconds 300
     return (Get-Content "$td\CCDUMP.TXT" -Raw)
 }
@@ -90,4 +90,6 @@ if ($mUser -and $mBuilt -and $ranExists -and (-not $eUser)) {
 } else {
     Write-Host "`nTOOLS_INI HARNESS: FAIL"
     Write-Host "----- menu dump -----"; Write-Host $menu
+    exit 1
 }
+exit 0

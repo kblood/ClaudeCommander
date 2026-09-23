@@ -31,6 +31,9 @@ function Scenario($name, $withTool) {
     New-Item -ItemType Directory -Path $td | Out-Null
     [IO.File]::WriteAllText("$td\DATA.TXT","hello NEEDLE world")
     if ($withTool) { Copy-Item "$dir\ccgrep.com" "$td\CCGREP.COM" }
+    # run cc from $td, not C:\ (= repo root, which holds ccgrep.com): discovery
+    # also scans cc's own program dir, so C:\ccdisc.com would always "find" CCGREP
+    Copy-Item "$dir\ccdisc.com" "$td\CCDISC.COM"
     # present -> drive the full grep (expect a results row); absent -> Alt-F8 then
     # quit (expect a silent no-op, so don't type into the freed command line).
     [IO.File]::WriteAllBytes("$td\cc.key", (MakeKeys $withTool))
@@ -47,12 +50,12 @@ mount c $dir
 mount d $td
 d:
 if exist ccdump.txt del ccdump.txt
-c:\ccdisc.com /T
+d:\ccdisc.com /T
 exit
 "@
     Set-Content -Path "$dir\_run_disc.conf" -Value $conf -Encoding ASCII
-    $p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_disc.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-    if (-not $p.WaitForExit(20000)) { $p.Kill() | Out-Null }
+    $p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_disc.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+    if (-not $p.WaitForExit(20000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 20s)"; exit 1 }
     Start-Sleep -Milliseconds 300
     $raw = Get-Content "$td\CCDUMP.TXT" -Raw
     return $raw

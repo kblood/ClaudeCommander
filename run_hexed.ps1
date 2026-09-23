@@ -39,8 +39,8 @@ exit
 "@
 Set-Content -Path "$dir\_run_hexed.conf" -Value $conf -Encoding ASCII
 
-$p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_hexed.conf","-noprimaryconf") -PassThru -WindowStyle Minimized
-if (-not $p.WaitForExit(15000)) { $p.Kill() | Out-Null }
+$p = Start-Process -FilePath $dbox -ArgumentList @("-conf","$dir\_run_hexed.conf","-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+if (-not $p.WaitForExit(15000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 15s)"; exit 1 }
 Start-Sleep -Milliseconds 300
 
 $got = [IO.File]::ReadAllBytes("$td\AAA.BIN")
@@ -50,4 +50,6 @@ if ($got.Length -eq 4 -and $got[0] -eq 0xAB -and $got[1] -eq 0xCD -and $got[2] -
     Write-Host "PASS: CCHEXED overwrote byte0=AB byte1=CD and saved in place (size unchanged)"
 } else {
     Write-Host "FAIL: expected [AB CD 00 00]"
+    exit 1
 }
+exit 0

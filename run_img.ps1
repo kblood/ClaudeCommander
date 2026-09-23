@@ -179,16 +179,17 @@ exit
     $confPath = "$dir\_run_img.conf"
     Set-Content -Path $confPath -Value $conf -Encoding ASCII
     if (Test-Path "$dir\CCIMG.RAW") { Remove-Item "$dir\CCIMG.RAW" -Force }
-    $proc = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf") -PassThru -WindowStyle Minimized
-    if (-not $proc.WaitForExit(15000)) { $proc.Kill() | Out-Null }
+    $proc = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+    if (-not $proc.WaitForExit(15000)) { $proc.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 15s)"; exit 1 }
     Start-Sleep -Milliseconds 300
     if (-not (Test-Path "$dir\CCIMG.RAW")) { return $null }
     return [IO.File]::ReadAllBytes("$dir\CCIMG.RAW")
 }
 
+$fail = 0
 foreach ($f in @("TEST.BMP","TEST.PCX","TEST.GIF")) {
     $got = Run-Decode $f
-    if ($null -eq $got) { Write-Host ("{0}: NO OUTPUT" -f $f); continue }
+    if ($null -eq $got) { Write-Host ("{0}: NO OUTPUT" -f $f); $fail++; continue }
     if ($got.Length -ne $expA.Length) {
         Write-Host ("{0}: LENGTH MISMATCH got={1} exp={2}" -f $f, $got.Length, $expA.Length)
     }
@@ -199,6 +200,7 @@ foreach ($f in @("TEST.BMP","TEST.PCX","TEST.GIF")) {
         Write-Host ("{0}: PASS ({1} bytes)" -f $f, $got.Length)
     } else {
         Write-Host ("{0}: FAIL first diff at byte {1}" -f $f, $bad)
+        $fail++
         if ($bad -ge 0) {
             $lo = [Math]::Max(0,$bad-2); $hi=[Math]::Min($n-1,$bad+6)
             $g = ($lo..$hi | ForEach-Object { "{0:X2}" -f $got[$_] }) -join " "
@@ -208,3 +210,4 @@ foreach ($f in @("TEST.BMP","TEST.PCX","TEST.GIF")) {
         }
     }
 }
+if ($fail -gt 0) { exit 1 } else { exit 0 }

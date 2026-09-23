@@ -47,8 +47,8 @@ $confPath = "$dir\_run_edit.conf"
 Set-Content -Path $confPath -Value $conf -Encoding ASCII
 
 if (Test-Path "$dir\CCEDUMP.TXT") { Remove-Item "$dir\CCEDUMP.TXT" -Force }
-$p = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf") -PassThru -WindowStyle Minimized
-if (-not $p.WaitForExit(12000)) { $p.Kill() | Out-Null }
+$p = Start-Process -FilePath $dbox -ArgumentList @("-conf",$confPath,"-noprimaryconf","--exit") -PassThru -WindowStyle Minimized
+if (-not $p.WaitForExit(12000)) { $p.Kill() | Out-Null; Write-Host "FAIL: DOSBox hang/timeout (killed after 12s)"; exit 1 }
 Start-Sleep -Milliseconds 300
 
 # 5. report and assert the saved file as a byte-accurate hex/escape view
