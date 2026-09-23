@@ -10,15 +10,36 @@ The DOS build (`../cc.asm` → `cc.com`) is a 16-bit real-mode program. **64-bit
 Windows cannot run 16-bit executables at all** (there is no NTVDM), so `cc.com`
 only runs under DOSBox / on real DOS / on the MiSTer ao486 core. This port is a
 fresh C implementation on the Win32 Console + File APIs that shares the DOS
-version's *design* — the 80×25 char-cell UI, the same attribute palette, the
-same key map — but not its source.
+version's *design* — the 80×25 char-cell UI and the same attribute palette —
+but not its source. The key map is **similar but not identical** (see the key
+table below): there is no command line, so typing letters starts a quick
+search and `Esc` quits; `F2` renames (DOS: user menu); `Ctrl+S` cycles the sort
+(DOS: `Ctrl-F1..F4`); and `F1` help / `F9` menu bar are not implemented, so
+their slots on the F-key bar are left blank.
 
 What the port gains by leaving DOS behind:
 
 - **No 64 KB segment wall.** The single hardest DOS constraint is gone; every
   feature can live in one binary instead of being pushed to external helpers.
 - **Native long filenames + 64-bit sizes** via `FindFirstFileW`.
-- **One-call file ops** (`CopyFileW`/`MoveFileExW`/`SetFileTime`).
+- **One-call file ops** (`CopyFileW`/`MoveFileExW`/`DeleteFileW`).
+
+### File-operation safety
+
+- A folder is never copied or moved into itself or its own subfolder (checked
+  on resolved, case-insensitive full paths; `A2` is not "inside" `A`).
+- A folder move that can't be a rename (other volume, locked file) falls back
+  to copy + delete, and the source is deleted **only if every item copied**.
+- Junctions and symlinks are never followed: delete removes the link itself,
+  copy skips folder links (reported as failures, so a move keeps its source)
+  and copies file symlinks as the contents of their target.
+- Existing targets are never overwritten silently: F5/F6 ask
+  `[Y] Overwrite  [N] Skip  [Esc] Cancel`.
+- Every failure is counted and shown on the status row (`Copy: 3 done, 1
+  failed: <system error>`); the read-only bit is cleared only right before that
+  item's own delete and put back if the delete fails.
+- Paths that would exceed `MAX_PATH` are refused, never truncated.
+- F3 shows at most the first 8 MB of a file.
 
 The rendering and input models map almost 1:1 onto Win32: a `CHAR_INFO` cell is
 a VGA text-mode word (same low-nibble-fg / high-nibble-bg attribute layout), and
@@ -52,6 +73,13 @@ cc.cmd             # cmd.exe: same, for a classic console
 Both set `%CC_CWD_FILE%`, run `cc.exe`, then `cd` to the path cc wrote there on
 exit. Put this folder on your `PATH` (or copy the wrapper) to use `cc` everywhere.
 Running `cc.exe` directly still works — it just can't move the shell afterwards.
+The file is UTF-8 (no BOM): `cc.ps1` reads it with `-Encoding UTF8`, and
+`cc.cmd` switches to `chcp 65001` just for the read and then restores your
+codepage, so folders with non-ANSI names (e.g. `Æblegrød Ж中`) work from both.
+
+`cc.exe` needs a real console on stdin/stdout; if either is redirected it exits
+with a message (code 2) instead of running. Use the headless mode below for
+scripting.
 
 | Key | Action |
 |---|---|
@@ -70,7 +98,8 @@ Running `cc.exe` directly still works — it just can't move the shell afterward
 | Ctrl+S | cycle sort: name → ext → size → date |
 | Ctrl+T | cycle colour theme: blue → black → mono |
 | (type letters) | quick incremental search; Backspace edits, Esc clears |
-| F10 / Esc | quit |
+| F10 / Esc | quit (Esc first clears an active quick search) |
+| F1 / F9 | not bound in this port (blank on the F-key bar) |
 
 The active panel's sort mode and the current theme are shown on the status row;
 while quick-searching it shows the search string.
@@ -90,9 +119,13 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 ```
 
 - `--keys` replays a whitespace-separated token script (`UP DOWN ENTER TAB TAG
-  PGUP PGDN HOME END QUIT COPY MOVE DEL VIEW SORT THEME EDIT DRIVESL DRIVESR`,
-  plus arg-carrying `MKDIR:<name>`, `REN:<name>`, `SORT:name|ext|size|date`,
-  `TYPE:<text>` (quick search), `DRIVE:<letter>`).
+  PGUP PGDN HOME END QUIT COPY MOVE DEL VIEW SORT THEME EDIT DRIVESL DRIVESR
+  RENBOX`, plus arg-carrying `MKDIR:<name>`, `REN:<name>`, `SORT:name|ext|size|date`,
+  `TYPE:<text>` (quick search), `DRIVE:<letter>`). `DEL` deletes without the
+  confirm dialog; when `COPY`/`MOVE` open the overwrite dialog, it is answered
+  with `YES` / `NO` / `CANCEL` (any other token is ignored while it is open).
+- `run_test.ps1 [-Work <dir>]` puts its test data (including junctions and
+  deletes) under `<dir>` instead of this folder.
 - `--size WxH` composes the frame at an arbitrary size (default 80×25), so the
   resize layout can be regression-tested without a real console.
 - `--dump` writes the final screen as UTF-8 text; `--dumpa` writes the
@@ -117,5 +150,9 @@ cc.exe --dir <path> [--rdir <path>] [--keys <file>] --dump <out> [--dumpa <out>]
 - **Milestone 6 (done):** cd-on-exit — the active panel's folder is exported via
   `%CC_CWD_FILE%`, and `cc.cmd` / `cc.ps1` wrappers leave the shell there.
   `run_test.ps1` 38/38 green.
+- **Hardening (2026-09):** file-op safety rules above (move/copy into self,
+  junction-safe delete/copy, overwrite confirm, failure reporting), viewer
+  line-table overflow, `MAX_PATH` truncation, no-console spin, UTF-8
+  cd-on-exit. `run_test.ps1` 53/53 green.
 - **Next:** command line with history, directory bookmarks/hotlist, copy
   progress for large files.

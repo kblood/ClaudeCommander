@@ -10,7 +10,9 @@ try {
 } finally {
     Remove-Item Env:\CC_CWD_FILE -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $f) {
-        $d = (Get-Content -LiteralPath $f -Raw).Trim()
+        # cc.exe writes the path as UTF-8 (no BOM); Windows PowerShell 5.1 would
+        # otherwise read it in the ANSI codepage and mangle non-ASCII folders.
+        $d = (Get-Content -LiteralPath $f -Raw -Encoding UTF8).Trim()
         Remove-Item -LiteralPath $f -ErrorAction SilentlyContinue
         if ($d -and (Test-Path -LiteralPath $d)) { Set-Location -LiteralPath $d }
     }

@@ -4,9 +4,20 @@
  *  A Norton/Volkov-style two-panel file manager that runs directly in a
  *  Windows 10/11 console (cmd, Windows Terminal, PowerShell host) as a native
  *  PE -- no DOSBox, no 16-bit subsystem.  It shares the DESIGN of the DOS
- *  cc.asm (80x25 char-cell UI, the same attribute palette, the same key map)
- *  but is a fresh C implementation on the Win32 Console + File APIs, so the
- *  64 KB segment wall of the DOS build does not apply here.
+ *  cc.asm (80x25 char-cell UI, the same attribute palette, a similar -- not
+ *  identical -- key map; see README.md) but is a fresh C implementation on the
+ *  Win32 Console + File APIs, so the 64 KB segment wall of the DOS build does
+ *  not apply here.
+ *
+ *  File-op safety rules (see op_copy / op_delete / rm_tree / cp_tree):
+ *   - a directory is never copied/moved into itself or its own subtree;
+ *   - a move that falls back to copy+delete deletes the source only after the
+ *     whole tree copied without a single failure;
+ *   - name-surrogate reparse points (junctions, symlinks) are never recursed
+ *     into: delete removes the link itself, copy skips directory links (counted
+ *     as a failure) and copies file symlinks as their target's contents;
+ *   - existing targets are not overwritten without a Y/N confirm;
+ *   - every failure is counted and reported on the status row.
  *
  *  Milestone 1: console framebuffer, dual panels, directory read (native LFN
  *  via FindFirstFileW), navigation (arrows/pgup/pgdn/home/end), Tab to switch
@@ -20,7 +31,13 @@
  *  Build:  gcc -O2 -Wall -o cc.exe cc.c
  * =========================================================================== */
 #include <windows.h>
+#include <shellapi.h>        /* CommandLineToArgvW */
+#ifdef _MSC_VER
+#pragma comment(lib, "shell32.lib")
+#endif
 #include <stdio.h>
+#include <stdarg.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <wchar.h>
 #include <string.h>
@@ -91,10 +108,13 @@ static wchar_t g_in_title[40];
 static wchar_t g_in_buf[MAX_PATH];
 static int     g_in_len = 0;
 
-/* confirm dialog (delete) */
+/* confirm dialog (delete / overwrite) */
 static int     g_cf_active = 0;
 static wchar_t g_cf_msg[MAXCOLS];
-static int     g_cf_kind = 0;       /* 1=delete */
+static int     g_cf_kind = 0;       /* 1=delete 2=copy-overwrite 3=move-overwrite */
+
+/* one-shot status-row message (op results / errors); cleared on the next key */
+static wchar_t g_msg[MAXCOLS];
 
 /* quick incremental search */
 static wchar_t g_qs[64];
@@ -114,7 +134,34 @@ static long   g_view_len = 0;
 static long  *g_view_line = NULL;   /* byte offset of each line */
 static int    g_view_nlines = 0;
 static int    g_view_top = 0;
+static int    g_view_trunc = 0;     /* file larger than the viewer cap */
 static wchar_t g_view_name[MAX_PATH];
+static void view_close(void);
+
+/* ---------------------------------------------------------------- strings */
+/* bounded wide printf that ALWAYS terminates; returns 0 if the output was
+ * truncated (msvcrt's _vsnwprintf returns <0 and leaves no terminator then) */
+static int swfmt(wchar_t *buf, size_t cap, const wchar_t *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int n = _vsnwprintf(buf, cap, fmt, ap);
+    va_end(ap);
+    buf[cap - 1] = 0;
+    return n >= 0 && (size_t)n < cap;
+}
+
+/* set the status-row message; "what: <system error text>" when err != 0 */
+static void set_msg(const wchar_t *what, DWORD err)
+{
+    if (!err) { swfmt(g_msg, MAXCOLS, L" %s", what); return; }
+    wchar_t es[256] = L"";
+    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   NULL, err, 0, es, 256, NULL);
+    for (size_t n = wcslen(es); n && (es[n - 1] == L'\r' || es[n - 1] == L'\n' || es[n - 1] == L'.'); )
+        es[--n] = 0;
+    swfmt(g_msg, MAXCOLS, L" %s: %s (%lu)", what, es, (unsigned long)err);
+}
 
 /* ---------------------------------------------------------------- framebuffer */
 static void cell(int x, int y, wchar_t ch, WORD at)
@@ -127,6 +174,11 @@ static void cell(int x, int y, wchar_t ch, WORD at)
 static void puts_at(int x, int y, const wchar_t *s, WORD at)
 {
     for (; *s && x < g_cols; s++, x++) cell(x, y, *s, at);
+}
+/* like puts_at but never draws more than maxw cells (keeps text inside a box) */
+static void puts_n(int x, int y, const wchar_t *s, int maxw, WORD at)
+{
+    for (; *s && maxw > 0 && x < g_cols; s++, x++, maxw--) cell(x, y, *s, at);
 }
 static void fill(int x, int y, int w, int h, wchar_t ch, WORD at)
 {
@@ -166,11 +218,13 @@ static int ent_cmp(const void *a, const void *b)
     return _wcsicmp(x->name, y->name);
 }
 
-static void panel_add(Panel *p, const WIN32_FIND_DATAW *fd)
+static int panel_add(Panel *p, const WIN32_FIND_DATAW *fd)
 {
     if (p->count >= p->cap) {
-        p->cap = p->cap ? p->cap * 2 : 64;
-        p->items = realloc(p->items, p->cap * sizeof(Entry));
+        int ncap = p->cap ? p->cap * 2 : 64;
+        Entry *ni = realloc(p->items, (size_t)ncap * sizeof(Entry));
+        if (!ni) return 0;               /* keep the entries we already have */
+        p->items = ni; p->cap = ncap;
     }
     Entry *e = &p->items[p->count++];
     wcsncpy(e->name, fd->cFileName, MAX_PATH - 1);
@@ -180,12 +234,27 @@ static void panel_add(Panel *p, const WIN32_FIND_DATAW *fd)
     e->size = ((unsigned long long)fd->nFileSizeHigh << 32) | fd->nFileSizeLow;
     e->mtime = fd->ftLastWriteTime;
     e->tagged = 0;
+    return 1;
 }
 
 static int is_root(const wchar_t *path)
 {
     /* "C:\" -> length 3, second char ':' */
     return (path[0] && path[1] == L':' && path[2] == L'\\' && path[3] == 0);
+}
+
+/* dir + "\" + name into a MAX_PATH buffer.  Returns 0 (and an empty out) when
+ * the result would not fit -- callers must refuse the operation then, never
+ * act on a silently truncated path. */
+static int join(wchar_t *out, const wchar_t *dir, const wchar_t *name)
+{
+    size_t n = wcslen(dir), m = wcslen(name);
+    int sep = !(n && dir[n - 1] == L'\\');
+    if (n + sep + m + 1 > MAX_PATH) { out[0] = 0; return 0; }
+    wmemcpy(out, dir, n);
+    if (sep) out[n++] = L'\\';
+    wmemcpy(out + n, name, m + 1);
+    return 1;
 }
 
 static void read_dir(Panel *p)
@@ -195,9 +264,7 @@ static void read_dir(Panel *p)
     p->top = 0;
 
     wchar_t pat[MAX_PATH];
-    _snwprintf(pat, MAX_PATH, L"%s\\*", p->path);
-    /* collapse a possible "C:\\\*" into "C:\*" */
-    if (is_root(p->path)) _snwprintf(pat, MAX_PATH, L"%s*", p->path);
+    int ok = join(pat, p->path, L"*");   /* join avoids "C:\\*" on a root */
 
     if (!is_root(p->path)) {
         WIN32_FIND_DATAW dd = {0};
@@ -207,12 +274,12 @@ static void read_dir(Panel *p)
     }
 
     WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW(pat, &fd);
+    HANDLE h = ok ? FindFirstFileW(pat, &fd) : INVALID_HANDLE_VALUE;
     if (h != INVALID_HANDLE_VALUE) {
         do {
             if (wcscmp(fd.cFileName, L".") == 0) continue;
             if (wcscmp(fd.cFileName, L"..") == 0) continue;
-            panel_add(p, &fd);
+            if (!panel_add(p, &fd)) { set_msg(L"Out of memory: listing truncated", 0); break; }
         } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
@@ -228,71 +295,179 @@ static void go_parent(Panel *p)
     if (bs == p->path + 2) bs[1] = 0;   /* "C:\subdir" -> keep "C:\" */
     else *bs = 0;
 }
-static void go_child(Panel *p, const wchar_t *name)
+static int go_child(Panel *p, const wchar_t *name)
 {
-    size_t len = wcslen(p->path);
-    if (len && p->path[len - 1] == L'\\')
-        _snwprintf(p->path + len, MAX_PATH - len, L"%s", name);
-    else
-        _snwprintf(p->path + len, MAX_PATH - len, L"\\%s", name);
+    wchar_t np[MAX_PATH];
+    if (!join(np, p->path, name)) { set_msg(L"Path too long", 0); return 0; }
+    wcscpy(p->path, np);
+    return 1;
 }
 
 /* ---------------------------------------------------------------- file ops */
-static void join(wchar_t *out, const wchar_t *dir, const wchar_t *name)
+#ifndef IsReparseTagNameSurrogate
+#define IsReparseTagNameSurrogate(t) (((t) & 0x20000000) != 0)
+#endif
+static DWORD g_last_err = 0;         /* last Win32 error seen by a file op */
+static void note_err(void) { g_last_err = GetLastError(); }
+static int   g_link_skip = 0;        /* directory links cp_tree refused to follow */
+
+/* A "link" is a name-surrogate reparse point: junction / mount point / dir or
+ * file symlink / WSL symlink.  Other reparse points (OneDrive placeholders,
+ * dedup, WOF-compressed files) are ordinary data and are treated normally. */
+static int is_link(DWORD attr, DWORD tag)
 {
-    size_t n = wcslen(dir);
-    if (n && dir[n - 1] == L'\\') _snwprintf(out, MAX_PATH, L"%s%s", dir, name);
-    else                          _snwprintf(out, MAX_PATH, L"%s\\%s", dir, name);
+    return (attr & FILE_ATTRIBUTE_REPARSE_POINT) && IsReparseTagNameSurrogate(tag);
 }
 
-static void rm_tree(const wchar_t *path)
+/* attributes + reparse tag of the entry itself (never follows a link) */
+static int path_info(const wchar_t *path, DWORD *attr, DWORD *tag)
 {
     WIN32_FIND_DATAW fd;
-    wchar_t pat[MAX_PATH]; join(pat, path, L"*");
+    HANDLE h = FindFirstFileW(path, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    FindClose(h);
+    *attr = fd.dwFileAttributes;
+    *tag  = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? fd.dwReserved0 : 0;
+    return 1;
+}
+
+/* delete one file or empty dir / link; the read-only bit is cleared only right
+ * before this item's own delete, and put back if the delete still fails */
+static int rm_one(const wchar_t *path, DWORD attr)
+{
+    if (attr & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(path, attr & ~FILE_ATTRIBUTE_READONLY);
+    BOOL ok = (attr & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryW(path) : DeleteFileW(path);
+    if (ok) return 0;
+    note_err();
+    if (attr & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(path, attr);
+    return 1;
+}
+
+/* recursive delete; returns the number of items that could not be removed.
+ * A link is removed as a link (RemoveDirectoryW for a directory junction /
+ * symlink, DeleteFileW for a file symlink) and is never recursed into. */
+static int rm_tree(const wchar_t *path, DWORD attr, DWORD tag)
+{
+    if (is_link(attr, tag) || !(attr & FILE_ATTRIBUTE_DIRECTORY)) return rm_one(path, attr);
+    int fail = 0;
+    WIN32_FIND_DATAW fd;
+    wchar_t pat[MAX_PATH];
+    if (!join(pat, path, L"*")) { g_last_err = ERROR_FILENAME_EXCED_RANGE; return 1; }
     HANDLE h = FindFirstFileW(pat, &fd);
     if (h != INVALID_HANDLE_VALUE) {
         do {
             if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
-            wchar_t c[MAX_PATH]; join(c, path, fd.cFileName);
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) rm_tree(c);
-            else { SetFileAttributesW(c, FILE_ATTRIBUTE_NORMAL); DeleteFileW(c); }
+            wchar_t c[MAX_PATH];
+            if (!join(c, path, fd.cFileName)) { g_last_err = ERROR_FILENAME_EXCED_RANGE; fail++; continue; }
+            DWORD t = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? fd.dwReserved0 : 0;
+            fail += rm_tree(c, fd.dwFileAttributes, t);
         } while (FindNextFileW(h, &fd));
         FindClose(h);
     }
-    SetFileAttributesW(path, FILE_ATTRIBUTE_NORMAL);
-    RemoveDirectoryW(path);
+    return fail + rm_one(path, attr);
 }
 
-static void cp_tree(const wchar_t *src, const wchar_t *dst)
+/* recursive copy; returns the number of items that failed.  Directory links
+ * are NOT followed (that is how junction cycles looped forever): they are
+ * skipped and counted as failures, so a move falling back to copy keeps its
+ * source.  File symlinks are copied as the contents of their target. */
+static int cp_tree(const wchar_t *src, const wchar_t *dst, DWORD attr, DWORD tag, int overwrite)
 {
-    CreateDirectoryW(dst, NULL);
-    WIN32_FIND_DATAW fd;
-    wchar_t pat[MAX_PATH]; join(pat, src, L"*");
-    HANDLE h = FindFirstFileW(pat, &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
-            if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
-            wchar_t s[MAX_PATH], d[MAX_PATH];
-            join(s, src, fd.cFileName); join(d, dst, fd.cFileName);
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) cp_tree(s, d);
-            else CopyFileW(s, d, FALSE);
-        } while (FindNextFileW(h, &fd));
-        FindClose(h);
+    if (is_link(attr, tag) && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        g_link_skip++;
+        return 1;
     }
+    if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (CopyFileW(src, dst, !overwrite)) return 0;
+        note_err(); return 1;
+    }
+    if (!CreateDirectoryW(dst, NULL)) {
+        DWORD e = GetLastError(), da = GetFileAttributesW(dst);
+        /* merging into an existing directory is allowed only when confirmed */
+        if (!(e == ERROR_ALREADY_EXISTS && overwrite && da != INVALID_FILE_ATTRIBUTES
+              && (da & FILE_ATTRIBUTE_DIRECTORY))) { g_last_err = e; return 1; }
+    }
+    int fail = 0;
+    WIN32_FIND_DATAW fd;
+    wchar_t pat[MAX_PATH];
+    if (!join(pat, src, L"*")) { g_last_err = ERROR_FILENAME_EXCED_RANGE; return 1; }
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) { note_err(); return 1; }
+    do {
+        if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+        wchar_t s[MAX_PATH], d[MAX_PATH];
+        if (!join(s, src, fd.cFileName) || !join(d, dst, fd.cFileName)) {
+            g_last_err = ERROR_FILENAME_EXCED_RANGE; fail++; continue;
+        }
+        DWORD t = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? fd.dwReserved0 : 0;
+        fail += cp_tree(s, d, fd.dwFileAttributes, t, overwrite);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return fail;
 }
 
-/* collect the selected names (tagged set, else the cursor entry) */
-static int collect(Panel *p, wchar_t (*out)[MAX_PATH], int max)
+/* Canonical form of an existing path for containment checks: the final path
+ * (resolves junctions, subst, 8.3 names) when it can be opened, else the full
+ * path; no "\\?\" prefix and no trailing backslash. */
+static int canon_path(const wchar_t *in, wchar_t *out)
+{
+    wchar_t tmp[MAX_PATH + 8];
+    int ok = 0;
+    HANDLE h = CreateFileW(in, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD n = GetFinalPathNameByHandleW(h, tmp, MAX_PATH + 8, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        CloseHandle(h);
+        if (n > 0 && n < MAX_PATH + 8) {
+            const wchar_t *p = tmp;
+            if (!wcsncmp(p, L"\\\\?\\UNC\\", 8)) { tmp[6] = L'\\'; p = tmp + 6; }  /* -> \\server\share */
+            else if (!wcsncmp(p, L"\\\\?\\", 4)) p += 4;
+            if (wcslen(p) < MAX_PATH) { wcscpy(out, p); ok = 1; }
+        }
+    }
+    if (!ok) {
+        DWORD n = GetFullPathNameW(in, MAX_PATH, out, NULL);
+        if (n == 0 || n >= MAX_PATH) return 0;
+    }
+    size_t n = wcslen(out);
+    while (n > 3 && out[n - 1] == L'\\') out[--n] = 0;
+    return 1;
+}
+
+/* 1 if dir 'd' is 'src' itself or anywhere below it (case-insensitive, with a
+ * separator boundary so "C:\A2" is not inside "C:\A").  Unresolvable -> 1
+ * (refuse rather than risk it). */
+static int inside_or_same(const wchar_t *d, const wchar_t *src)
+{
+    wchar_t cd[MAX_PATH], cs[MAX_PATH];
+    if (!canon_path(d, cd) || !canon_path(src, cs)) return 1;
+    size_t n = wcslen(cs);
+    if (_wcsnicmp(cd, cs, n) != 0) return 0;
+    return cd[n] == 0 || cd[n] == L'\\' || cs[n - 1] == L'\\';
+}
+
+/* the selection: tagged entries, else the cursor entry; ".." never counts.
+ * Returns a malloc'd index list (caller frees) -- no fixed cap, so the confirm
+ * dialog's count and the operation always agree. */
+static int sel_count(Panel *p)
 {
     int n = 0;
-    for (int i = 0; i < p->count && n < max; i++)
-        if (p->items[i].tagged && wcscmp(p->items[i].name, L"..") != 0)
-            wcscpy(out[n++], p->items[i].name);
-    if (n == 0 && p->count) {
-        Entry *e = &p->items[p->cur];
-        if (wcscmp(e->name, L"..") != 0) wcscpy(out[n++], e->name);
-    }
+    for (int i = 0; i < p->count; i++)
+        if (p->items[i].tagged && wcscmp(p->items[i].name, L"..") != 0) n++;
+    if (n == 0 && p->count && wcscmp(p->items[p->cur].name, L"..") != 0) n = 1;
     return n;
+}
+static int *sel_list(Panel *p, int *n)
+{
+    *n = sel_count(p);
+    if (!*n) return NULL;
+    int *ix = malloc(sizeof(int) * (size_t)*n);
+    if (!ix) { *n = 0; set_msg(L"Out of memory", 0); return NULL; }
+    int k = 0;
+    for (int i = 0; i < p->count; i++)
+        if (p->items[i].tagged && wcscmp(p->items[i].name, L"..") != 0) ix[k++] = i;
+    if (k == 0) ix[k++] = p->cur;
+    return ix;
 }
 
 static void refresh(Panel *p)
@@ -304,49 +479,118 @@ static void refresh(Panel *p)
 }
 static void refresh_both(void) { refresh(&L); refresh(&R); }
 
-#define MAXSEL 4096
-static wchar_t g_sel[MAXSEL][MAX_PATH];
-
-static void op_copy(int move)
+/* both panels on the same folder (after resolving links / case / 8.3)? */
+static int same_dir(const wchar_t *a, const wchar_t *b)
 {
-    int n = collect(act, g_sel, MAXSEL);
+    wchar_t ca[MAX_PATH], cb[MAX_PATH];
+    if (!canon_path(a, ca) || !canon_path(b, cb)) return 0;
+    return _wcsicmp(ca, cb) == 0;
+}
+
+/* how many selected items already exist in the other panel (overwrite check) */
+static int count_existing(void)
+{
+    int n, hit = 0, *ix = sel_list(act, &n);
+    for (int k = 0; k < n; k++) {
+        wchar_t d[MAX_PATH];
+        if (join(d, other()->path, act->items[ix[k]].name)
+            && GetFileAttributesW(d) != INVALID_FILE_ATTRIBUTES) hit++;
+    }
+    free(ix);
+    return hit;
+}
+
+/* copy / move the selection to the other panel.  overwrite=0: items whose
+ * target already exists are skipped (never silently replaced). */
+static void op_copy(int move, int overwrite)
+{
+    const wchar_t *verb = move ? L"Move" : L"Copy";
+    wchar_t m[MAXCOLS];
     Panel *dstp = other();
-    for (int i = 0; i < n; i++) {
+    if (same_dir(act->path, dstp->path)) {
+        swfmt(m, MAXCOLS, L"%s: source and target are the same folder", verb);
+        set_msg(m, 0);
+        return;
+    }
+    int n, *ix = sel_list(act, &n);
+    if (!n) return;
+    int done = 0, fail = 0, skipped = 0, self = 0, kept = 0;
+    g_last_err = 0; g_link_skip = 0;
+    for (int k = 0; k < n; k++) {
+        const wchar_t *nm = act->items[ix[k]].name;
         wchar_t s[MAX_PATH], d[MAX_PATH];
-        join(s, act->path, g_sel[i]);
-        join(d, dstp->path, g_sel[i]);
-        DWORD a = GetFileAttributesW(s);
-        int isdir = (a != INVALID_FILE_ATTRIBUTES) && (a & FILE_ATTRIBUTE_DIRECTORY);
+        DWORD a, t;
+        if (!join(s, act->path, nm) || !join(d, dstp->path, nm)) {
+            g_last_err = ERROR_FILENAME_EXCED_RANGE; fail++; continue;
+        }
+        if (!path_info(s, &a, &t)) { note_err(); fail++; continue; }
+        int isdir = (a & FILE_ATTRIBUTE_DIRECTORY) && !is_link(a, t);
+        /* a folder can never go into itself or its own subtree */
+        if (isdir && inside_or_same(dstp->path, s)) { self++; fail++; continue; }
+        if (!overwrite && GetFileAttributesW(d) != INVALID_FILE_ATTRIBUTES) { skipped++; continue; }
         if (move) {
-            if (!MoveFileExW(s, d, MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING)) {
-                if (isdir) { cp_tree(s, d); rm_tree(s); }
-            }
+            DWORD fl = MOVEFILE_COPY_ALLOWED | (overwrite ? MOVEFILE_REPLACE_EXISTING : 0);
+            if (MoveFileExW(s, d, fl)) { done++; continue; }
+            if (!(a & FILE_ATTRIBUTE_DIRECTORY)) { note_err(); fail++; continue; }
+            /* directory rename failed (other volume, locked file, ...): copy the
+             * tree, and delete the source ONLY if every single item copied */
+            int f = cp_tree(s, d, a, t, overwrite);
+            if (f) { fail += f; kept++; continue; }
+            f = rm_tree(s, a, t);
+            if (f) { fail += f; continue; }
+            done++;
         } else {
-            if (isdir) cp_tree(s, d);
-            else       CopyFileW(s, d, FALSE);
+            int f = cp_tree(s, d, a, t, overwrite);
+            if (f) fail += f; else done++;
         }
     }
+    free(ix);
     refresh_both();
+    if (fail) {
+        wchar_t lk[48] = L"";
+        if (g_link_skip) swfmt(lk, 48, L" (%d folder link(s) not copied)", g_link_skip);
+        swfmt(m, MAXCOLS, L"%s: %d done, %d failed%s%s%s", verb, done, fail,
+              self ? L" (folder into itself refused)" : L"", lk,
+              kept ? L" (source kept)" : L"");
+        set_msg(m, (self + g_link_skip == fail) ? 0 : g_last_err);
+    } else if (skipped) {
+        swfmt(m, MAXCOLS, L"%s: %d done, %d skipped (already exist)", verb, done, skipped);
+        set_msg(m, 0);
+    } else {
+        swfmt(m, MAXCOLS, L"%s: %d item(s) done", verb, done);
+        set_msg(m, 0);
+    }
 }
 
 static void op_delete(void)
 {
-    int n = collect(act, g_sel, MAXSEL);
-    for (int i = 0; i < n; i++) {
-        wchar_t s[MAX_PATH]; join(s, act->path, g_sel[i]);
-        DWORD a = GetFileAttributesW(s);
-        if (a == INVALID_FILE_ATTRIBUTES) continue;
-        if (a & FILE_ATTRIBUTE_DIRECTORY) rm_tree(s);
-        else { SetFileAttributesW(s, FILE_ATTRIBUTE_NORMAL); DeleteFileW(s); }
+    int n, *ix = sel_list(act, &n);
+    if (!n) return;
+    int done = 0, fail = 0;
+    g_last_err = 0;
+    for (int k = 0; k < n; k++) {
+        wchar_t s[MAX_PATH];
+        DWORD a, t;
+        if (!join(s, act->path, act->items[ix[k]].name)) {
+            g_last_err = ERROR_FILENAME_EXCED_RANGE; fail++; continue;
+        }
+        if (!path_info(s, &a, &t)) { note_err(); fail++; continue; }
+        int f = rm_tree(s, a, t);      /* a link is removed as a link */
+        if (f) fail += f; else done++;
     }
+    free(ix);
     refresh_both();
+    wchar_t m[MAXCOLS];
+    if (fail) { swfmt(m, MAXCOLS, L"Delete: %d done, %d failed", done, fail); set_msg(m, g_last_err); }
+    else      { swfmt(m, MAXCOLS, L"Delete: %d item(s) done", done);          set_msg(m, 0); }
 }
 
 static void op_mkdir(const wchar_t *name)
 {
     if (!name || !name[0]) return;
-    wchar_t d[MAX_PATH]; join(d, act->path, name);
-    CreateDirectoryW(d, NULL);
+    wchar_t d[MAX_PATH];
+    if (!join(d, act->path, name)) { set_msg(L"MkDir: path too long", 0); return; }
+    if (!CreateDirectoryW(d, NULL)) { set_msg(L"MkDir failed", GetLastError()); return; }
     refresh_both();
 }
 
@@ -356,9 +600,10 @@ static void op_rename(const wchar_t *newname)
     Entry *e = &act->items[act->cur];
     if (wcscmp(e->name, L"..") == 0) return;
     wchar_t s[MAX_PATH], d[MAX_PATH];
-    join(s, act->path, e->name);
-    join(d, act->path, newname);
-    MoveFileW(s, d);
+    if (!join(s, act->path, e->name) || !join(d, act->path, newname)) {
+        set_msg(L"Rename: path too long", 0); return;
+    }
+    if (!MoveFileW(s, d)) { set_msg(L"Rename failed", GetLastError()); return; }
     refresh_both();
 }
 
@@ -414,30 +659,43 @@ static void view_open(void)
     if (!act->count) return;
     Entry *e = &act->items[act->cur];
     if (e->is_dir) return;
-    wchar_t path[MAX_PATH]; join(path, act->path, e->name);
+    wchar_t path[MAX_PATH];
+    if (!join(path, act->path, e->name)) { set_msg(L"View: path too long", 0); return; }
 
-    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return;
-    DWORD sz = GetFileSize(h, NULL);
-    if (sz == INVALID_FILE_SIZE) sz = 0;
-    long cap = sz > (8u << 20) ? (8 << 20) : (long)sz;   /* cap 8 MB */
-    free(g_view_buf); g_view_buf = malloc(cap + 1);
-    DWORD rd = 0;
-    if (g_view_buf && cap) ReadFile(h, g_view_buf, cap, &rd, NULL);
+    HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) { set_msg(L"View failed", GetLastError()); return; }
+    LARGE_INTEGER fsz;
+    if (!GetFileSizeEx(h, &fsz)) fsz.QuadPart = 0;
+    const long VIEW_CAP = 8L << 20;                  /* show at most the first 8 MB */
+    long cap = fsz.QuadPart > VIEW_CAP ? VIEW_CAP : (long)fsz.QuadPart;
+    char *buf = malloc((size_t)cap + 1);
+    if (!buf) { CloseHandle(h); set_msg(L"View: out of memory", 0); return; }
+    long len = 0;
+    while (len < cap) {                              /* ReadFile may return short */
+        DWORD rd = 0;
+        if (!ReadFile(h, buf + len, (DWORD)(cap - len), &rd, NULL) || rd == 0) break;
+        len += (long)rd;
+    }
     CloseHandle(h);
-    g_view_len = rd;
-    if (g_view_buf) g_view_buf[g_view_len] = 0;
+    buf[len] = 0;
 
-    /* build line table */
-    free(g_view_line);
-    g_view_line = malloc(sizeof(long) * (g_view_len / 8 + 8));
-    g_view_nlines = 0;
-    g_view_line[g_view_nlines++] = 0;
-    for (long i = 0; i < g_view_len; i++)
-        if (g_view_buf[i] == '\n' && i + 1 <= g_view_len)
-            g_view_line[g_view_nlines++] = i + 1;
+    /* line table: count first, then allocate exactly one entry per line
+     * (the old len/8 estimate overflowed on newline-dense files) */
+    long nl = 1;
+    for (long i = 0; i < len; i++) if (buf[i] == '\n') nl++;
+    if (nl > INT_MAX) nl = INT_MAX;
+    long *lines = malloc(sizeof(long) * (size_t)nl);
+    if (!lines) { free(buf); set_msg(L"View: out of memory", 0); return; }
+    int nlines = 0;
+    lines[nlines++] = 0;
+    for (long i = 0; i < len && nlines < nl; i++)
+        if (buf[i] == '\n') lines[nlines++] = i + 1;
 
+    view_close();
+    g_view_buf = buf;   g_view_len = len;
+    g_view_line = lines; g_view_nlines = nlines;
+    g_view_trunc = fsz.QuadPart > len;
     g_view_top = 0;
     wcscpy(g_view_name, e->name);
     g_view_active = 1;
@@ -532,8 +790,8 @@ static void render_view(void)
     /* header */
     fill(0, 0, g_cols, 1, L' ', A_HDR);
     wchar_t hdr[MAXCOLS];
-    _snwprintf(hdr, MAXCOLS, L" View: %s   (%ld bytes, %d lines)",
-               g_view_name, g_view_len, g_view_nlines);
+    swfmt(hdr, MAXCOLS, L" View: %s   (%ld bytes%s, %d lines)",
+          g_view_name, g_view_len, g_view_trunc ? L" shown, file truncated" : L"", g_view_nlines);
     puts_at(0, 0, hdr, A_HDR);
 
     int body = g_rows - 2;               /* rows 1 .. g_rows-2 */
@@ -558,20 +816,24 @@ static void render_view(void)
 static void render_overlays(void)
 {
     if (g_in_active) {
-        int w = 50, h = 5, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
+        int w = g_cols < 50 ? g_cols : 50, h = 5, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
+        int fw = w - 4;                      /* field width inside the box */
         fill(x, y, w, h, L' ', A_HDR);
         box(x, y, w, h, A_HDR);
-        puts_at(x + 2, y, g_in_title, A_HDR);
-        fill(x + 2, y + 2, w - 4, 1, L' ', A_NORM);
-        puts_at(x + 2, y + 2, g_in_buf, A_NORM);
-        cell(x + 2 + g_in_len, y + 2, L'_', A_NORM);
+        puts_n(x + 2, y, g_in_title, fw, A_HDR);
+        fill(x + 2, y + 2, fw, 1, L' ', A_NORM);
+        /* scroll the text so the tail + cursor always stay inside the field */
+        int first = g_in_len - (fw - 1); if (first < 0) first = 0;
+        puts_n(x + 2, y + 2, g_in_buf + first, fw - 1, A_NORM);
+        cell(x + 2 + (g_in_len - first), y + 2, L'_', A_NORM);
     }
     if (g_cf_active) {
-        int w = 50, h = 5, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
+        int w = g_cols < 50 ? g_cols : 50, h = 5, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
         fill(x, y, w, h, L' ', A_HDR);
         box(x, y, w, h, A_HDR);
-        puts_at(x + 2, y + 1, g_cf_msg, A_HDR);
-        puts_at(x + 2, y + 3, L"[Y] Yes    [N] No", A_HDR);
+        puts_n(x + 2, y + 1, g_cf_msg, w - 4, A_HDR);
+        puts_n(x + 2, y + 3, g_cf_kind == 1 ? L"[Y] Yes    [N] No"
+                                            : L"[Y] Overwrite  [N] Skip  [Esc] Cancel", w - 4, A_HDR);
     }
     if (g_drv_active) {
         int h = g_drv_n + 2, w = 14, x = (g_cols - w) / 2, y = (g_rows - h) / 2;
@@ -601,24 +863,27 @@ static void compose_frame(void)
     {
         wchar_t st[MAXCOLS];
         if (g_qs_len)
-            _snwprintf(st, MAXCOLS, L" search: %s_", g_qs);
+            swfmt(st, MAXCOLS, L" search: %s_", g_qs);
+        else if (g_msg[0])
+            swfmt(st, MAXCOLS, L"%s", g_msg);
         else {
             const wchar_t *nm = act->count ? act->items[act->cur].name : L"";
-            _snwprintf(st, MAXCOLS, L" %s   %d item(s)   sort:%S  theme:%S",
-                       nm, act->count, SORTNAME[act->sortmode], THEMES[g_theme].name);
+            swfmt(st, MAXCOLS, L" %s   %d item(s)   sort:%S  theme:%S",
+                  nm, act->count, SORTNAME[act->sortmode], THEMES[g_theme].name);
         }
         puts_at(0, g_rows - 2, st, A_STAT);
     }
 
-    /* F-key bar */
+    /* F-key bar: only keys that are actually bound get a label (F1 and F9
+     * have no function in this port, so their slots stay blank) */
     static const wchar_t *fk[10] = {
-        L"Help", L"Menu", L"View", L"Edit", L"Copy",
-        L"Move", L"MkDir", L"Del", L"PullDn", L"Quit"
+        L"", L"Rename", L"View", L"Edit", L"Copy",
+        L"Move", L"MkDir", L"Del", L"", L"Quit"
     };
     fill(0, g_rows - 1, g_cols, 1, L' ', A_FKEY);
     int x = 0;
     for (int i = 0; i < 10; i++) {
-        wchar_t num[4]; _snwprintf(num, 4, L"%d", i + 1);
+        wchar_t num[4]; swfmt(num, 4, L"%d", i + 1);
         puts_at(x, g_rows - 1, num, A_FKNUM); x += (int)wcslen(num);
         puts_at(x, g_rows - 1, fk[i], A_FKEY); x += (int)wcslen(fk[i]) + 1;
     }
@@ -663,19 +928,45 @@ static void launch_editor(void)
     if (!act->count) return;
     Entry *e = &act->items[act->cur];
     if (e->is_dir) return;
-    wchar_t path[MAX_PATH]; join(path, act->path, e->name);
+    wchar_t path[MAX_PATH];
+    if (!join(path, act->path, e->name)) { set_msg(L"Edit: path too long", 0); return; }
 
     const wchar_t *ed = _wgetenv(L"EDITOR");
     wchar_t cmd[MAX_PATH * 2];
-    if (ed && ed[0]) _snwprintf(cmd, MAX_PATH * 2, L"\"%s\" \"%s\"", ed, path);
-    else             _snwprintf(cmd, MAX_PATH * 2, L"notepad.exe \"%s\"", path);
+    int ok = (ed && ed[0]) ? swfmt(cmd, MAX_PATH * 2, L"\"%s\" \"%s\"", ed, path)
+                           : swfmt(cmd, MAX_PATH * 2, L"notepad.exe \"%s\"", path);
+    if (!ok) { set_msg(L"Edit: command line too long", 0); return; }
 
     STARTUPINFOW si = { sizeof(si) };
     PROCESS_INFORMATION pi = {0};
     if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, 0, NULL, act->path, &si, &pi)) {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
+    } else {
+        set_msg(L"Edit: cannot start editor", GetLastError());
     }
+}
+
+/* F5/F6: ask before overwriting anything that already exists in the target */
+static void begin_copy(int move)
+{
+    int ex = count_existing();
+    if (ex > 0) {
+        g_cf_active = 1; g_cf_kind = move ? 3 : 2;
+        swfmt(g_cf_msg, MAXCOLS, L"%d item(s) already exist in target. Overwrite?", ex);
+    } else {
+        op_copy(move, 0);
+    }
+}
+
+/* answer the open confirm dialog: 1 = Y, 0 = N, -1 = Esc */
+static void cf_answer(int ans)
+{
+    int kind = g_cf_kind;
+    g_cf_active = 0;
+    if (kind == 1) { if (ans == 1) op_delete(); }
+    else if (ans >= 0) op_copy(kind == 3, ans == 1);   /* N = skip existing */
+    clamp_panel(act);
 }
 
 /* returns 1 to quit */
@@ -722,8 +1013,8 @@ static int do_action(int a)
     case ACT_HOME: act->cur = 0; break;
     case ACT_END:  act->cur = act->count - 1; break;
     case ACT_VIEW:   view_open(); break;
-    case ACT_COPY:   op_copy(0); break;
-    case ACT_MOVE:   op_copy(1); break;
+    case ACT_COPY:   begin_copy(0); break;
+    case ACT_MOVE:   begin_copy(1); break;
     case ACT_DELETE: op_delete(); break;
     case ACT_MKDIR:  open_input(1, L" Create directory ", L""); break;
     case ACT_RENAME:
@@ -750,7 +1041,7 @@ static int do_action(int a)
             Entry *e = &act->items[act->cur];
             if (e->is_dir) {
                 if (wcscmp(e->name, L"..") == 0) go_parent(act);
-                else go_child(act, e->name);
+                else if (!go_child(act, e->name)) break;   /* too long: stay put */
                 read_dir(act);
             }
         }
@@ -815,6 +1106,7 @@ static int token_action(const char *t)
     if (!_stricmp(t, "EDIT"))   return ACT_EDIT;
     if (!_stricmp(t, "DRIVESL")) return ACT_DRIVEL;
     if (!_stricmp(t, "DRIVESR")) return ACT_DRIVER;
+    if (!_stricmp(t, "RENBOX"))  return ACT_RENAME;   /* opens the F2 input box */
     return ACT_NONE;
 }
 
@@ -826,6 +1118,14 @@ static void mb2w(const char *s, wchar_t *w, int cap)
 /* headless replay: handles arg-carrying tokens (MKDIR:name, REN:name) too */
 static void apply_token(const char *t)
 {
+    g_msg[0] = 0;                        /* like a keypress: drop the last message */
+    /* an open confirm dialog takes only YES / NO / CANCEL (live: Y / N / Esc) */
+    if (g_cf_active) {
+        if      (!_stricmp(t, "YES"))    cf_answer(1);
+        else if (!_stricmp(t, "NO"))     cf_answer(0);
+        else if (!_stricmp(t, "CANCEL")) cf_answer(-1);
+        return;
+    }
     if (!_strnicmp(t, "MKDIR:", 6)) { wchar_t w[MAX_PATH]; mb2w(t + 6, w, MAX_PATH); op_mkdir(w); return; }
     if (!_strnicmp(t, "REN:", 4))   { wchar_t w[MAX_PATH]; mb2w(t + 4, w, MAX_PATH); op_rename(w); return; }
     if (!_strnicmp(t, "SORT:", 5)) {
@@ -894,8 +1194,9 @@ static int handle_modal(const KEY_EVENT_RECORD *k)
     }
     if (g_cf_active) {
         wchar_t ch = k->uChar.UnicodeChar;
-        if (ch == L'y' || ch == L'Y') { g_cf_active = 0; if (g_cf_kind == 1) do_action(ACT_DELETE); }
-        else if (ch == L'n' || ch == L'N' || k->wVirtualKeyCode == VK_ESCAPE) { g_cf_active = 0; }
+        if (ch == L'y' || ch == L'Y')              cf_answer(1);
+        else if (ch == L'n' || ch == L'N')         cf_answer(0);
+        else if (k->wVirtualKeyCode == VK_ESCAPE)  cf_answer(-1);
         return 1;
     }
     return 0;
@@ -920,7 +1221,7 @@ static void run_live(void)
     while (!quit) {
         /* follow the live console window size each frame */
         CONSOLE_SCREEN_BUFFER_INFO bi;
-        GetConsoleScreenBufferInfo(hOut, &bi);
+        if (!GetConsoleScreenBufferInfo(hOut, &bi)) break;   /* console went away */
         int W = bi.srWindow.Right - bi.srWindow.Left + 1;
         int H = bi.srWindow.Bottom - bi.srWindow.Top + 1;
         if (W < 24) W = 24;
@@ -939,10 +1240,13 @@ static void run_live(void)
 
         INPUT_RECORD ir;
         DWORD nr = 0;
-        if (!ReadConsoleInput(hIn, &ir, 1, &nr) || nr == 0) continue;
+        /* a failing read would otherwise spin this loop at 100% CPU */
+        if (!ReadConsoleInputW(hIn, &ir, 1, &nr)) break;
+        if (nr == 0) continue;
         if (ir.EventType == WINDOW_BUFFER_SIZE_EVENT) continue;  /* re-render at new size */
         if (ir.EventType == KEY_EVENT && ir.Event.KeyEvent.bKeyDown) {
             const KEY_EVENT_RECORD *ke = &ir.Event.KeyEvent;
+            g_msg[0] = 0;                    /* a key dismisses the last op message */
             if (handle_modal(ke)) continue;
 
             /* drive picker captures keys while open */
@@ -973,13 +1277,10 @@ static void run_live(void)
             /* F8 / Del opens a confirm dialog rather than deleting outright */
             if ((ke->wVirtualKeyCode == VK_F8 || ke->wVirtualKeyCode == VK_DELETE)
                 && !g_view_active) {
-                int n = 0;
-                for (int i = 0; i < act->count; i++)
-                    if (act->items[i].tagged && wcscmp(act->items[i].name, L"..")) n++;
-                if (n == 0 && act->count && wcscmp(act->items[act->cur].name, L"..")) n = 1;
+                int n = sel_count(act);      /* same selection op_delete acts on */
                 if (n > 0) {
                     g_cf_active = 1; g_cf_kind = 1;
-                    _snwprintf(g_cf_msg, MAXCOLS, L"Delete %d item(s)?", n);
+                    swfmt(g_cf_msg, MAXCOLS, L"Delete %d item(s)?", n);
                 }
                 continue;
             }
@@ -1009,21 +1310,26 @@ static void write_exit_cwd(void)
 {
     const char *f = getenv("CC_CWD_FILE");
     if (!f || !*f) return;
-    FILE *fp = fopen(f, "w");
+    /* UTF-8, no BOM, no newline: cc.ps1 reads it with -Encoding UTF8 and
+     * cc.cmd with chcp 65001 active, so non-ANSI folder names survive */
+    FILE *fp = fopen(f, "wb");
     if (!fp) return;
-    char path[MAX_PATH * 2];
-    int n = WideCharToMultiByte(CP_ACP, 0, act->path, -1,
+    char path[MAX_PATH * 4];
+    int n = WideCharToMultiByte(CP_UTF8, 0, act->path, -1,
                                 path, sizeof(path), NULL, NULL);
-    if (n > 0) fputs(path, fp);
+    if (n > 1) fwrite(path, 1, (size_t)(n - 1), fp);
     fclose(fp);
 }
 
-static void set_path_arg(Panel *p, const char *a)
+/* w: the argument as UTF-16 (from CommandLineToArgvW, so folder names outside
+ * the ANSI codepage survive) */
+static void set_path_arg(Panel *p, const wchar_t *w)
 {
-    wchar_t w[MAX_PATH];
-    MultiByteToWideChar(CP_ACP, 0, a, -1, w, MAX_PATH);
-    /* turn it absolute */
-    GetFullPathNameW(w, MAX_PATH, p->path, NULL);
+    wchar_t full[MAX_PATH];
+    /* turn it absolute (keep the default if it doesn't fit) */
+    DWORD fn = GetFullPathNameW(w, MAX_PATH, full, NULL);
+    if (fn == 0 || fn >= MAX_PATH) return;
+    wcscpy(p->path, full);
     /* strip a trailing backslash unless it's a drive root */
     size_t n = wcslen(p->path);
     if (n > 3 && p->path[n - 1] == L'\\') p->path[n - 1] = 0;
@@ -1033,14 +1339,26 @@ int main(int argc, char **argv)
 {
     apply_theme(0);
 
-    /* defaults: both panels = current directory */
-    GetCurrentDirectoryW(MAX_PATH, L.path);
+    /* defaults: both panels = current directory (or C:\ if it can't be had) */
+    DWORD cn = GetCurrentDirectoryW(MAX_PATH, L.path);
+    if (cn == 0 || cn >= MAX_PATH) wcscpy(L.path, L"C:\\");
     wcscpy(R.path, L.path);
+
+    int wargc = 0;
+    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    if (!wargv || wargc != argc) wargv = NULL;   /* fall back to the ANSI argv */
 
     const char *dumpfile = NULL, *keysfile = NULL, *attrfile = NULL;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--dir")  && i + 1 < argc) set_path_arg(&L, argv[++i]);
-        else if (!strcmp(argv[i], "--rdir") && i + 1 < argc) set_path_arg(&R, argv[++i]);
+        if ((!strcmp(argv[i], "--dir") || !strcmp(argv[i], "--rdir")) && i + 1 < argc) {
+            Panel *p = argv[i][2] == 'r' ? &R : &L;
+            i++;
+            if (wargv) set_path_arg(p, wargv[i]);
+            else {
+                wchar_t w[MAX_PATH];
+                if (MultiByteToWideChar(CP_ACP, 0, argv[i], -1, w, MAX_PATH)) set_path_arg(p, w);
+            }
+        }
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dumpfile = argv[++i];
         else if (!strcmp(argv[i], "--dumpa") && i + 1 < argc) attrfile = argv[++i];
         else if (!strcmp(argv[i], "--keys") && i + 1 < argc) keysfile = argv[++i];
@@ -1073,6 +1391,18 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    /* interactive mode needs a real console on both ends; with redirected or
+     * piped stdin, ReadConsoleInput fails and the loop used to spin at 100% */
+    {
+        DWORD m;
+        CONSOLE_SCREEN_BUFFER_INFO bi;
+        if (!GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &m) ||
+            !GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &bi)) {
+            fprintf(stderr, "cc: needs an interactive console (stdin/stdout must not be "
+                            "redirected); use --dump for headless mode\n");
+            return 2;
+        }
+    }
     run_live();
     write_exit_cwd();
     return 0;
