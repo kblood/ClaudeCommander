@@ -1,4 +1,37 @@
-To build CC from source on DOS:
-1. Install NASM for DOS on your PATH
-2. Run INSTALL.BAT and answer the prompts
-3. The built CC.COM (or CC-LFN.COM) will appear in the current directory
+Claude Commander (CC) -- building from source on DOS
+====================================================
+
+What is in cc-installer.zip
+  CC.ASM, MOD\*.INC   the file manager source (CC.ASM includes MOD\*.INC)
+  CCPOP.ASM           wrapper: CC with the classic pop-up menu (no menu bar)
+  INSTALL.BAT         asks two questions and builds CC.COM or CC-LFN.COM
+  CCSETUP.BAT         same as INSTALL.BAT
+  CC*.COM             the helper programs (editor, find, zip, viewers ...),
+                      PREBUILT -- INSTALL.BAT only builds the file manager
+  cc.ini, cc.hlp      configuration and F1 help text
+  da.lng              Danish F-key bar sample (copy to cc.lng to use it)
+
+Requirements
+  - MS-DOS 6.0 or later, or FreeDOS (INSTALL.BAT uses CHOICE)
+  - NASM for DOS on your PATH (https://www.nasm.us/). It is a 32-bit
+    DOS program: it needs a DPMI host, e.g. CWSDPMI.EXE next to NASM.EXE
+    or on the PATH (a Windows 9x DOS box already provides DPMI).
+  - A 386 or later CPU with some extended memory (NASM runs in 32-bit
+    protected mode).
+
+Steps
+  1. Unzip cc-installer.zip into a directory, keeping the MOD\ folder
+     (e.g. PKUNZIP -d or Info-ZIP UNZIP).
+  2. CD into that directory (NASM finds MOD\*.INC relative to it).
+  3. Run INSTALL.BAT and answer the two prompts:
+       full LFN support?  Y -> CC-LFN.COM   N -> CC.COM
+       menu bar?          Y -> pull-down menu bar (F9)
+                          N -> classic pop-up menu (built from CCPOP.ASM)
+  4. Copy the built .COM, the CC*.COM helpers, cc.ini, cc.hlp and da.lng
+     to a directory on your PATH.
+
+The equivalent NASM command lines (useful if you have no CHOICE):
+  NASM -f bin CC.ASM -dFEAT_STD -o CC.COM
+  NASM -f bin CCPOP.ASM -o CC.COM
+  NASM -f bin CC.ASM -dFEAT_STD -dFEAT_LFN_FULL -o CC-LFN.COM
+  NASM -f bin CCPOP.ASM -dFEAT_LFN_FULL -o CC-LFN.COM

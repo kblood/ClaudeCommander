@@ -41,7 +41,7 @@ param(
     [switch]$Quiet              # suppress chatter; used by run_configurator.ps1
 )
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\DOS\cc"
+$dir  = $PSScriptRoot                                       # works from any cwd
 $nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
 if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 . "$dir\tools\measure.ps1"
@@ -81,7 +81,8 @@ foreach ($f in (Get-ChildItem (Join-Path $dir "mod") -Filter *.inc | Sort-Object
 if ($catalog.Count -eq 0) { Write-Host "ERROR: no @feature manifests found under mod/."; exit 1 }
 
 # STD = every NON-opt-in feature (mirrors cc.asm's _TIER>=2 block); MIN = none.
-# Opt-in widgets (e.g. RESULTS) stay out of -Base std and must be -Add/-Only'd.
+# Opt-in widgets (manifest carries `@optin`, e.g. DISCOVER, TOOLS_INI) stay out
+# of -Base std and must be -Add/-Only'd. (RESULTS is NOT opt-in: it is in STD.)
 $stdSet = @($catalog.Keys | Where-Object { -not $optin[$_] })
 
 if ($List) {
@@ -136,17 +137,27 @@ Say ("Selected {0} widget(s): {1}" -f $selected.Count, ($selected -join ", "))
 if ($pulled.Count -gt 0) { Say ("  + auto-added dependencies: {0}" -f ($pulled -join ", ")) }
 
 # ---- size PREVIEW from @cost (hint only; trial assemble below is the truth) -
-$preview = 0x100 + 52928   # PSP + the MIN/core resident floor (CUSTOM-empty)
-foreach ($f in $selected) { $preview += $cost[$f] }
-$preview -= 0x100          # 52928 already includes PSP/core; avoid double count
-Say ("`n  size preview : ~{0,7:N0} B resident  (sum of @cost hints over core floor)" -f $preview)
+# The core floor (no widgets, i.e. -dFEAT_CUSTOM alone == the MIN tier; PSP
+# included) is measured, not hard-coded, so it cannot go stale.
+if (-not $Quiet) {
+    $floorOut = Join-Path ([System.IO.Path]::GetTempPath()) "cc_cfg_floor_$PID.com"
+    $fm = Measure-Resident -Nasm $nasm -Dir $dir -Defs @("-dFEAT_CUSTOM") -Out $floorOut
+    Remove-Item $floorOut -Force -ErrorAction SilentlyContinue
+    if (-not $fm.ok) { Write-Host "NASM FAILED on the bare core (-dFEAT_CUSTOM) -- cc.asm does not assemble."; exit 1 }
+    $preview = $fm.resident
+    foreach ($f in $selected) { $preview += $cost[$f] }
+    Say ("`n  size preview : ~{0,7:N0} B resident  (sum of @cost hints over the {1:N0} B core floor)" -f $preview, $fm.resident)
+}
 
 # ---- assemble (AUTHORITATIVE) ----------------------------------------------
 $outPath = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $dir $Out }
 $defs = @("-dFEAT_CUSTOM") + ($selected | ForEach-Object { "-dFEAT_$_" })
 
 Say ("`nnasm {0} cc.asm -> {1}" -f ($defs -join " "), (Split-Path $outPath -Leaf))
-$m = Measure-Resident -Nasm $nasm -Dir $dir -Defs $defs -Out $outPath
+# assemble to a temp file; an existing $Out is replaced only on success
+$tmpOut = Join-Path ([System.IO.Path]::GetTempPath()) "cc_cfg_out_$PID.com"
+$m = Measure-Resident -Nasm $nasm -Dir $dir -Defs $defs -Out $tmpOut
+if ($m.ok) { Move-Item $tmpOut $outPath -Force } else { Remove-Item $tmpOut -Force -ErrorAction SilentlyContinue }
 if (-not $m.ok) {
     Write-Host "NASM FAILED -- this feature selection does not link."
     Write-Host "(a dependency may be missing from a module's @needs; the trial"

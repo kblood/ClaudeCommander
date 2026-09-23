@@ -1,0 +1,28 @@
+# Line-ending policy.
+# DOS-side text files must be CRLF: MS-DOS COMMAND.COM mis-parses LF-only
+# batch files (labels/GOTO), and TYPE/EDIT expect CRLF.
+*.BAT text eol=crlf
+*.bat text eol=crlf
+*.hlp text eol=crlf
+*.ini text eol=crlf
+*.lng text eol=crlf
+*.TXT text eol=crlf
+
+# Sources and host-side scripts: normal text handling (core.autocrlf decides).
+*.asm text
+*.inc text
+*.ps1 text
+*.md  text
+
+# Binaries: never convert, never diff as text.
+*.com binary
+*.COM binary
+*.zip binary
+*.bin binary
+*.raw binary
+*.RAW binary
+*.png binary
+*.bmp binary
+*.gif binary
+*.pcx binary
+*.wav binary

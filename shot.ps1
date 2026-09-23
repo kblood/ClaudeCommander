@@ -1,15 +1,25 @@
 param(
     [int]$waitMs = 4500,
-    [string]$out = "C:\LLM\DOS\cc\shot.png",
-    [string]$exe = "C:\LLM\DOS\cc\dbstaging\dosbox-staging-v0.82.2\dosbox.exe",
-    [string]$conf = "C:\LLM\DOS\cc\shot.conf",
+    [string]$out = "$PSScriptRoot\shot.png",
+    [string]$exe = "$PSScriptRoot\dbstaging\dosbox-staging-v0.82.2\dosbox.exe",
+    [string]$conf = "$PSScriptRoot\shot.conf",
     [string]$ccArgs = ""
 )
 $ErrorActionPreference = "Stop"
-$dir = "C:\LLM\DOS\cc"
+$dir = $PSScriptRoot
+$nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
+if (-not (Test-Path $nasm)) { $nasm = "nasm" }
 
-# assemble fresh
-& "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe" -f bin "$dir\cc.asm" -o "$dir\cc.com" 2>&1 | Out-Null
+# assemble fresh (to a temp file; cc.com is replaced only on success, and a
+# failed build aborts instead of screenshotting a stale binary). EAP is relaxed
+# around NASM so a warning on stderr can't abort under Windows PowerShell 5.1.
+$tmpCom = Join-Path ([System.IO.Path]::GetTempPath()) "cc_shot_$PID.com"
+$ErrorActionPreference = "Continue"
+& $nasm -f bin -i "$dir/" "$dir\cc.asm" -o $tmpCom 2>&1 | ForEach-Object { Write-Host "  $_" }
+$rc = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($rc -ne 0 -or -not (Test-Path $tmpCom)) { Write-Host "NASM FAILED (exit $rc)"; exit 1 }
+Move-Item $tmpCom "$dir\cc.com" -Force
 
 # write a conf that runs cc interactively (no exit) so the screen persists
 $c = @"

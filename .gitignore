@@ -76,6 +76,8 @@ EXECTEST.TXT
 SPARROW/
 # packaged distribution (rebuilt on demand by package.ps1)
 dist/
+dist.new/
+dist.old/
 # copy/move test fixture
 _mvtest/
 # container-browser (VFS) test fixtures
@@ -142,6 +144,8 @@ wincc/_attr*.txt
 wincc/_f.txt
 wincc/_a.txt
 wincc/_k*.txt
+wincc/_s*.txt
+wincc/_safe/
 wincc/_m2*/
 wincc/_op_*/
 wincc/_z.txt
@@ -205,17 +209,21 @@ _dump_old.txt
 _cfgtest/
 # grep / grep-results panel test scratch
 _greptest/
+_findtest/
 _grestest/
 # search-results panel (FEAT_RESULTS) test scratch
 _restest/
 # CCDIFF three-way-merge test scratch
 _w3test/
+# run_all.ps1 per-test logs
+_testlogs/
+# cc.ini [tools] (FEAT_TOOLS_INI) test scratch
+_tini/
 # AI code-review tool error logs (the .txt reviews themselves are tracked)
 ai-out/*.err
 
 # third-party / verification tooling dropped into the workspace (local only, not for git)
 pmodew/
-toolsamp/
 watcom/
 verify_exp1/
 verify_mdl/

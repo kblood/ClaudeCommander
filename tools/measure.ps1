@@ -43,8 +43,13 @@ function Measure-Resident {
     $lst = [System.IO.Path]::ChangeExtension($Out, ".lst")
     # -i "$Dir/" makes include resolution independent of the caller's cwd (cc.asm
     # pulls mod/*.inc by relative path); without it a non-cc cwd fails to link.
+    # Success is decided by the exit code only: relax EAP locally so a NASM
+    # warning on stderr can't abort the caller (EAP=Stop + 2>&1 does that in
+    # Windows PowerShell 5.1).
+    $ErrorActionPreference = "Continue"
+    $PSNativeCommandUseErrorActionPreference = $false
     & $Nasm -f bin -i "$Dir/" @Defs "$Dir\cc.asm" -o $Out -l $lst 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Out)) {
         if (Test-Path $lst) { Remove-Item $lst -Force -ErrorAction SilentlyContinue }
         return @{ ok = $false; code = 0; resident = 0; out = $Out }
     }

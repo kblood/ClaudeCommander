@@ -1,188 +1,174 @@
-# build_dist.ps1 -- Produce 4 distribution zips in dist\
-# Assumes CC.COM and CCPOP.COM already exist (built by build.ps1 / package.ps1).
-# Builds cc-lfn.com with NASM if it does not already exist.
+# build_dist.ps1 -- Produce the distribution zips in dist\
+#
+#   cc-default.zip    CC.COM, CCPOP.COM, CCUSER.COM + helpers + data + README.TXT
+#   cc-lfn.zip        CC-LFN.COM (std + FEAT_LFN_FULL) + helpers + data
+#   cc-installer.zip  cc.asm + mod\*.inc + ccpop.asm + INSTALL.BAT (build CC on
+#                     DOS with NASM) + the prebuilt helpers + data
+#   wincc.zip         the Windows console port (wincc\cc.exe, rebuilt here)
+#
+# Everything is rebuilt from source on every run -- nothing is taken from
+# leftover binaries in the repo root:
+#   1. build.ps1 -Profile std,lfn   budget gate for CC.COM + fresh cc-lfn.com
+#   2. package.ps1                  fresh dist\ (all .COMs, data, README.TXT)
+#   3. wincc\build.ps1              fresh wincc\cc.exe (skip with -NoWinCC)
+#   4. zips, from dist\ + cc-lfn.com + tracked sources only
+# Any failure aborts with a non-zero exit code; each zip is written to a temp
+# file first, so a failure never leaves a truncated zip in dist\.
 
+param(
+    [switch]$NoWinCC            # skip wincc.zip (e.g. no MinGW gcc on this box)
+)
 $ErrorActionPreference = "Stop"
-$dir  = "C:\LLM\DOS\cc"
-$nasm = "C:\Users\Caldor\AppData\Local\bin\NASM\nasm.exe"
-if (-not (Test-Path $nasm)) { $nasm = "nasm" }
+$dir  = $PSScriptRoot                       # works from any cwd
 $dist = "$dir\dist"
 
-# Ensure dist\ exists
-if (-not (Test-Path $dist)) {
-    New-Item -ItemType Directory -Path $dist | Out-Null
-    Write-Host "Created $dist"
+function Fail([string]$msg) {
+    Write-Host "ERROR: $msg" -ForegroundColor Red
+    Write-Host "build_dist.ps1 FAILED"
+    exit 1
 }
+trap { Fail "$_" }
 
-# ---- Build cc-lfn.com if not present ----
+# ---- 1. budget gate + fresh CC-LFN.COM -------------------------------------
+Write-Host "==== build.ps1 -Profile std,lfn ===="
+& "$dir\build.ps1" -Profile std,lfn
+if ($LASTEXITCODE -ne 0) { Fail "build.ps1 failed (NASM error or over budget)" }
 $lfnCom = "$dir\cc-lfn.com"
-if (-not (Test-Path $lfnCom)) {
-    Write-Host "Building cc-lfn.com (-dFEAT_STD -dFEAT_LFN_FULL) ..."
-    & $nasm -f bin "$dir\cc.asm" -dFEAT_STD -dFEAT_LFN_FULL -o $lfnCom 2>&1 | Write-Host
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: NASM failed to build cc-lfn.com (exit $LASTEXITCODE)" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host ("  cc-lfn.com  {0:N0} B" -f (Get-Item $lfnCom).Length)
-} else {
-    Write-Host ("cc-lfn.com already exists ({0:N0} B) -- skipping build" -f (Get-Item $lfnCom).Length)
+
+# ---- 2. fresh dist\ ---------------------------------------------------------
+Write-Host "`n==== package.ps1 ===="
+& "$dir\package.ps1"
+if ($LASTEXITCODE -ne 0) { Fail "package.ps1 failed" }
+
+# ---- 3. fresh wincc\cc.exe --------------------------------------------------
+if (-not $NoWinCC) {
+    Write-Host "`n==== wincc\build.ps1 ===="
+    & "$dir\wincc\build.ps1"            # throws on a gcc failure -> trap -> Fail
 }
 
-# ---- Write BUILDING.TXT ----
-$buildingTxt = "$dir\BUILDING.TXT"
-$buildingContent = @"
-To build CC from source on DOS:
-1. Install NASM for DOS on your PATH
-2. Run INSTALL.BAT and answer the prompts
-3. The built CC.COM (or CC-LFN.COM) will appear in the current directory
-"@
-Set-Content -Path $buildingTxt -Value $buildingContent -Encoding ASCII
-Write-Host "Wrote BUILDING.TXT"
-
-# ---- Helper function: build a zip from a list of source files ----
-# Each entry is @{ Src = "absolute\path\to\file"; Name = "name-in-zip" }
-# or just a string (absolute path; zip entry = filename only).
+# ---- Helper: build a zip from an explicit list of files ---------------------
+# Each entry is @{ Src = "absolute\path"; Name = "name-in-zip" } (Name may
+# contain a subdirectory, e.g. "mod\ini.inc"). Every entry must exist -- a
+# missing file is an error, never silently skipped. DOS text files (.BAT/.TXT)
+# are written with CRLF line endings: COMMAND.COM cannot run LF-only batches.
 function New-DistZip([string]$zipPath, [array]$entries) {
-    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-
-    # Stage into a temp folder so Compress-Archive preserves flat structure
-    $tmp = "$env:TEMP\cc_dist_stage_$([System.IO.Path]::GetFileNameWithoutExtension($zipPath))"
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cc_dist_stage_{0}_{1}" -f [System.IO.Path]::GetFileNameWithoutExtension($zipPath), $PID)
     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
     New-Item -ItemType Directory -Path $tmp | Out-Null
 
-    $missing  = @()
-    $included = @()
+    $missing = @($entries | Where-Object { -not (Test-Path -LiteralPath $_.Src -PathType Leaf) } | ForEach-Object { "$($_.Name) ($($_.Src))" })
+    if ($missing.Count -gt 0) {
+        Remove-Item $tmp -Recurse -Force
+        Fail ("{0}: missing {1}" -f (Split-Path $zipPath -Leaf), ($missing -join ", "))
+    }
+
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)   # byte-preserving
     foreach ($e in $entries) {
-        if ($e -is [string]) {
-            $src  = $e
-            $name = [System.IO.Path]::GetFileName($src)
-        } else {
-            $src  = $e.Src
-            $name = $e.Name
-        }
-
-        if (-not (Test-Path $src)) {
-            $missing += $name
-            continue
-        }
-
-        # Support subdirectory entries (e.g. wincc\*)
-        $dest = "$tmp\$name"
+        $dest    = Join-Path $tmp $e.Name
         $destDir = [System.IO.Path]::GetDirectoryName($dest)
         if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir | Out-Null }
-        Copy-Item $src $dest -Force
-        $included += $name
+        if ($e.Name -match '\.(bat|txt)$') {
+            $s = $latin1.GetString([System.IO.File]::ReadAllBytes($e.Src)) -replace "`r?`n", "`r`n"
+            [System.IO.File]::WriteAllBytes($dest, $latin1.GetBytes($s))
+        } else {
+            Copy-Item -LiteralPath $e.Src $dest -Force
+        }
     }
 
-    Compress-Archive -Path "$tmp\*" -DestinationPath $zipPath -Force
+    $tmpZip = "$tmp.zip"
+    if (Test-Path $tmpZip) { Remove-Item $tmpZip -Force }
+    Compress-Archive -Path "$tmp\*" -DestinationPath $tmpZip -Force
     Remove-Item $tmp -Recurse -Force
+    Move-Item $tmpZip $zipPath -Force
 
-    return @{ Included = $included; Missing = $missing }
+    Write-Host ("  {0} files: {1}" -f $entries.Count, (($entries | ForEach-Object { $_.Name }) -join ", "))
 }
 
-# ---- Define file lists ----
+function Entry([string]$src, [string]$name) { @{ Src = $src; Name = $name } }
 
-# Helper .COMs that ship with both default and LFN builds
-# (use names as they exist in $dir or $dist)
-$helperComs = @(
-    @{ Src = "$dir\ccfind.com"; Name = "CCFIND.COM" },
-    @{ Src = "$dir\cczip.com";  Name = "CCZIP.COM"  },
-    @{ Src = "$dir\ccgrep.com"; Name = "CCGREP.COM" },
-    @{ Src = "$dir\cchex.com";  Name = "CCHEX.COM"  },
-    @{ Src = "$dir\ccsum.com";  Name = "CCSUM.COM"  },
-    @{ Src = "$dir\ccedit.com"; Name = "CCEDIT.COM" },
-    @{ Src = "$dir\cchexed.com";Name = "CCHEXED.COM"},
-    @{ Src = "$dir\ccdiff.com"; Name = "CCDIFF.COM" },
-    @{ Src = "$dir\ccsplit.com";Name = "CCSPLIT.COM"},
-    @{ Src = "$dir\ccjoin.com"; Name = "CCJOIN.COM" },
-    @{ Src = "$dir\ccren.com";  Name = "CCREN.COM"  },
-    @{ Src = "$dir\cctouch.com";Name = "CCTOUCH.COM"},
-    @{ Src = "$dir\ccarj.com";  Name = "CCARJ.COM"  },
-    @{ Src = "$dir\ccrar.com";  Name = "CCRAR.COM"  },
-    @{ Src = "$dir\ccimg.com";  Name = "CCIMG.COM"  },
-    @{ Src = "$dir\ccwav.com";  Name = "CCWAV.COM"  },
-    @{ Src = "$dir\ccd64.com";  Name = "CCD64.COM"  },
-    @{ Src = "$dir\cct64.com";  Name = "CCT64.COM"  }
+# ---- File lists (all binaries come from the fresh dist\) --------------------
+# Helper .COMs: every helper package.ps1 builds from this repo. CCPAK/CCMDL are
+# routed by cc.ini ([open] pak=, [view] mdl=), so they must ship.
+$helperNames = @(
+    "CCEDIT.COM","CCFIND.COM","CCZIP.COM","CCPAK.COM","CCMDL.COM","CCGREP.COM",
+    "CCHEX.COM","CCHEXED.COM","CCSUM.COM","CCD64.COM","CCT64.COM","CCARJ.COM",
+    "CCRAR.COM","CCIMG.COM","CCWAV.COM","CCDIFF.COM","CCSPLIT.COM","CCJOIN.COM",
+    "CCREN.COM","CCTOUCH.COM"
 )
+$helperComs = @($helperNames | ForEach-Object { Entry "$dist\$_" $_ })
 
-# Also try dist\ as source for any helper not in $dir root
-foreach ($h in $helperComs) {
-    if (-not (Test-Path $h.Src)) {
-        $fromDist = "$dist\$($h.Name)"
-        if (Test-Path $fromDist) { $h.Src = $fromDist }
-    }
+# Gold Box helpers (cc.ini routes .dax/.daa/.tlb/.glb/.gbi/.hti/.geo/.dai to
+# them) are optional in package.ps1 -- ship whichever it bundled.
+$gbNames = @("CCGLB.COM","CCGEO.COM","CCHLIB.COM","CCDAA.COM","CCSND.COM","CCGB.COM","CCGBC.COM")
+$gbHave  = @($gbNames | Where-Object { Test-Path "$dist\$_" })
+$gbMiss  = @($gbNames | Where-Object { -not (Test-Path "$dist\$_") })
+if ($gbMiss.Count -gt 0) {
+    Write-Host ("WARNING: Gold Box helpers not bundled by package.ps1: {0}" -f ($gbMiss -join ", ")) -ForegroundColor Yellow
 }
+$helperComs += @($gbHave | ForEach-Object { Entry "$dist\$_" $_ })
 
+# Runtime data (cc.lng is the user's own opt-in copy of da.lng; not shipped)
 $dataFiles = @(
-    @{ Src = "$dir\cc.ini"; Name = "cc.ini" },
-    @{ Src = "$dir\cc.lng"; Name = "cc.lng" },
-    @{ Src = "$dir\cc.hlp"; Name = "cc.hlp" },
-    @{ Src = "$dir\da.lng"; Name = "da.lng"  }
+    (Entry "$dist\cc.ini" "cc.ini"),
+    (Entry "$dist\cc.hlp" "cc.hlp"),
+    (Entry "$dist\da.lng" "da.lng")
 )
 
-# ---- a) cc-default.zip ----
+# ---- a) cc-default.zip ------------------------------------------------------
 Write-Host "`n---- Building cc-default.zip ----"
 $defaultEntries = @(
-    @{ Src = "$dir\cc.com";   Name = "CC.COM"   },
-    @{ Src = "$dir\ccpop.com";Name = "CCPOP.COM" }
+    (Entry "$dist\CC.COM"     "CC.COM"),
+    (Entry "$dist\CCPOP.COM"  "CCPOP.COM"),
+    (Entry "$dist\CCUSER.COM" "CCUSER.COM"),
+    (Entry "$dist\README.TXT" "README.TXT")
 ) + $helperComs + $dataFiles
+# TOOLSAMP\ (example .BATs for CCUSER.COM) if package.ps1 bundled it
+if (Test-Path "$dist\TOOLSAMP") {
+    $defaultEntries += @(Get-ChildItem "$dist\TOOLSAMP" -File | ForEach-Object { Entry $_.FullName "TOOLSAMP\$($_.Name)" })
+}
+New-DistZip "$dist\cc-default.zip" $defaultEntries
 
-$r = New-DistZip "$dist\cc-default.zip" $defaultEntries
-Write-Host "  Included: $($r.Included -join ', ')"
-if ($r.Missing) { Write-Host "  Missing (skipped): $($r.Missing -join ', ')" -ForegroundColor Yellow }
-
-# ---- b) cc-lfn.zip ----
+# ---- b) cc-lfn.zip ----------------------------------------------------------
 Write-Host "`n---- Building cc-lfn.zip ----"
-$lfnEntries = @(
-    @{ Src = $lfnCom; Name = "cc-lfn.com" }
-) + $helperComs + $dataFiles
+$lfnEntries = @( (Entry $lfnCom "CC-LFN.COM") ) + $helperComs + $dataFiles
+New-DistZip "$dist\cc-lfn.zip" $lfnEntries
 
-$r = New-DistZip "$dist\cc-lfn.zip" $lfnEntries
-Write-Host "  Included: $($r.Included -join ', ')"
-if ($r.Missing) { Write-Host "  Missing (skipped): $($r.Missing -join ', ')" -ForegroundColor Yellow }
-
-# ---- c) cc-installer.zip ----
+# ---- c) cc-installer.zip ----------------------------------------------------
+# Explicit source list (NOT a *.asm glob: the root also holds _*.asm scratch
+# and cmdl_exp*.asm experiments that are not 8.3-distinct). INSTALL.BAT builds
+# only CC.COM / CC-LFN.COM (from cc.asm or the ccpop.asm wrapper); the helper
+# .COMs ship prebuilt (see BUILDING.TXT).
 Write-Host "`n---- Building cc-installer.zip ----"
+$incFiles = @(Get-ChildItem "$dir\mod\*.inc" | Sort-Object Name | ForEach-Object { Entry $_.FullName "mod\$($_.Name)" })
+if ($incFiles.Count -eq 0) { Fail "no mod\*.inc found" }
+$installerEntries = @(
+    (Entry "$dir\cc.asm"       "cc.asm"),
+    (Entry "$dir\ccpop.asm"    "ccpop.asm"),
+    (Entry "$dir\INSTALL.BAT"  "INSTALL.BAT"),
+    (Entry "$dir\CCSETUP.BAT"  "CCSETUP.BAT"),
+    (Entry "$dir\BUILDING.TXT" "BUILDING.TXT")
+) + $incFiles + $helperComs + $dataFiles
+New-DistZip "$dist\cc-installer.zip" $installerEntries
 
-# Gather *.asm from root
-$asmFiles = Get-ChildItem "$dir\*.asm" | ForEach-Object {
-    @{ Src = $_.FullName; Name = $_.Name }
+# ---- d) wincc.zip -----------------------------------------------------------
+if ($NoWinCC) {
+    Write-Host "`n---- Skipping wincc.zip (-NoWinCC) ----"
+    if (Test-Path "$dist\wincc.zip") { Remove-Item "$dist\wincc.zip" -Force }   # never ship a stale one
+} else {
+    Write-Host "`n---- Building wincc.zip ----"
+    $winccEntries = @(
+        (Entry "$dir\wincc\cc.exe"    "cc.exe"),
+        (Entry "$dir\wincc\cc.cmd"    "cc.cmd"),
+        (Entry "$dir\wincc\cc.ps1"    "cc.ps1"),
+        (Entry "$dir\wincc\README.md" "README.md")
+    )
+    New-DistZip "$dist\wincc.zip" $winccEntries
 }
-# Gather mod\*.inc
-$incFiles = Get-ChildItem "$dir\mod\*.inc" | ForEach-Object {
-    @{ Src = $_.FullName; Name = "mod\$($_.Name)" }
-}
 
-$installerEntries = $asmFiles + $incFiles + @(
-    @{ Src = "$dir\INSTALL.BAT";   Name = "INSTALL.BAT"   },
-    @{ Src = "$dir\CCSETUP.BAT";   Name = "CCSETUP.BAT"   },
-    @{ Src = "$dir\cc.ini";        Name = "cc.ini"         },
-    @{ Src = "$dir\cc.lng";        Name = "cc.lng"         },
-    @{ Src = "$dir\cc.hlp";        Name = "cc.hlp"         },
-    @{ Src = "$dir\da.lng";        Name = "da.lng"         },
-    @{ Src = $buildingTxt;         Name = "BUILDING.TXT"   }
-)
-
-$r = New-DistZip "$dist\cc-installer.zip" $installerEntries
-Write-Host "  Included: $($r.Included -join ', ')"
-if ($r.Missing) { Write-Host "  Missing (skipped): $($r.Missing -join ', ')" -ForegroundColor Yellow }
-
-# ---- d) wincc.zip ----
-Write-Host "`n---- Building wincc.zip ----"
-$winccEntries = @(
-    @{ Src = "$dir\wincc\cc.exe";   Name = "cc.exe"    },
-    @{ Src = "$dir\wincc\cc.cmd";   Name = "cc.cmd"    },
-    @{ Src = "$dir\wincc\cc.ps1";   Name = "cc.ps1"    },
-    @{ Src = "$dir\wincc\README.md"; Name = "README.md" }
-)
-
-$r = New-DistZip "$dist\wincc.zip" $winccEntries
-Write-Host "  Included: $($r.Included -join ', ')"
-if ($r.Missing) { Write-Host "  Missing (skipped): $($r.Missing -join ', ')" -ForegroundColor Yellow }
-
-# ---- Summary ----
+# ---- Summary ----------------------------------------------------------------
 Write-Host "`n==== Distribution zips in $dist ===="
 Get-ChildItem "$dist\*.zip" | Sort-Object Name | ForEach-Object {
     "{0,-22}  {1,8:N0} B" -f $_.Name, $_.Length | Write-Host
 }
 Write-Host "`nbuild_dist.ps1 complete."
+exit 0

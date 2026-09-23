@@ -17,7 +17,8 @@ the resident size scales with exactly what you choose.
 .\configure.ps1 -Base std -Add TOOLS_INI -Remove LANG,LFN,RESULTS -Out ccuser.com
 ```
 
-- `-Base std` starts from the full widget set; `-Base min` from the bare core.
+- `-Base std` starts from the STD tier (every widget except the opt-in ones,
+  e.g. `DISCOVER`, `TOOLS_INI`); `-Base min` from the bare core.
 - `-Add` / `-Remove` adjust that base; `-Only` specifies the whole set explicitly.
 - Hard dependencies are pulled in automatically (e.g. `CLOCK` needs `WIDGETS`,
   `VFS`/`VIEW` need `INI`), so any selection links.
@@ -43,7 +44,8 @@ widget, drop a `mod/foo.inc` with a manifest header and a `%ifdef FEAT_FOO`
 
 ## The size budget
 
-Each `@cost` feeds a running **preview** total. The **authoritative** number is
+Each `@cost` feeds a running **preview** total on top of the measured core
+floor (a trial assemble with no widgets). The **authoritative** number is
 the trial assemble the configurator does at the end: it reports the real resident
 image (`0x100` PSP + emitted bytes + `.bss`) and whether it fits the 63 KB wall.
 Never trust `@cost` for the gate — it is a hint; the trial assemble is the truth,
@@ -65,7 +67,16 @@ Run it after touching `configure.ps1`, a manifest, or the tier block.
 ## Shipping it as a "compiler installation"
 
 Because customizing `cc` means re-assembling, a self-contained customizable
-distribution is just **cc's sources + NASM**. NASM ships a 16-bit DOS build, so
-the configurator concept works on the target itself: drop the `mod/` tree,
-`cc.asm`, and `nasm.exe` (DOS) on the machine and rebuild a tailored `cc.com`
-in place. On the dev host, `configure.ps1` drives the same NASM you already use.
+distribution is just **cc's sources + NASM**. NASM's DOS build is a 32-bit
+DJGPP program (it needs a 386+ and a DPMI host such as `CWSDPMI.EXE`), but the
+`.COM` it produces is the same, so the concept works on the target itself: drop
+the `mod/` tree, `cc.asm`, and `nasm.exe` (DOS) on the machine and rebuild a
+tailored `cc.com` in place. That is what `cc-installer.zip` (made by
+`build_dist.ps1`) ships, with `INSTALL.BAT` choosing between the canonical
+variants — see `BUILDING.TXT`.
+
+`configure.ps1` itself is PowerShell and runs on the dev host only. On DOS,
+remember that COMMAND.COM caps a command line at 127 characters, so a long
+`-dFEAT_CUSTOM -dFEAT_X ...` list will not fit: put the `%define FEAT_X` lines
+in a small wrapper that ends in `%include "cc.asm"` (as `ccpop.asm` does) and
+assemble the wrapper instead.
