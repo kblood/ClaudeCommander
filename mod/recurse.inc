@@ -118,10 +118,17 @@ del_tree:
 copy_tree:
         mov     ax, [rdepth]
         cmp     ax, MAX_DEPTH
-        jae     .ret
-        mov     ah, 39h             ; mkdir dest (ignore "exists")
+        jae     .fail               ; too deep: this level is NOT copied
+        mov     ah, 39h             ; mkdir dest
         mov     dx, rdst
         int     21h
+        jnc     .made
+        mov     ax, 4300h           ; failed: fine only if it is an existing dir
+        int     21h                 ; (dx = rdst)
+        jc      .fail
+        test    cl, 10h
+        jz      .fail               ; a FILE of that name blocks the copy
+.made:
         call    set_dta_cur
         call    make_findpat        ; from rsrc
         mov     ah, 4Eh
@@ -187,5 +194,8 @@ copy_tree:
         int     21h
         jnc     .loop
 .ret:
+        ret
+.fail:
+        mov     byte [cp_fail], 1   ; F6 must keep the source tree
         ret
 

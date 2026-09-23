@@ -24,9 +24,8 @@ key_mkdir:
 ; F8 -- delete: all tagged entries if any, else the cursor entry. Recurses
 ; into directory trees. One confirm for the whole batch.
 key_delete:
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .ret
+        call    real_cur            ; archive / results / drives panel -> refuse
+        jc      .ret
         call    count_tagged        ; -> cx = # tagged in active panel
         jcxz    .single
         mov     si, s_delconf
@@ -51,9 +50,7 @@ key_delete:
 .bdone:
         call    refresh_panels
         ret
-.single:
-        mov     bx, [active]
-        call    cur_entry_ptr       ; si=entry
+.single:                            ; si = cursor entry (count_tagged keeps it)
         mov     al, [si+E_NAME]
         cmp     al, '.'
         jne     .ok
@@ -92,16 +89,33 @@ delete_one:
 .file:
         mov     si, targpath
         call    busy_name
+        mov     dx, targpath
+        jmp     del_file
+.ret:   ret
+
+; delete the file named by ds:dx (LFN-aware). Clobbers ax (and si under LFN).
+del_file:
 %ifndef FEAT_LFN_FULL
         mov     ah, 41h
-        mov     dx, targpath
 %else
         mov     ax, 7141h           ; LFN Delete
-        mov     dx, targpath
         xor     si, si              ; SI=0 required
+        stc                         ; pre-DOS7 leaves CF alone on AH=71h
 %endif
         int     21h
-.ret:   ret
+        ret
+
+; CF=1 unless the active panel is a real directory (not an archive, results or
+; drives list) with at least one entry; the file ops that act on
+; P_PATH\E_NAME must never run on a virtual row. -> bx = [active], si = cursor.
+real_cur:
+        mov     bx, [active]
+        call    cur_entry_ptr       ; si = cursor entry (flags clobbered)
+        cmp     byte [bx+P_SRC], SRC_VFS    ; CF=1 iff SRC_DIR
+        cmc
+        jc      .r
+        cmp     word [bx+P_COUNT], 1        ; CF=1 iff empty
+.r:     ret
 
 ; F5 -- copy: all tagged entries if any, else the cursor entry. Recurses into
 ; directory trees. One confirm for the whole batch.
@@ -125,8 +139,7 @@ key_copy:
         jmp     vfs_addto           ; F5 -> add files into the other archive
 .notvfs:
 %endif
-        mov     byte [ow_mode], 0   ; reset overwrite policy for this operation
-        mov     byte [ow_cancel], 0
+        mov     word [ow_mode], 0   ; reset overwrite policy + ow_cancel (next byte)
         mov     bx, [active]
         mov     cx, [bx+P_COUNT]
         jcxz    .ret
@@ -200,31 +213,42 @@ copy_one:
 ; copy (would self-destruct). Used by both the single and batch copy paths.
 copy_one_paths:
         ; refuse ONLY the exact same-location copy (it is a no-op and would
-        ; otherwise overwrite each file with itself). Copying into a SUBfolder
-        ; of the source is allowed; copy_tree just skips the destination dir so
-        ; it doesn't descend into the copy it is creating.
-        mov     si, targpath
-        mov     di, targpath2
-        call    streqi              ; CF=1 if dst path == src path
+        ; otherwise overwrite each file with itself -- 3Ch truncates the source).
+        ; Copying into a SUBfolder of the source is allowed; copy_tree just
+        ; skips the destination dir so it doesn't descend into the copy it is
+        ; creating. The compare is on TRUENAMEs (canon_pair).
+        call    canon_pair          ; rsrc/rdst = canonical src/dst; CF=1 if same
         jc      .ret
         test    dl, 10h
-        jz      .file
+        jz      copy_file
         ; directory: record the destination root, then recursive copy
-        mov     si, targpath2
+        mov     si, rdst
         mov     di, dstroot
         call    bp_copy_name
+        mov     word [rdepth], 0
+        jmp     copy_tree
+.ret:   ret
+
+; rsrc/rdst = TRUENAME (INT 21h/60h) of targpath/targpath2 -- or the raw path
+; if 60h fails -- so 8.3 truncation, '.'/'..', SUBST and case can't hide a
+; copy onto itself. -> CF=1 if both name the same file. Preserves dl.
+canon_pair:
         mov     si, targpath
         mov     di, rsrc
-        call    bp_copy_name
+        call    .one
         mov     si, targpath2
         mov     di, rdst
-        call    bp_copy_name
-        mov     word [rdepth], 0
-        call    copy_tree
+        call    .one
+        mov     si, rsrc
+        mov     di, rdst
+        jmp     streqi
+.one:
+        push    ds
+        pop     es
+        mov     ah, 60h             ; TRUENAME ds:si -> es:di (128 bytes)
+        int     21h
+        jc      bp_copy_name        ; no canonical form -> compare the raw path
         ret
-.file:
-        call    copy_file
-.ret:   ret
 
 ; ----------------------------------------------------------------------------
 ; F6 -- MOVE: like copy, but removes the source after a successful transfer.
@@ -233,11 +257,12 @@ copy_one_paths:
 ; move falls back to copy-then-delete.
 ; ----------------------------------------------------------------------------
 key_move:
-        mov     byte [ow_mode], 0
-        mov     byte [ow_cancel], 0
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .ret
+        call    other_panel_ptr     ; never move INTO an archive / results list
+        cmp     byte [bx+P_SRC], SRC_DIR
+        jne     .ret
+        call    real_cur            ; ...nor out of one (bx = active, si = cursor)
+        jc      .ret
+        mov     word [ow_mode], 0   ; + ow_cancel (next byte)
         call    count_tagged        ; -> cx = # tagged
         jcxz    .single
         mov     si, s_moveconf
@@ -264,9 +289,7 @@ key_move:
 .bdone:
         call    refresh_panels
         ret
-.single:
-        mov     bx, [active]
-        call    cur_entry_ptr
+.single:                            ; si = cursor entry (count_tagged keeps it)
         mov     al, [si+E_NAME]
         cmp     al, '.'
         je      .ret
@@ -302,10 +325,23 @@ move_one:
 
 ; move: targpath (src) and targpath2 (dst) already built; dl = src attr.
 move_one_paths:
-        mov     si, targpath
-        mov     di, targpath2
-        call    streqi              ; same path -> nothing to do
+        call    canon_pair          ; same file -> nothing to do
         jc      .ret
+        ; refuse a directory moved into its own subtree (dst = src + '\...'):
+        ; the copy fallback would copy it into itself, then delete the lot.
+        mov     si, rsrc
+        mov     di, rdst
+.pre:   lodsb
+        or      al, al
+        jz      .pend
+        cmp     al, [di]
+        jne     .go
+        inc     di
+        jmp     .pre
+.pend:  cmp     byte [di], '\'
+        je      .ret
+.go:
+        push    dx                  ; dl = source attr (dx is needed below)
         push    ds                  ; fast path: same-drive rename/move
         pop     es
         mov     dx, targpath        ; ds:dx old name
@@ -314,32 +350,29 @@ move_one_paths:
         mov     ah, 56h
 %else
         mov     ax, 7156h           ; LFN Rename/Move
+        stc
 %endif
         int     21h
+        pop     dx
         jnc     .ret                ; moved (and renamed) in one step
         ; rename failed: cross-drive, or destination exists. Copy across, then
-        ; delete the source so the net effect is still a move.
+        ; delete the source so the net effect is still a move -- but only if
+        ; every file really arrived (skip / open / create / read / write / mkdir
+        ; failures all set cp_fail) and the user didn't cancel.
+        mov     byte [cp_fail], 0
+        push    dx
         call    copy_one_paths
-        cmp     byte [ow_cancel], 0
-        jne     .ret                ; user cancelled overwrite -> keep source
+        pop     dx
+        mov     al, [cp_fail]
+        or      al, [ow_cancel]
+        jnz     .ret                ; something was not copied -> keep the source
         test    dl, 10h
         jz      .delfile
-        mov     si, targpath        ; delete the source directory tree
-        mov     di, rsrc
-        call    bp_copy_name
-        mov     word [rdepth], 0
-        call    del_tree
-        ret
+        mov     word [rdepth], 0    ; rsrc = the source root (copy_tree restores it)
+        jmp     del_tree
 .delfile:
-%ifndef FEAT_LFN_FULL
-        mov     ah, 41h
         mov     dx, targpath
-%else
-        mov     ax, 7141h           ; LFN Delete
-        mov     dx, targpath
-        xor     si, si              ; SI=0 required
-%endif
-        int     21h
+        jmp     del_file
 .ret:   ret
 
 ; targpath2 = OTHER-panel path + '\' + dlgbuf (the typed destination name).

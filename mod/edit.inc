@@ -11,10 +11,8 @@
 ; or any editor on the PATH); see set_editor_val in mod/ini.inc.
 
 key_edit:
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .ret
-        call    cur_entry_ptr           ; -> si = entry ptr (name at si)
+        call    real_cur                ; -> si = entry ptr; CF = virtual/empty
+        jc      .ret
         test    byte [si+E_ATTR], 10h
         jnz     .ret                    ; don't "edit" a directory
         ; cmdbuf = "<editor> " + panelpath + "\" + name

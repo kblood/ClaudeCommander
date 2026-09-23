@@ -591,7 +591,7 @@ mb_l_split  db 'Split file...', 0
 mb_l_ren    db 'Wildcard rename...', 0
 %endif
 %ifdef FEAT_VIEWS
-mb_l_view3  db '3-col view (Ctrl-F10)', 0
+mb_l_view3  db 'Cycle view (Ctrl-F10)', 0
 %endif
 mb_mlb      db 0                ; left-button state tracking (menu mouse support)
 mb_click    dw 0FFFFh           ; menu index from a browser-mode bar click (FFFF=none)

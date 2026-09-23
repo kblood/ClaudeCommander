@@ -274,12 +274,13 @@ tree_goto:
         push    bx
         call    path_append         ; appends "\name" to active P_PATH
         pop     bx
+        jc      .reread             ; too deep for P_PATH -> stop at this ancestor
         inc     bx
         jmp     .ap
 .reread:
         mov     bx, [active]
-        call    read_dir
-        ret
+        mov     byte [bx+P_SRC], SRC_DIR    ; a real folder now, even if the panel
+        jmp     read_dir                    ; was showing an archive / results list
 
 ; ---------------------------------------------------------------------------
 ; Full-screen render: title bar (row 0) + indented node list + help bar (row 24).

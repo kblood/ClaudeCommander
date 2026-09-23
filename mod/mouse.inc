@@ -129,11 +129,25 @@ mouse_hit:
         clc
         ret
 .leftp:
+        sub     ax, L_CONX          ; ax = column within the panel body
         mov     bx, panelL
         jmp     .sel
 .rightp:
+        sub     ax, R_CONX
         mov     bx, panelR
 .sel:
+%ifdef FEAT_VIEWS
+        ; brief view: 3 column-major columns of VIS_ROWS entries each, so the
+        ; clicked column adds col*VIS_ROWS (body <= 39 wide -> col 0..2)
+        cmp     byte [bx+P_VIEW], 1
+        jne     .nb
+        mov     cl, BRIEF_PITCH
+        div     cl                  ; al = column
+        mov     ah, VIS_ROWS
+        mul     ah
+        add     [m_vis], ax
+.nb:
+%endif
         mov     ax, [bx+P_TOP]
         add     ax, [m_vis]
         cmp     ax, [bx+P_COUNT]
@@ -182,7 +196,12 @@ mouse_left:
         xor     ax, ax              ; no-op key -> just re-render
         ret
 .fbar:
-        call    fbar_to_key
+        ; the bar is 10 even slots of 8 cols: slot = col/8 -> F(slot+1).
+        ; F2 (unused) maps to a scan code nothing dispatches -> harmless.
+        mov     ax, [m_col]
+        shr     ax, 3               ; slot 0..9, ah = 0
+        add     al, 3Bh             ; F1 = 3Bh .. F10 = 44h
+        xchg    al, ah              ; ax = scan<<8 (ascii 0)
         ret
 
 mouse_right:

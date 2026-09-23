@@ -18,7 +18,7 @@
 ;     VD_HSTEP   dw  entries moved by Left/Right
 ;
 ; Toggle: Ctrl-F10 (key_view_toggle) cycles through the registered views.
-; Default view is full / P_VIEW=0 (set in init_panel_cwd).
+; Default view is full / P_VIEW=0 (the startup .bss clear).
 
 VD_RENDER   equ 0
 VD_SCROLL   equ 2

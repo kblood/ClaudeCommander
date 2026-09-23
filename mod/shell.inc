@@ -11,10 +11,16 @@
 run_helper:
         call    get_comspec
         call    build_tail
+        jc      .ret                ; command too long for a DOS tail -> don't run
         call    fill_epb
         call    run_exec
-        ret
+.ret:   ret
 
+; Typed commands and Tools items: run cmdbuf in the ACTIVE panel's directory.
+run_in_panel:
+        mov     byte [run_here], 1
+; Everything else (F4 editor, viewers, CCZIP ...): run in cc's own directory,
+; where the helpers have always been found.
 run_command:
         ; switch to a clean text screen for the command's own output
         mov     ax, 0003h
@@ -24,15 +30,43 @@ run_command:
         mov     ah, 9
         mov     dx, s_runmsg
         int     21h
+        ; save cc's own drive/dir and return to it afterwards (helper lookup,
+        ; CCDUMP/FINDOUT and cc.hlp are relative to it)
+        mov     ah, 19h
+        int     21h
+        push    ax                  ; al = cc's current drive
+        mov     byte [srchbuf], '\'
+        mov     si, srchbuf+1
+        xor     dl, dl
+        mov     ah, 47h             ; "\" + cwd of the current drive
+        int     21h
+        shr     byte [run_here], 1  ; CF = run_in_panel entry (flag cleared)
+        jnc     .home
+        call    set_active_cwd
+.home:
         call    get_comspec         ; -> comspec_buf
         call    build_tail          ; -> cmdtail (Pascal string)
+        mov     dx, s_toolong
+        jc      .msg                ; too long for a DOS command tail
         call    fill_epb
         call    run_exec            ; INT 21h 4Bh
+        mov     dx, s_anykey
+.msg:
+        pop     ax
+        push    dx
+        mov     dl, al
+        mov     ah, 0Eh             ; back to cc's drive...
+        int     21h
+        mov     dx, srchbuf
+        mov     ah, 3Bh             ; ...and directory
+        int     21h
+        pop     dx
         ; pause so output is readable, then rebuild UI
         mov     ah, 9
-        mov     dx, s_anykey
         int     21h
         call    get_key
+        mov     byte [mouse_vis], 0 ; the program may have reset the mouse
+                                    ; driver (cursor hidden): let mouse_show re-show
         mov     word [cmdlen], 0
         ; a command may have changed the filesystem -> re-read both panels
         mov     bx, panelL
@@ -99,8 +133,15 @@ get_comspec:
         pop     es
         ret
 
-; build the EXEC command tail (Pascal string) = " /C " + cmdbuf + CR
+; build the EXEC command tail (Pascal string) = " /C " + cmdbuf + CR.
+; CF=1 (nothing built) if it would not fit: DOS allows 126 chars + CR, and
+; cmdtail is 132 bytes with comspec_buf right behind it. vfs/viewer builders
+; can make up to ~175-char commands.
+CMD_MAX     equ 122             ; 126 - len(" /C ")
 build_tail:
+        cmp     word [cmdlen], CMD_MAX+1
+        cmc
+        jc      .ret                ; cmdlen > CMD_MAX -> refuse
         mov     di, cmdtail+1
         mov     si, s_slashc
 .s1:
@@ -124,9 +165,9 @@ build_tail:
 .nb:
         mov     byte [di], 0Dh
         mov     ax, di
-        sub     ax, cmdtail+1       ; tail length (excludes CR per spec? include text only)
+        sub     ax, cmdtail+1       ; tail length (text only, CR excluded); CF=0
         mov     [cmdtail], al
-        ret
+.ret:   ret
 
 ; fill the EXEC parameter block with our segment
 fill_epb:

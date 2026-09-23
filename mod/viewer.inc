@@ -68,13 +68,16 @@ view_open_builtin:
         mov     ax, 3D00h
         mov     dx, targpath
         int     21h
-        jc      .close              ; open failed -> bail (restores mouse mode)
+        jc      .fail               ; open failed -> bail (restores mouse mode)
         mov     [fh_src], ax
         mov     bx, ax
         mov     ah, 3Fh
         mov     cx, VIEW_MAX
         mov     dx, viewbuf
         int     21h
+        jnc     .rdok
+        xor     ax, ax              ; read error -> show an empty file
+.rdok:
         mov     [vlen], ax
         mov     bx, [fh_src]
         mov     ah, 3Eh
@@ -110,6 +113,10 @@ view_open_builtin:
         mov     byte [view_edit_req], 0
         call    view_launch_editor  ; run CCHEXED / configured editor on the file
         jmp     .reload             ; the file may have changed -> re-read it
+.fail:
+%ifdef FEAT_RESULTS
+        mov     word [view_start_line], 0  ; don't leak a grep line to the next view
+%endif
 .close:
         mov     byte [mouse_mode], MM_BROWSER
 .ret:
@@ -197,6 +204,8 @@ view_move:
         cmp     ah, 4Fh
         je      .end
         cmp     ah, 3Dh             ; F3 again
+        je      .quit
+        cmp     ah, 3Bh             ; F1 (closes help, like F3 closes view)
         je      .quit
         cmp     ah, 44h             ; F10
         je      .quit
@@ -651,10 +660,8 @@ put_hex16:
 ; Enter hex view directly on the cursor file (Tools menu). Always built-in,
 ; bypassing the [view] external-viewer map.
 key_hexview:
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .skip
-        call    cur_entry_ptr
+        call    real_cur                    ; archive/results row -> refuse
+        jc      .skip
         test    byte [si+E_ATTR], 10h
         jnz     .skip                       ; not a directory
         call    build_entry_path

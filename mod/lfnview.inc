@@ -97,6 +97,7 @@ lfnv_format:
         mov     cx, 0016h           ; match hidden/system/directory entries
         mov     dx, targpath        ; ds:dx = search spec (8.3 path)
         mov     di, copybuf         ; es:di = output buffer (WIN32_FIND_DATA)
+        stc                         ; pre-DOS7 returns with CF untouched
         int     21h
         pop     es                  ; restore es
         pop     si                  ; si = entry ptr

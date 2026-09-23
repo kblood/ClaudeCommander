@@ -35,6 +35,7 @@ lfn_draw_cursor:
         xor     si, si                  ; SI=0: DOS-style date/time in buffer
         mov     dx, targpath            ; ds:dx = search spec (the 8.3 path)
         mov     di, copybuf             ; 318-byte WIN32_FIND_DATA (reused buf)
+        stc                             ; pre-DOS7 returns with CF untouched
         int     21h
         pop     es                      ; restore es = VIDEO
         jc      .ret                    ; no LFN provider / not found
@@ -50,9 +51,7 @@ lfn_draw_cursor:
 .draw:  mov     al, [si]
         or      al, al
         jz      .ret
-        mov     cx, di
-        and     cx, ROW_BYTES-1         ; column byte offset within the row
-        cmp     cx, ROW_BYTES-2
+        cmp     di, (CMD_ROW+1)*ROW_BYTES-2
         jae     .ret                    ; reached the right edge of the row
         stosw
         inc     si

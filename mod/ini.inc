@@ -11,23 +11,18 @@
 ; Unknown keys/values are ignored.  This is the backbone for persisted options;
 ; more keys can be added by extending the dispatch below.
 
-ini_load:
-        mov     word [open_n], 0
-%ifdef FEAT_VIEW
-        mov     word [view_n], 0
-%endif
+ini_load:                           ; (startup only: open_n/view_n/utool_n and
+                                    ;  cur_sect = top level are 0 from the .bss clear)
 %ifdef FEAT_TOOLS_INI
-        mov     word [utool_n], 0
         mov     word [ut_pp], utbuf     ; reset the label/program text cursor
 %endif
-        mov     byte [cur_sect], 0
         mov     ax, 3D00h
         mov     dx, s_ininame
         int     21h
         jc      .ret
         mov     bx, ax
         mov     ah, 3Fh
-        mov     cx, VIEW_MAX-1      ; reuse the 12 KB F3/vfs scratch (startup-only,
+        mov     cx, VIEW_MAX-1      ; reuse the 8 KB F3/vfs scratch (startup-only,
         mov     dx, viewbuf         ; runs before any panel read or file view)
         int     21h
         jc      .close
@@ -64,9 +59,11 @@ ini_load:
         je      .skip
         cmp     al, '['
         je      .section
-        ; inside a map section ([open] / [view]) every "ext = helper" maps
+        ; inside a map section ([open] / [view]) every "ext = helper" maps;
+        ; inside an unknown [section] (cur_sect = 0FFh) every key is ignored
         cmp     byte [cur_sect], 0
         je      .keys
+        jl      .skip
 %ifdef FEAT_TOOLS_INI
         cmp     byte [cur_sect], 3      ; [tools] uses "label = program" not "ext ="
         je      .dotools
@@ -126,7 +123,7 @@ ini_load:
         jmp     .skip
 %endif
 .section:
-        mov     byte [cur_sect], 0
+        mov     byte [cur_sect], 0FFh   ; unknown until matched below
         push    si
         inc     si                  ; past '['
         mov     di, k_open

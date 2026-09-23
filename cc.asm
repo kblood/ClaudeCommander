@@ -76,7 +76,7 @@ SRC_RESULT  equ 2
 P_CNAME     equ 76         ; 14 bytes: container filename when P_VFS=1
 P_CPATH     equ 90         ; 64 bytes: path WITHIN the container ('/'-terminated
                            ;   or empty at the archive root) when P_VFS=1
-P_VIEW      equ 154        ; byte: body view mode (0 = full list, 1 = brief 3-col)
+P_VIEW      equ 154        ; byte: body view mode (0 full, 1 brief 3-col, 2 LFN)
 P_ENTRIES   equ 156        ; entry array
 MAX_FILES   equ 512         ; per panel (keeps the whole .COM within one 64KB segment)
 ENTSIZE     equ 24
@@ -296,6 +296,17 @@ FKEY_ROW    equ 24         ; function-key bar
 start:
         cld
         mov     sp, stacktop        ; relocate stack into resident region
+        ; --- zero .bss once (nothing lives there yet; the stack is excluded) ---
+        mov     di, bss_start
+        mov     cx, stackspace - bss_start
+        xor     ax, ax
+        rep     stosb               ; es = ds = cs at .COM entry
+        ; --- critical errors (no disk in A:, write-protect, ...) FAIL the DOS
+        ;     call instead of prompting Abort/Retry over the UI (an Abort would
+        ;     exit without restoring the screen). DOS restores INT 24h on exit.
+        mov     ax, 2524h
+        mov     dx, crit_fail
+        int     21h
         ; --- parse command tail for /T and /D ---
         mov     si, 81h             ; PSP command tail text
         movzx   cx, byte [80h]      ; tail length
@@ -398,8 +409,7 @@ start:
         mov     di, panelR
         call    init_panel_cwd
 
-        mov     word [active], panelL
-        mov     word [cmdlen], 0
+        mov     word [active], panelL   ; (cmdlen is 0 from the .bss clear)
 
         ; --- diagnostic: write panel counts + first names, then exit ---
         cmp     byte [count_dbg], 0
@@ -428,12 +438,8 @@ start:
 .nosnap:
 %endif
 
-        ; --- mouse init (live mode only) ---
-        mov     byte [mouse_ok], 0
-        mov     byte [mouse_vis], 0
-        mov     byte [mouse_mode], MM_BROWSER
-        mov     byte [m_lb], 0
-        mov     byte [m_rb], 0
+        ; --- mouse init (live mode only; mouse_ok/vis/mode, m_lb/rb are 0 from
+        ;     the .bss clear, and MM_BROWSER = 0) ---
         mov     word [m_lastpan], 0FFFFh
         cmp     byte [test_mode], 0
         jne     .nomouse
@@ -479,14 +485,7 @@ main_loop:
         mov     bx, [active]
         cmp     byte [bx+P_VFS], 0
         jne     .nocd
-        mov     al, [bx+P_PATH]         ; drive letter 'A'..'Z'
-        sub     al, 'A'
-        mov     dl, al
-        mov     ah, 0Eh                 ; select default drive
-        int     21h
-        lea     dx, [bx+P_PATH]         ; ASCIIZ "C:\DIR\SUB"
-        mov     ah, 3Bh                 ; CHDIR
-        int     21h
+        call    set_active_cwd          ; select drive + CHDIR "C:\DIR\SUB"
 .nocd:
         mov     ax, 4C00h
         int     21h
@@ -545,10 +544,14 @@ key_quit:
         mov     byte [quit_flag], 1
         ret
 
+crit_fail:                          ; INT 24h handler: AL=3 -> fail the DOS call
+        mov     al, 3
+        iret
+
 ; Enter: if the command line has text, run it; else act on the current entry
 on_enter:
         cmp     word [cmdlen], 0
-        jne     run_command
+        jne     run_in_panel        ; typed command -> in the active panel's dir
         jmp     key_enter
 
 on_esc:
@@ -577,7 +580,7 @@ on_bksp:
 
 cmd_addchar:
         mov     bx, [cmdlen]
-        cmp     bx, 127
+        cmp     bx, CMD_MAX         ; the most a DOS command tail can carry
         jae     .r
         mov     [cmdbuf+bx], al
         inc     word [cmdlen]
@@ -754,6 +757,7 @@ key_enter:
         ; append "\name" to path
         lea     di, [si+E_NAME]
         call    path_append
+        jc      .ret                ; path would not fit -> stay put
         call    read_dir
 .ret:
         ret
@@ -794,8 +798,7 @@ key_enter:
 .fce:
         mov     [cmdlen], cx
         pop     si
-        call    set_active_cwd
-        jmp     run_command
+        jmp     run_in_panel        ; (runs it in the active panel's dir)
 
 ; si=entry -> CF=1 if the name ends in .EXE/.COM/.BAT (case-insensitive)
 is_exec:
@@ -859,7 +862,8 @@ cmp3:
         or      al, al              ; ZF=0 (differ)
         ret
 
-; set the DOS current drive + directory to the active panel's path
+; set the DOS current drive + directory to the active panel's path (for a
+; container / results / drives panel P_PATH is the real folder behind it)
 set_active_cwd:
         mov     bx, [active]
         mov     dl, [bx+P_PATH]
@@ -1314,10 +1318,20 @@ draw_cmdline:
 .gt:
         mov     al, '>'
         stosw
-        ; typed command-line text
+        ; typed command-line text -- only what fits on this row (the back
+        ; buffer ends with row 24): show the tail if it is longer
         mov     si, cmdbuf
         mov     cx, [cmdlen]
         jcxz    .nocmd
+        mov     ax, (CMD_ROW+1)*ROW_BYTES
+        sub     ax, di
+        shr     ax, 1               ; cells left on the row
+        sub     cx, ax
+        jbe     .fits
+        add     si, cx              ; skip the head that doesn't fit
+        xor     cx, cx
+.fits:  add     cx, ax
+        mov     ah, A_CMD
 .cl:
         lodsb
         stosw
@@ -1354,6 +1368,7 @@ draw_fkeys:
         mov     bx, bp             ; si = fk_tbl[slot]
         shl     bx, 1
         mov     si, [fk_tbl+bx]
+        mov     cx, 8              ; a (cc.lng) label never spills past its slot
 .ch:
         mov     al, [si]
         or      al, al
@@ -1369,7 +1384,7 @@ draw_fkeys:
         mov     [es:di+1], ah
         add     di, 2
         inc     si
-        jmp     .ch
+        loop    .ch
 .nextslot:
         inc     bp
         jmp     .slot
@@ -1398,13 +1413,8 @@ init_panel_cwd:
         int     21h
         pop     di
         ; ensure terminator: AH=47h null-terminates. If empty -> "C:\"
-        mov     word [di+P_COUNT], 0
-        mov     word [di+P_TOP], 0
-        mov     word [di+P_CUR], 0
-        mov     byte [di+P_VFS], 0
-%ifdef FEAT_VIEWS
-        mov     byte [di+P_VIEW], 0     ; default to the full list view
-%endif
+        ; (startup only: P_COUNT/TOP/CUR, P_VFS = SRC_DIR and P_VIEW = full
+        ; list are all 0 from the .bss clear)
         mov     bx, di
         call    read_dir
         pop     di
@@ -1459,6 +1469,7 @@ read_dir:
         xor     si, si              ; date format = local time
         mov     dx, srchbuf         ; DS:DX = search spec
         mov     di, copybuf         ; ES:DI = WIN32_FIND_DATA (318 bytes)
+        stc                         ; pre-DOS7 leaves CF alone on AH=71h
         int     21h
         pop     es
         jc      .finish
@@ -1802,11 +1813,19 @@ build_search:
 ;  PATH MANIPULATION
 ; ============================================================================
 ; append "\NAME" to active panel path. di -> NAME (ASCIIZ). bx=panel.
+; CF=1 (path untouched) if the result would overflow the 68-byte P_PATH (it
+; would run into P_COUNT/P_TOP/P_CUR/P_VFS); CF=0 when appended.
 path_append:
         mov     si, di              ; si = name
         mov     bx, [active]
         lea     di, [bx+P_PATH]
-        call    strlen_di           ; -> ax=len, di at end
+        call    strlen_di           ; di at end
+        call    strlen              ; ax = name length
+        add     ax, di
+        sub     ax, bx              ; = path len + name len (P_PATH = 0)
+        cmp     ax, 67              ; + '\' + NUL must fit in 68: CF=1 iff <= 66
+        cmc
+        jc      .ret
         ; if last char != '\' add one
         cmp     byte [di-1], '\'
         je      .nm
@@ -1818,9 +1837,9 @@ path_append:
         lodsb
         mov     [di], al
         inc     di
-        or      al, al
+        or      al, al              ; (CF=0)
         jnz     .cn
-        ret
+.ret:   ret
 
 ; go up one directory in active panel path -----------------------------------
 path_up:
@@ -3144,44 +3163,10 @@ get_tick:
         pop     es
         ret
 
-; map a click column [m_col] on the F-key bar to a synthetic key in ax.
-; The bar is 10 even slots of 8 cols; slot = col/8, F-number = slot+1.
-fbar_to_key:
-        mov     ax, [m_col]
-        shr     ax, 3               ; slot 0..9
-        cmp     ax, 2
-        je      .f3
-        cmp     ax, 4
-        je      .f5
-        cmp     ax, 5
-        je      .f6
-        cmp     ax, 6
-        je      .f7
-        cmp     ax, 7
-        je      .f8
-        cmp     ax, 9
-        je      .f10
-.none:  xor     ax, ax
-        ret
-.f3:    mov     ax, 3D00h
-        ret
-.f5:    mov     ax, 3F00h
-        ret
-.f6:    mov     ax, 4000h
-        ret
-.f7:    mov     ax, 4100h
-        ret
-.f8:    mov     ax, 4200h
-        ret
-.f10:   mov     ax, 4400h
-        ret
-
 ; F6 -- rename / move current entry to a name typed in a dialog
 key_rename:
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .ret
-        call    cur_entry_ptr
+        call    real_cur            ; bx = active, si = cursor; CF = virtual/empty
+        jc      .ret
         mov     al, [si+E_NAME]
         cmp     al, '.'
         jne     .ok
@@ -3205,6 +3190,7 @@ key_rename:
         mov     ah, 56h
 %else
         mov     ax, 7156h           ; LFN Rename/Move
+        stc
 %endif
         int     21h
         call    refresh_panels
@@ -3224,7 +3210,7 @@ copy_file:
         cmp     byte [ow_mode], 1
         je      .open               ; overwrite-all
         cmp     byte [ow_mode], 2
-        je      .ret                ; skip-all
+        je      .fail               ; skip-all (not copied: a move keeps its source)
         mov     si, targpath2       ; ask: returns al = 0/1/2/3
         call    dlg_overwrite
         push    ax
@@ -3234,7 +3220,7 @@ copy_file:
         call    busy_name
         pop     ax
         cmp     al, 1
-        je      .ret                ; Skip this one
+        je      .fail               ; Skip this one
         cmp     al, 2
         je      .all
         cmp     al, 3
@@ -3256,9 +3242,10 @@ copy_file:
         mov     cx, 0               ; attributes: normal
         mov     dx, 0001h           ; action: open-existing
         mov     si, targpath        ; DS:SI = path
+        stc
 %endif
         int     21h
-        jc      .ret
+        jc      .fail
         mov     [fh_src], ax
 %ifndef FEAT_LFN_FULL
         xor     cx, cx              ; create dst (normal attr)
@@ -3270,9 +3257,10 @@ copy_file:
         mov     cx, 0               ; attributes: normal
         mov     dx, 0012h           ; action: open-or-create
         mov     si, targpath2       ; DS:SI = path
+        stc
 %endif
         int     21h
-        jc      .closesrc
+        jc      .cfail
         mov     [fh_dst], ax
 .loop:
         mov     ah, 3Fh
@@ -3280,7 +3268,7 @@ copy_file:
         mov     cx, 512
         mov     dx, copybuf
         int     21h
-        jc      .closeall
+        jc      .wfail
         or      ax, ax
         jz      .closeall           ; EOF
         mov     cx, ax
@@ -3288,7 +3276,18 @@ copy_file:
         mov     bx, [fh_dst]
         mov     dx, copybuf
         int     21h
-        jmp     .loop
+        jc      .wfail
+        cmp     ax, cx
+        je      .loop
+.wfail:                             ; read error / write error / disk full:
+        mov     ah, 3Eh             ; close and drop the partial destination
+        mov     bx, [fh_dst]
+        int     21h
+        mov     dx, targpath2
+        call    del_file
+.cfail:
+        mov     byte [cp_fail], 1
+        jmp     .closesrc
 .closeall:
         mov     ah, 3Eh
         mov     bx, [fh_dst]
@@ -3298,6 +3297,9 @@ copy_file:
         mov     bx, [fh_src]
         int     21h
 .ret:   ret
+.fail:
+        mov     byte [cp_fail], 1   ; not copied -> F6 must keep the source
+        ret
 
 ; Insert -- toggle tag on current entry, advance cursor
 key_tag:
@@ -3538,8 +3540,8 @@ keytab:
         KEYBIND_EXT 66h, key_zip        ; Ctrl-F9  list archive (CCZIP.COM)
 %endif
 %ifdef FEAT_VIEWS
-        KEYBIND_EXT 67h, key_view_toggle ; Ctrl-F10 toggle full / brief body view
-        KEYBIND_EXT 6Ah, key_view_toggle ; Alt-F3   brief-view toggle (DOSBox-safe)
+        KEYBIND_EXT 67h, key_view_toggle ; Ctrl-F10 cycle full / brief / LFN views
+        KEYBIND_EXT 6Ah, key_view_toggle ; Alt-F3   same cycle (DOSBox-safe)
 %endif
 %ifdef FEAT_TREE
         KEYBIND_EXT 71h, key_tree       ; Alt-F10  modal directory-tree browser
@@ -3549,7 +3551,7 @@ keytab:
 ; function-key bar: 10 labels, one per 8-column slot (drawn by draw_fkeys)
 fk_tbl      dw fk0,fk1,fk2,fk3,fk4,fk5,fk6,fk7,fk8,fk9
 fk0         db '1Help',0
-fk1         db '2Menu',0
+fk1         db '2',0
 fk2         db '3View',0
 fk3         db '4Edit',0
 fk4         db '5Copy',0
@@ -3575,6 +3577,7 @@ s_exe       db 'EXE'
 s_com       db 'COM'
 s_bat       db 'BAT'
 s_runmsg    db 0Dh,0Ah,'[Claude Commander] running command...',0Dh,0Ah,'$'
+s_toolong   db 'Command line too long.'     ; (no '$': runs on into s_anykey)
 s_anykey    db 0Dh,0Ah,'Press any key to return to Claude Commander...',0Dh,0Ah,'$'
 s_mkdir     db 'Create directory:',0
 s_rename    db 'Rename/move current entry to:',0
@@ -3633,6 +3636,7 @@ dumph       dw 0FFFFh
 KEYBUF_MAX  equ 512
 section .bss
 align 2
+bss_start:                  ; start..stackspace is zeroed once at startup
 rowbuf      resb 84
 numbuf      resb 16
 %ifdef FEAT_FREE
@@ -3668,7 +3672,7 @@ ukey_n      resw 1          ; dynamically-registered user hotkey count
 ukeytab     resb UTOOL_MAX*4 ; rows: db class, db code, dw utool-index (keytab-shaped)
 %endif
 %ifdef FEAT_INI
-; cc.ini is read into the shared 12 KB viewbuf at startup (before any panel read
+; cc.ini is read into the shared 8 KB viewbuf at startup (before any panel read
 ; or F3 view), so no dedicated scratch is reserved here -- see mod/ini.inc.
 ini_n       resw 1
 LNGMAX      equ 160
@@ -3678,7 +3682,8 @@ lfn_di      resw 1          ; mod/lfn.inc saved CMD_ROW draw position
 attr_cur    resb 1          ; mod/attr.inc working attribute bits
 openmap     resb OPENMAX*OPENROW ; [open] ext->helper map (ini.inc / vfs.inc)
 open_n      resw 1
-cur_sect    resb 1          ; ini parser: 0 none, 1 [open], 2 [view]
+cur_sect    resb 1          ; ini parser: 0 none, 1 [open], 2 [view], 3 [tools],
+                            ;   0FFh an unknown [section] (its keys are ignored)
 ext_tmp     resb 4
 cur_map_base resw 1         ; ini parser: map being filled this section
 cur_map_n   resw 1          ; ini parser: -> count word for that map
@@ -3761,6 +3766,8 @@ dlg_focus   resb 1         ; confirm dialog: 0=Yes 1=No
 ow_focus    resb 1         ; overwrite dialog: 0=Overwrite 1=Skip 2=All 3=Cancel
 ow_mode     resb 1         ; 0=ask each time, 1=overwrite-all, 2=skip-all
 ow_cancel   resb 1         ; set when the user cancels the whole operation
+cp_fail     resb 1         ; set when a copy skipped/failed an item (F6 keeps the source)
+run_here    resb 1         ; run_in_panel -> run_command: EXEC in the panel's dir
 m_lb        resb 1
 m_rb        resb 1
 m_x         resw 1

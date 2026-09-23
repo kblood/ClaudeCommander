@@ -93,13 +93,13 @@ wildmatch:
         mov     dx, di                  ; remember text position
         jmp     .wl
 .send:
-        cmp     byte [si], '*'          ; skip trailing stars
-        jne     .chk
-        inc     si
-        jmp     .send
-.chk:
-        cmp     byte [si], 0            ; matched iff pattern also exhausted
-        jne     .no
+        lodsb                           ; skip trailing stars and dots, so (as in
+        cmp     al, '*'                 ;  DOS) "*.*" and "*." also match a name
+        je      .send                   ;  with no extension
+        cmp     al, '.'
+        je      .send
+        or      al, al                  ; matched iff pattern also exhausted
+        jnz     .no
         pop     bp
         stc
         ret

@@ -137,13 +137,15 @@ foot_freekb:
         je      .zero
         push    bx                  ; save available clusters
         mul     cx                  ; dx:ax = sec/clu * bytes/sec (bytes/cluster)
-        mov     cx, 10              ; >>10 -> KB per cluster
-.sh:
+        mov     cx, 9               ; >>9 -> half-KB per cluster (a 512-byte
+.sh:                                ;  floppy cluster would be 0 KB at >>10)
         shr     dx, 1
         rcr     ax, 1
         loop    .sh
         pop     cx                  ; available clusters
-        mul     cx                  ; dx:ax = KB/clu * avail = free KB
+        mul     cx                  ; dx:ax = half-KB/clu * avail
+        shr     dx, 1
+        rcr     ax, 1               ; -> free KB
         jmp     .ret
 .zero:
         xor     ax, ax

@@ -39,6 +39,8 @@ results_show_grep:
         ; fall through
 %endif
 results_show_common:
+        mov     bx, [active]            ; both lists share res_heap: a list still
+        call    res_free                ; shown in the searched panel goes back to a dir
         call    other_panel_ptr         ; bx = the panel that is NOT active
         mov     [rl_panel], bx
         ; copy the searched dir (active P_PATH) into the results panel's P_PATH
@@ -77,6 +79,10 @@ results_leave:
 ; bx = the panel to fill with the drive list (and focus).
 drives_show:
         mov     [active], bx
+        push    bx
+        call    other_panel_ptr         ; the other panel's results/drives list
+        call    res_free                ; lives in the same res_heap -> re-list it
+        pop     bx
         mov     byte [bx+P_SRC], SRC_RESULT
         call    drives_load
         mov     bx, [active]
@@ -85,6 +91,16 @@ drives_show:
         mov     word [bx+P_CUR], 1      ; start on the first drive, not ".."
 .nc:
         ret
+
+; bx = a panel NOT about to be filled. The results and drives lists keep their
+; paths in the one shared res_heap, so if bx shows such a list it would go stale
+; when the other panel is filled: turn it back into its real folder listing.
+res_free:
+        cmp     byte [bx+P_SRC], SRC_RESULT
+        jne     .r
+        mov     byte [bx+P_SRC], SRC_DIR
+        jmp     read_dir
+.r:     ret
 
 ; bx = panel -> fill entries with a ".." row + one row per existing drive. Each
 ; drive row carries the dir bit (renders "<DIR>") and a heap "X:\" path; Enter
@@ -489,7 +505,14 @@ results_enter:
         je      .findjump               ; line > 0 = grep file row -> open viewer
         jmp     results_view_at_line
 .findjump:
-        mov     si, [si+E_RES_OFF]      ; si = full path in res_heap
+        ; land the cursor on the row's own E_NAME afterwards: results_set_name
+        ; already capped it at 12 chars + NUL, so it fits the 14-byte
+        ; rl_namebuf even for a long (LFN) name from CCFIND/CCGREP
+        push    word [si+E_RES_OFF]
+        lea     si, [si+E_NAME]
+        mov     di, rl_namebuf
+        call    bp_copy_name
+        pop     si                      ; si = full path in res_heap
         ; copy the full path into the active panel's P_PATH (cap 67 + NUL)
         mov     bx, [active]
         lea     di, [bx+P_PATH]
@@ -521,17 +544,6 @@ results_enter:
 .fbe:
         or      dx, dx
         jz      .relist                 ; no '\' (degenerate) -> just list as-is
-        ; basename (dx+1) -> rl_namebuf
-        mov     si, dx
-        inc     si
-        mov     di, rl_namebuf
-.bc:
-        mov     al, [si]
-        mov     [di], al
-        inc     si
-        inc     di
-        or      al, al
-        jnz     .bc
         ; split: keep "X:\" at a root, else drop the trailing '\'
         mov     bx, dx                  ; bx -> the last '\'
         cmp     byte [bx-1], ':'        ; char before it ':' -> it's a root "X:\"

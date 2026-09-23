@@ -12,10 +12,8 @@
 ; is visible in the /T harness and matches the Ctrl-F5 attribute column.
 
 key_attr:
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .bail
-        call    cur_entry_ptr           ; si = cursor entry
+        call    real_cur                ; si = cursor entry; CF = virtual/empty
+        jc      .bail
         cmp     byte [si+E_NAME], '.'   ; skip "." / ".."
         je      .bail
         test    byte [si+E_ATTR], 10h   ; skip directories

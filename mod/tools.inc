@@ -18,10 +18,8 @@
 
 ; CF=0 with targpath = active cursor's full path; CF=1 if empty / a directory.
 tools_cur_path:
-        mov     bx, [active]
-        mov     cx, [bx+P_COUNT]
-        jcxz    .no
-        call    cur_entry_ptr
+        call    real_cur                ; archive/results row -> no real file
+        jc      .no
         test    byte [si+E_ATTR], 10h
         jnz     .no
         call    build_entry_path        ; -> targpath
@@ -37,7 +35,7 @@ tools_exec:
         mov     ax, di
         sub     ax, cmdbuf
         mov     [cmdlen], ax
-        jmp     run_command
+        jmp     run_in_panel            ; (in the active panel's directory)
 
 ; Tools / Checksum:  CCSUM <cursor>
 key_tools_sum:

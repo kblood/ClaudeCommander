@@ -10,106 +10,79 @@
     F1 .. this help          F3 .. view          F4 .. edit (CCEDIT)
     F5 .. copy*              F6 .. move*          F7 .. make dir
     F8 .. delete             F9 .. menu           F10 . quit
-    *F5/F6 copy/move to the OTHER panel; the dialog lets you rename in
-     flight. Shift-F6 renames the file in place (same folder).
-    F9 / menu bar: the top row shows a pull-down menu bar (Files / Commands /
-     Options / Tools). Press F9 to drop the current menu down; Left/Right switch
-     menus, Up/Down pick an item, Enter runs it, Esc closes. You can also just
-     CLICK a menu title to open it (no F9 first), then click an item to run it or
-     click outside to close. (The classic single pop-up menu is available instead
-     in the CCPOP.COM build.)
-     The Tools menu runs the bundled helpers on the cursor / panel files so
-     they feel built in: Hex dump (the F3 pager in hex mode), Checksum (CRC-32
-     via CCSUM), Compare (CCDIFF, this panel's file vs the other panel's),
-     Split file (CCSPLIT, prompts for a piece size) and Wildcard rename
-     (CCREN, prompts for source + destination masks).
-     The optional CCUSER.COM build also reads cc.ini [tools] rows and appends
-     them to this menu. Those rows run "<program> <cursor-file>", so .BAT
-     scripts receive the selected file as %1. See TOOLSAMP in the distribution.
-    Alt-F1/F2 ....... show all available drives in the left / right panel as a
-                      list; Enter on a drive opens its root, Esc (or "..") goes
-                      back to the folder you were in
-    Alt-F5 .......... pack tagged/cursor into an archive (other panel);
-                      tagged folders are packed recursively
-    Alt-F7 .......... find files by name -> the matches fill the other panel as
-                      a browsable list (like a ZIP); Enter on a row jumps to that
-                      file's folder. (Uses CCFIND.)
-    Alt-F8 .......... search file contents / grep -> the other panel lists each
-                      FILE that contains a match (one row per file; its first-
-                      match line shows in the size column). Enter on a file opens
-                      the F3 viewer at that line. (Uses CCGREP.)
-                      To leave a results list and return to the normal folder
-                      view, press Esc (or Enter on its ".." row), just like
-                      backing out of a ZIP.
+    *to the OTHER panel; the dialog lets you rename in flight. Shift-F6
+     renames in place (same folder). F2 is unused.
+    F9 / menu bar ... pull-down menus Files / Commands / Options / Tools.
+                      F9 drops the current menu; Left/Right switch menus,
+                      Up/Down pick, Enter runs, Esc closes. Or click a title,
+                      then an item (click outside closes). CCPOP.COM has the
+                      classic single pop-up menu instead.
+    Tools menu ...... Hex dump (F3 pager in hex), Checksum (CCSUM CRC-32),
+                      Compare (CCDIFF, this vs other panel's file), Split
+                      file (CCSPLIT, asks piece size), Wildcard rename (CCREN,
+                      asks masks). CCUSER.COM appends cc.ini [tools] rows,
+                      run as "<program> <cursor-file>" (.BAT gets it as %1;
+                      see TOOLSAMP).
+    Alt-F1/F2 ....... drive list in the left / right panel; Enter opens a
+                      drive's root, Esc (or "..") returns to the prior folder
+    Alt-F5 .......... pack tagged/cursor into an archive in the other panel
+                      (tagged folders recurse)
+    Alt-F7 .......... find files by name (CCFIND); matches fill the other
+                      panel as a list; Enter jumps to that file's folder
+    Alt-F8 .......... grep file contents (CCGREP); the other panel lists one
+                      row per matching file (first-match line in the size
+                      column); Enter opens the F3 viewer at that line.
+                      Leave a results list with Esc or ".." (like a ZIP).
     Alt-F9 .......... extract a whole archive to the other panel
-    Alt-F10 ......... directory-tree browser: a full-screen list of every
-                      sub-folder under the active panel's path. Up/Dn/PgUp/
-                      PgDn/Home/End move; Enter jumps the panel into the
-                      highlighted folder; Esc closes without changing.
+    Alt-F10 ......... directory tree under the active panel's path: cursor
+                      keys move, Enter jumps the panel there, Esc cancels
 
   VIEWERS (the [view] map in cc.ini selects a viewer per extension)
-    F3 on a mapped file runs "<viewer> <file>"; unmapped files use the
-    built-in text pager. e.g.  [view]  gif = CCIMG
-    Built-in pager: Up/Dn/PgUp/PgDn/Home/End scroll; press H to toggle
-    between TEXT and a built-in HEX dump (offset / 16 bytes / ASCII) of the
-    same file -- no external program; Esc or F3 quits.
-    Press E to edit the file you are viewing: in TEXT mode it opens the
-    configured editor (see CONFIG below); in HEX mode it opens CCHEXED, the
-    bundled hex editor. cc reloads the file when the editor exits.
-    Shipped viewers: CCIMG (bmp/pcx/gif, VGA mode 13h) and CCWAV (PCM
-    .wav via the Sound Blaster). Press a key / ESC to return to cc.
-    CCMDL (Quake .mdl, F3): 3D model viewer; arrows rotate, Space spins,
-    A animates, N/P step frames, ESC/Q/F3 quit. F3 on a .mdl member inside
-    a browsed .pak opens it in place (no extraction); direct usage is
-    CCMDL <file.mdl>.
+    F3 on a mapped file runs "<viewer> <file>" (e.g. [view] gif = CCIMG);
+    others use the built-in pager: cursor keys scroll, H toggles TEXT / HEX
+    dump (offset, 16 bytes, ASCII), Esc or F3 quits. E edits the file: TEXT
+    mode opens the configured editor (see CONFIG), HEX mode opens CCHEXED;
+    cc reloads the file afterwards.
+    CCIMG <file> .... bmp/pcx/gif (VGA 13h); any key / Esc returns
+    CCWAV <file> .... PCM .wav via the Sound Blaster; any key / Esc returns
+    CCMDL <file> .... Quake .mdl 3D viewer: arrows rotate, Space spins,
+                      A animates, N/P step frames, Esc/Q/F3 quit
 
   ARCHIVES (the [open] map in cc.ini selects a packer per extension)
-    Enter on a .zip . browse it like a folder, INCLUDING sub-folders
-                      (Enter a folder to descend, ".." to go back up, Backspace
-                      to leave at the top). F5 extracts the cursor member to the
-                      other panel (sub-path preserved). With the OTHER panel
-                      inside a .zip, F5 ADDS the tagged/cursor files (folders
-                      recurse) into that archive.
-    Enter on a .d64 . browse a C64 1541 disk image; F5 extracts a file
-                      as <name>.PRG; Alt-F9 extracts every file.
-    Enter on a .t64 . browse a C64 tape archive; F5 / Alt-F9 extract
-                      entries as <name>.PRG (load address restored).
-    Enter on a .arj . browse an ARJ archive; F5 / Alt-F9 extract STORED
-                      members (compressed members are listed, not yet decoded).
-    Enter on a .rar . browse a RAR 4.x archive; F5 / Alt-F9 extract STORED
-                      members (RAR compression is proprietary -- browse-first).
-    Enter on a .pak . browse a Quake PAK archive, sub-folders included; F5 /
-                      Alt-F9 extract (sub-path preserved). F3 on a member
-                      opens it with its own [view] helper without extracting
-                      (e.g. a .mdl member opens straight in CCMDL).
+    Enter on an archive browses it like a folder; F5 extracts the cursor
+    member, Alt-F9 every member, to the other panel.
+    .zip ............ sub-folders included (paths kept); ".." goes up,
+                      Backspace leaves at the top. With the OTHER panel
+                      inside a .zip, F5 ADDS tagged/cursor files (recursive)
+    .d64 / .t64 ..... C64 1541 disk / tape image; files extract as
+                      <name>.PRG (.t64 restores the load address)
+    .arj / .rar ..... ARJ / RAR 4.x: only STORED members extract (compressed
+                      ones are listed, not decoded)
+    .pak ............ Quake PAK, sub-folders included (paths kept); F3 on a
+                      member opens its [view] helper without extracting
+                      (a .mdl opens straight in CCMDL)
 
   DISPLAY / SELECT
     Ctrl-F1..F4 ..... sort by name / ext / size / date
     Ctrl-F5 ......... cycle column: size / date / time / attributes
     Ctrl-F6 ......... incremental quick-search
     Ctrl-F7/F8 ...... tag / untag files by *.mask
-    Panel footer .... shows "<n> Files <free>K free"; once you tag files it
-                      shows "<n> selected  <total> bytes" instead. The clock
-                      ticks once a second on its own; its position is set in
-                      cc.ini (clock = cmdrow | topright | off).
-    Ctrl-A .......... edit file attributes (Read-only/Hidden/System/Archive)
+    Ctrl-A .......... edit attributes (Read-only/Hidden/System/Archive)
     Ctrl-F9 ......... list archive contents (CCZIP)
-    Ctrl-F10 ........ toggle the panel body between the full list and a brief
-    (or Alt-F3)       3-column names-only view (each panel toggles on its own).
-                      In brief view Left/Right move between columns (they page in
-                      the full view). Use Alt-F3 under DOSBox, which intercepts
-                      Ctrl-F10. Also on the Options menu.
-
-  DISPLAY (cont.)
-    Long names ...... the cursor file's long name shows on the command row
-                      when an LFN provider is active (Win9x DOS / DOSLFN);
-                      on plain DOS the 8.3 name is used.
+    Ctrl-F10 ........ cycle the panel view (per panel): full list -> brief
+    (Alt-F3 DOSBox)   3-column names -> LFN long-name view (long names with
+                      an LFN provider, else 8.3). In brief view Left/Right
+                      move between columns. Also on the Options menu.
+    Panel footer .... "<n> Files <free>K free", or "<n> selected <total>
+                      bytes" once files are tagged; the clock ticks each
+                      second
+    Long names ...... with an LFN provider (Win9x DOS / DOSLFN) the cursor
+                      file's long name shows on the command row
 
   EXTERNAL TOOLS (type the name at the prompt, then Enter)
-    CCHEX <file> .... hex + ASCII dump of any file (binary viewer)
-    CCHEXED <file> .. overwrite-only hex editor: arrows move a byte cursor,
-                      type hex digits to overwrite, F2 saves, Esc quits
-                      (also the F3 hex view's E key and editor = CCHEXED)
+    CCHEX <file> .... hex + ASCII dump of any file
+    CCHEXED <file> .. overwrite-only hex editor: arrows move, hex digits
+                      overwrite, F2 saves, Esc quits (also the hex view's E)
     CCSUM <file> .... CRC-32 + byte size (verify two files match)
     CCGREP w d m .... search file contents (also Alt-F8)
     CCFIND p d ...... find files by name (also Alt-F7)
@@ -118,15 +91,15 @@
     CCSPLIT f n[K] .. split a file into f.001, f.002, ... of n bytes each
     CCJOIN out base . rejoin base.001, base.002, ... into one file
     CCREN src dst ... wildcard multi-rename, e.g. CCREN *.TXT *.BAK
+    CCTOUCH <file> [YYYY-MM-DD [HH:MM[:SS]]]
+                      set a file's date/time (no date = now)
 
   CONFIG
-    cc.ini .......... set initial "sort" and "columns" options, the clock
-                      position (clock = cmdrow | topright | off), and the
-                      editor F4 launches:  editor = CCEDIT  (the default),
-                      editor = EDIT (DOS Editor), editor = CCHEXED (hex
-                      editor), or any editor on the PATH.
-                      In CCUSER.COM, cc.ini [tools] lines have the form
-                      Label = PROG [key], e.g. File info = INFO.BAT Shift-F3.
+    cc.ini .......... initial "sort" and "columns"; clock position (clock =
+                      cmdrow | topright | off); the F4 editor: editor =
+                      CCEDIT (default) | EDIT | CCHEXED | any program on
+                      the PATH. CCUSER.COM [tools] lines: Label = PROG [key]
+                      e.g. File info = INFO.BAT Shift-F3
     cc.lng .......... translate the F-key bar (copy da.lng to cc.lng)
 
-  Scroll this help with Up/Down/PgUp/PgDn; press Esc, q, F1 or F10 to close.
+  Scroll with Up/Down/PgUp/PgDn; press Esc, q, F1, F3 or F10 to close.
