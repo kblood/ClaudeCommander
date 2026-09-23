@@ -6,7 +6,11 @@
 ;                              imgw(2) imgh(2) then imgw*imgh index bytes then
 ;                              768 palette bytes), no mode switch
 ;
-;  Decodes 8-bit (256-colour) images: Windows BMP (BI_RGB uncompressed), ZSoft
+;  Exit code 0 = shown/dumped; 1 = error (bad args/file/format, corrupt data)
+;  or truncated (the partial image is still shown/dumped, then reported).
+;
+;  Decodes 8-bit (256-colour) images: Windows BMP (BI_RGB uncompressed,
+;  bottom-up or top-down), ZSoft
 ;  PCX (RLE, VGA palette tail) and GIF87a/89a (LZW, global or local palette,
 ;  interlaced or not). Images are clipped to 320x200. The decoded indices land
 ;  in a separate 64 KB segment (cs+0x1000), so code + tables stay in our own
@@ -20,6 +24,7 @@ start:
         mov     sp, stacktop
         mov     byte [dumpmode], 0
         mov     byte [fname], 0
+        mov     byte [trunc], 0
         call    parse_args
         cmp     byte [fname], 0
         je      .usage
@@ -76,10 +81,15 @@ start:
         cmp     byte [dumpmode], 0
         jne     .dump
         call    show_image
-        mov     ax, 4C00h
-        int     21h
+        jmp     .fin
 .dump:
         call    write_raw
+.fin:
+        ; decoding stopped at EOF before the header's dimensions were filled:
+        ; the partial image was shown/dumped, but report it and exit 1
+        mov     si, s_trunc
+        cmp     byte [trunc], 0
+        jne     .die
         mov     ax, 4C00h
         int     21h
 .usage:
@@ -97,6 +107,32 @@ start:
         call    puts
         mov     ax, 4C01h
         int     21h
+
+; img_abort: si = message. Malformed data found mid-decode (still in text mode:
+; the mode switch only happens after a successful decode) -> unwind the stack,
+; close the file, print, exit 1.
+img_abort:
+        mov     sp, stacktop
+        mov     bx, [fh]
+        mov     ah, 3Eh
+        int     21h
+        jmp     start.die
+
+; poll_esc: ESC pressed during a (long) decode -> abort. Preserves all but flags.
+poll_esc:
+        push    ax
+        mov     ah, 1
+        int     16h
+        jz      .n
+        xor     ah, ah
+        int     16h
+        cmp     al, 1Bh
+        jne     .n
+        mov     si, s_cancel
+        jmp     img_abort
+.n:
+        pop     ax
+        ret
 
 ; ============================================================================
 ;  Buffered input  (sequential getb + seek that refills the buffer)
@@ -180,12 +216,43 @@ decode_bmp:
         mov     [di], al
         inc     di
         loop    .rh
-        mov     ax, [hdrbuf+18]     ; width (low word)
+        ; only what we decode: BITMAPINFOHEADER (or a V4/V5 superset), 8 bpp,
+        ; BI_RGB, width < 64K
+        cmp     word [hdrbuf+16], 0 ; biSize high word
+        jne     .bad
+        cmp     word [hdrbuf+14], 40
+        jb      .bad
+        cmp     word [hdrbuf+28], 8 ; biBitCount
+        jne     .bad
+        mov     ax, [hdrbuf+30]     ; biCompression
+        or      ax, [hdrbuf+32]
+        jnz     .bad
+        cmp     word [hdrbuf+20], 0 ; width high word
+        jne     .bad
+        mov     ax, [hdrbuf+18]     ; width
         mov     [iw], ax
-        mov     ax, [hdrbuf+22]     ; height (low word, assume positive)
+        ; height: negative = top-down rows
+        mov     byte [topdown], 0
+        mov     ax, [hdrbuf+22]
+        mov     dx, [hdrbuf+24]
+        test    dx, dx
+        jns     .hpos
+        neg     dx                  ; dx:ax = -dx:ax
+        neg     ax
+        sbb     dx, 0
+        mov     byte [topdown], 1
+.hpos:
+        or      dx, dx
+        jnz     .bad
         mov     [ih], ax
         ; clip to 320x200
         call    clip_dims
+        ; the palette follows the info header (14 + biSize)
+        mov     ax, [hdrbuf+14]
+        add     ax, 14
+        xor     dx, dx
+        adc     dx, 0
+        call    seek_set
         ; palette: clrused (or 256) entries of B,G,R,0 starting at offset 54
         mov     ax, [hdrbuf+46]     ; biClrUsed (low word)
         or      ax, ax
@@ -225,14 +292,20 @@ decode_bmp:
         and     bx, 3
         mov     [rowpad], bx
         ; bottom-up: source scanline s -> destination row (ih-1-s)
+        ; top-down (negative height): source scanline s -> destination row s
         xor     si, si              ; si = source scanline index
 .row:
         mov     ax, [ih]
         cmp     si, ax
         jae     .done
+        call    poll_esc
+        mov     bx, si
+        cmp     byte [topdown], 0
+        jne     .rowset
         mov     bx, ax
         dec     bx
         sub     bx, si              ; bx = destination row (top origin)
+.rowset:
         ; read iw source bytes; store first dstw if bx < dsth
         xor     cx, cx              ; column
 .col:
@@ -240,6 +313,7 @@ decode_bmp:
         cmp     cx, ax
         jae     .pad
         call    getb
+        jc      .eof                ; truncated: stop, don't spin on EOF
         cmp     bx, [dsth]
         jae     .colnext
         cmp     cx, [dstw]
@@ -260,12 +334,18 @@ decode_bmp:
         jcxz    .rownext
 .pd:
         call    getb
+        jc      .eof
         loop    .pd
 .rownext:
         inc     si
         jmp     .row
+.eof:
+        mov     byte [trunc], 1
 .done:
         ret
+.bad:
+        mov     si, s_badbmp
+        jmp     img_abort
 
 ; ============================================================================
 ;  PCX (8-bit, 256-colour, RLE)
@@ -288,6 +368,10 @@ decode_pcx:
         mov     [ih], ax
         mov     ax, [hdrbuf+66]     ; bytes per line
         mov     [pcxbpl], ax
+        cmp     byte [hdrbuf+3], 8  ; 8 bits per pixel, 1 plane only
+        jne     .bad
+        cmp     byte [hdrbuf+65], 1
+        jne     .bad
         call    clip_dims
         ; palette: 768 bytes at end of file (after the 0x0C marker)
         mov     ax, [flen]
@@ -313,12 +397,14 @@ decode_pcx:
         mov     ax, [ih]
         cmp     si, ax
         jae     .done
+        call    poll_esc
         xor     cx, cx              ; column within the scanline (0..pcxbpl-1)
 .col:
         mov     ax, [pcxbpl]
         cmp     cx, ax
         jae     .rownext
         call    pcx_byte            ; al = next decoded scanline byte
+        jc      .eof                ; truncated: stop, don't spin on EOF
         cmp     si, [dsth]
         jae     .colnext
         cmp     cx, [dstw]
@@ -336,10 +422,15 @@ decode_pcx:
 .rownext:
         inc     si
         jmp     .row
+.eof:
+        mov     byte [trunc], 1
 .done:
         ret
+.bad:
+        mov     si, s_badpcx
+        jmp     img_abort
 
-; pcx_byte -> al = next RLE-decoded byte of the current scanline
+; pcx_byte -> al = next RLE-decoded byte of the current scanline; CF=1 at EOF
 pcx_byte:
         cmp     word [rle_rem], 0
         je      .fresh
@@ -348,6 +439,7 @@ pcx_byte:
         ret
 .fresh:
         call    getb
+        jc      .ret                ; EOF (CF=1)
         mov     ah, al
         and     ah, 0C0h
         cmp     ah, 0C0h
@@ -361,10 +453,12 @@ pcx_byte:
 .havecnt:
         mov     [rle_rem], ax
         dec     word [rle_rem]      ; this call returns the first of the run
-        call    getb
+        call    getb                ; CF=1 here = EOF, passed up
         mov     [rle_val], al
         ret
 .single:
+        clc                         ; (the cmp above left CF=1)
+.ret:
         ret
 
 ; ============================================================================
@@ -503,6 +597,10 @@ get_code:
 lzw_decode:
         call    gif_reset_blocks
         call    getb                ; LZW minimum code size
+        cmp     al, 2               ; 2..11 (codes are at most 12 bits)
+        jb      .bad
+        cmp     al, 11
+        ja      .bad
         movzx   ax, al
         mov     [mincode], ax
         mov     cx, ax
@@ -533,6 +631,8 @@ lzw_decode:
         cmp     word [prevcode], 0FFFFh
         jne     .normal
         ; first code after a clear: a literal pixel (code < clearcode)
+        cmp     ax, [clearcode]
+        jae     .bad                ; nothing in the table yet
         mov     [firstbyte], al
         mov     [prevcode], ax
         call    emit_pixel
@@ -543,6 +643,7 @@ lzw_decode:
         mov     bx, ax
         cmp     bx, [nextcode]
         jb      .intable
+        ja      .bad                ; beyond the table: corrupt stream
         mov     al, [firstbyte]     ; KwKwK case: push prior firstbyte, use prev
         call    stk_push
         mov     bx, [prevcode]
@@ -593,9 +694,14 @@ lzw_decode:
         jmp     .next
 .done:
         ret
+.bad:
+        mov     si, s_badgif
+        jmp     img_abort
 
 stk_push:                           ; al = byte
         mov     bx, [lzwsp]
+        cmp     bx, 4096            ; deeper than any real string: prefix loop
+        jae     lzw_decode.bad
         mov     [lzwstack+bx], al
         inc     word [lzwsp]
         ret
@@ -882,6 +988,11 @@ skip_sp:
 s_usage     db 'Usage: CCIMG <image>',0Dh,0Ah,0
 s_noopen    db 'CCIMG: cannot open file',0Dh,0Ah,0
 s_badfmt    db 'CCIMG: unsupported image format',0Dh,0Ah,0
+s_badbmp    db 'CCIMG: unsupported BMP (8-bit uncompressed only)',0Dh,0Ah,0
+s_badpcx    db 'CCIMG: unsupported PCX (8-bit 1-plane only)',0Dh,0Ah,0
+s_badgif    db 'CCIMG: corrupt GIF data',0Dh,0Ah,0
+s_trunc     db 'CCIMG: image file truncated',0Dh,0Ah,0
+s_cancel    db 'CCIMG: cancelled',0Dh,0Ah,0
 s_rawname   db 'CCIMG.RAW',0
 
 IOBUF_SZ    equ 4096
@@ -889,6 +1000,8 @@ IOBUF_SZ    equ 4096
 section .bss
 align 2
 dumpmode    resb 1
+trunc       resb 1                  ; 1 = pixel data hit EOF early
+topdown     resb 1                  ; 1 = BMP with negative height
 fname       resb 128
 fh          resw 1
 ofh         resw 1

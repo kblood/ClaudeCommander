@@ -5,12 +5,17 @@
 ; both of which run "CCHEXED <file>".  It loads the file (up to CAP bytes),
 ; shows a hex+ASCII grid with a byte cursor, lets you overwrite bytes by typing
 ; hex digits, F2 writes the buffer back IN PLACE (the file size never changes --
-; no insert/delete), and Esc quits.
+; no insert/delete), and Esc quits.  Every seek/write of a save is checked; on
+; failure the *MODIFIED* flag stays set and the help bar shows the error.  Esc
+; with unsaved changes asks "Save changes? (Y/N/Esc)": Y saves (and only quits
+; if that worked), N discards, Esc returns to the editor.
 ;
 ; /T test mode: if the command tail contains "/T", keystrokes are read from a
 ; script file CCX.KEY (al,ah byte pairs, like cc's harness) instead of the
 ; keyboard, and script exhaustion acts as Esc -- so an automated test can edit
-; bytes, F2-save and then verify the resulting file on disk.
+; bytes, F2-save and then verify the resulting file on disk.  If the script
+; runs out while the save prompt is up, the answer is N (discard) so an
+; exhausted script always terminates.
 
         cpu     8086
         org     100h
@@ -23,6 +28,7 @@ VIS_ROWS equ    23                 ; hex rows 1..23 (16 bytes each)
 BAR_ROW  equ    24
 ROWB     equ    160
 CAP      equ    0C000h             ; 48 KB editable window
+FNMAX    equ    80                 ; fname buffer (incl. NUL)
 
 A_NORM   equ    07h                ; grey on black
 A_HDR    equ    30h                ; black on cyan header
@@ -39,6 +45,8 @@ start:
         mov     [nib], al
         mov     [modified], al
         mov     [test_mode], al
+        mov     [keys_out], al
+        mov     [msgp], ax
 
         ; ----- parse command tail at PSP:80h : filename [ /T ] -----
         mov     si, 81h
@@ -61,6 +69,8 @@ start:
         je      .nameend
         cmp     al, 0Dh
         je      .nameend
+        cmp     di, fname+FNMAX-1   ; bounded: room for the NUL
+        jae     .toolong
         mov     [di], al
         inc     di
         inc     si
@@ -89,6 +99,9 @@ start:
 .noname:
         mov     dx, msg_usage
         jmp     die
+.toolong:
+        mov     dx, msg_long
+        jmp     die
 
 .opn:
         mov     ax, 3D02h           ; open read/write
@@ -111,6 +124,7 @@ start:
 .loop:
         call    render
         call    get_key
+        mov     word [msgp], 0      ; a key dismisses the last bar message
         or      al, al
         jnz     .asc
         cmp     ah, 4Bh             ; Left
@@ -133,9 +147,15 @@ start:
         je      .save
         jmp     .loop
 .asc:
-        cmp     al, 1Bh             ; Esc -> quit
-        je      .quit
+        cmp     al, 1Bh             ; Esc -> quit (asks first if modified)
+        je      .esc
         call    try_hexedit
+        jmp     .loop
+.esc:
+        cmp     byte [modified], 0
+        je      .quit
+        call    ask_save            ; CF=1 -> stay in the editor
+        jnc     .quit
         jmp     .loop
 .left:
         call    cur_dec
@@ -197,17 +217,7 @@ start:
         mov     byte [nib], 0
         jmp     .loop
 .save:
-        mov     bx, [fh]
-        mov     ax, 4200h           ; seek to start
-        xor     cx, cx
-        xor     dx, dx
-        int     21h
-        mov     bx, [fh]
-        mov     ah, 40h             ; write the buffer back in place
-        mov     cx, [loaded]
-        mov     dx, buf
-        int     21h
-        mov     byte [modified], 0
+        call    do_save             ; errors are shown on the bar
         jmp     .loop
 .quit:
         mov     bx, [fh]
@@ -231,6 +241,70 @@ die:
         int     21h
         mov     ax, 4C01h
         int     21h
+
+; ---- save: write the buffer back in place ----------------------------------
+; CF=0 saved (modified cleared); CF=1 failed (modified kept, bar shows why).
+; Every step is checked: a failed seek would otherwise make the write land at
+; the current file position (the end, after the load) and APPEND the buffer.
+do_save:
+        mov     bx, [fh]
+        mov     ax, 4200h           ; seek to start
+        xor     cx, cx
+        xor     dx, dx
+        int     21h
+        jc      .fail
+        or      ax, dx              ; must really be at offset 0
+        jnz     .fail
+        mov     cx, [loaded]
+        jcxz    .ok                 ; empty file: nothing to write (CX=0
+                                    ; would truncate)
+        mov     bx, [fh]
+        mov     ah, 40h
+        mov     dx, buf
+        int     21h
+        jc      .fail
+        cmp     ax, cx              ; short write
+        jne     .fail
+.ok:
+        mov     byte [modified], 0
+        clc
+        ret
+.fail:
+        mov     word [msgp], s_savefail
+        stc
+        ret
+
+; ---- "Save changes? (Y/N/Esc)" on quit with unsaved edits ------------------
+; CF=0 -> go ahead and quit (saved, or discarded); CF=1 -> stay in the editor
+; (Esc, or Y whose save failed).  In /T mode an exhausted key script answers
+; N, so a test that quits without saving can never hang here.
+ask_save:
+        mov     word [msgp], s_ask
+        call    render
+        call    get_key
+        cmp     byte [keys_out], 0
+        jne     .discard
+        cmp     al, 1Bh
+        je      .cancel
+        or      al, 20h             ; fold to lowercase
+        cmp     al, 'y'
+        je      .yes
+        cmp     al, 'n'
+        je      .discard
+        jmp     ask_save            ; anything else: ask again
+.yes:
+        call    do_save
+        jc      .stay               ; bar now shows the failure
+        ret                         ; CF=0
+.discard:
+        mov     word [msgp], 0
+        clc
+        ret
+.cancel:
+        mov     word [msgp], 0
+.stay:
+        stc
+        ret
 
 ; ---- cursor moves (clamped; reset the nibble phase) ------------------------
 cur_inc:
@@ -429,6 +503,10 @@ draw_bar:
         mov     byte [pattr], A_BAR
         mov     di, BAR_ROW*ROWB
         mov     si, s_bar
+        cmp     word [msgp], 0      ; a pending message replaces the help
+        je      .put
+        mov     si, [msgp]
+.put:
         call    puts
         ret
 
@@ -519,6 +597,7 @@ get_key:                            ; -> al=ascii, ah=scan
         add     word [keypos], 2
         ret
 .endq:
+        mov     byte [keys_out], 1  ; (ask_save treats this as N)
         mov     al, 1Bh             ; script exhausted -> Esc (quit)
         xor     ah, ah
         ret
@@ -537,6 +616,9 @@ load_keys:
         mov     cx, 512
         mov     dx, keybuf
         int     21h
+        jnc     .got
+        xor     ax, ax              ; read error: AX is a code, not a count
+.got:
         mov     [keylen], ax
         mov     ah, 3Eh
         int     21h
@@ -564,10 +646,15 @@ keyname   db 'CCX.KEY', 0
 msg_usage db 'Usage: CCHEXED <file> [/T]', 13, 10, '$'
 msg_open  db 'CCHEXED: cannot open file', 13, 10, '$'
 msg_read  db 'CCHEXED: read error', 13, 10, '$'
+msg_long  db 'CCHEXED: file name too long', 13, 10, '$'
+s_ask     db ' Save changes? (Y/N/Esc) ', 0
+s_savefail db ' SAVE FAILED -- file not (fully) written; changes kept in memory ', 0
 
 ; ---- uninitialized data (beyond the file image) ----------------------------
 section .bss
-fname     resb 80
+fname     resb FNMAX
+msgp      resw 1                   ; bar message (0 = help text)
+keys_out  resb 1                   ; /T: key script exhausted
 fh        resw 1
 loaded    resw 1
 cur       resw 1

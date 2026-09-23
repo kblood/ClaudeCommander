@@ -15,6 +15,7 @@
         org     100h
 
 QMAX    equ 16384               ; directory-queue byte budget
+PATHMAX equ 259                 ; longest directory path that is queued
 
 start:
         cld
@@ -24,6 +25,7 @@ start:
         ; seed the queue with the start directory
         mov     word [qhead], qbuf
         mov     word [qtail], qbuf
+        mov     byte [qskip], 0
         mov     si, startdir
         call    enqueue
 .next:
@@ -32,6 +34,16 @@ start:
         call    scan_dir
         jmp     .next
 .done:
+        ; dirs dropped (queue full / path too long)? Say so on STDERR only:
+        ; cc parses every stdout line of FINDOUT.TXT as a found path.
+        cmp     byte [qskip], 0
+        je      .x
+        mov     ah, 40h
+        mov     bx, 2               ; stderr
+        mov     cx, s_skip_len
+        mov     dx, s_skip
+        int     21h
+.x:
         mov     ax, 4C00h
         int     21h
 
@@ -39,6 +51,10 @@ start:
 ; parse PSP tail: first token -> pattern, second token -> startdir ("." if none)
 parse_tail:
         movzx   cx, byte [80h]
+        cmp     cx, 127             ; tail can't exceed 127 bytes (PSP:81h-FFh);
+        jbe     .tl                 ; clamp so no token outgrows its 128-byte buffer
+        mov     cx, 127
+.tl:
         mov     si, 81h
         mov     di, pattern
         call    .skipsp
@@ -64,6 +80,8 @@ parse_tail:
         jcxz    .cd
         mov     al, [si]
         cmp     al, ' '
+        je      .cd
+        cmp     al, 0Dh             ; CR ends the tail
         je      .cd
         mov     [di], al
         inc     di
@@ -177,25 +195,44 @@ catz_di:
 .d:     ret
 
 ; ----------------------------------------------------------------------------
-; enqueue(si=ASCIIZ): append to the directory queue (drops on overflow).
+; enqueue(si=ASCIIZ): append to the directory queue.  When the tail would run
+; off the end, the already-dequeued head space is reclaimed by sliding the
+; pending entries down to qbuf.  A path that still doesn't fit (or is longer
+; than PATHMAX, so it could not be extended safely) is dropped and flagged in
+; qskip.
 enqueue:
-        mov     di, [qtail]
         push    si
-        push    di
+        mov     di, si
 .len:
-        cmp     byte [si], 0
+        cmp     byte [di], 0
         je      .have
-        inc     si
+        inc     di
         jmp     .len
 .have:
-        sub     si, [qtail]         ; si = string length
-        mov     ax, di
-        add     ax, si
+        sub     di, si              ; di = string length
+        cmp     di, PATHMAX
+        ja      .drop
+        mov     ax, [qtail]
+        add     ax, di
         inc     ax                  ; room for NUL
         cmp     ax, qbuf+QMAX
-        pop     di
+        jbe     .fits
+        push    di                  ; compact: [qhead,qtail) -> qbuf
+        mov     si, [qhead]
+        mov     cx, [qtail]
+        sub     cx, si
+        mov     di, qbuf
+        rep     movsb               ; dest < src, forward copy is safe
+        mov     word [qhead], qbuf
+        mov     [qtail], di
+        pop     ax
+        add     ax, di
+        inc     ax
+        cmp     ax, qbuf+QMAX
+        ja      .drop
+.fits:
         pop     si
-        ja      .ret                ; overflow -> silently drop
+        mov     di, [qtail]
 .cp:
         mov     al, [si]
         mov     [di], al
@@ -204,7 +241,10 @@ enqueue:
         or      al, al
         jnz     .cp
         mov     [qtail], di
-.ret:
+        ret
+.drop:
+        pop     si
+        mov     byte [qskip], 1
         ret
 
 ; dequeue -> curpath = next dir; CF=1 if queue empty.
@@ -230,8 +270,11 @@ dequeue:
 ; ----------------------------------------------------------------------------
 ; wildmatch: si = pattern (ASCIIZ), di = text (ASCIIZ).  CF=1 on match.
 ; Case-insensitive, '*' and '?', iterative single-star backtracking.
+; DOS semantics: a trailing "." / ".*" in the pattern also matches a name
+; with no extension, so "*.*" finds README and MAKEFILE.
 wildmatch:
         push    bp
+        mov     bp, di              ; bp = start of text (for the no-dot test)
         xor     bx, bx
 .wl:
         mov     ah, [di]
@@ -270,7 +313,27 @@ wildmatch:
         jmp     .send
 .chk:
         cmp     byte [si], 0
+        je      .yes
+        cmp     byte [si], '.'      ; pattern left = "." + stars only, and
+        jne     .no                 ; the name has no dot -> extensionless hit
+.nodot:
+        cmp     byte [bp], 0
+        je      .dotend
+        cmp     byte [bp], '.'
+        je      .no
+        inc     bp
+        jmp     .nodot
+.dotend:
+        inc     si
+.dstar:
+        cmp     byte [si], '*'
+        jne     .dchk
+        inc     si
+        jmp     .dstar
+.dchk:
+        cmp     byte [si], 0
         jne     .no
+.yes:
         pop     bp
         stc
         ret
@@ -289,8 +352,11 @@ probe_lfn:
         xor     bx, bx
         mov     dx, s_dot
         mov     di, wfd
+        stc                         ; pre-DOS 7 leaves CF unchanged on AH=71h
         int     21h
         jc      .no
+        cmp     ax, 7100h           ; ...and returns AX=7100h: not supported
+        je      .no
         mov     byte [lfn_avail], 1
         mov     bx, ax              ; handle from 714Eh
         mov     ax, 71A1h
@@ -376,15 +442,18 @@ scan_dir_lfn:
 ; ============================================================================
 s_star      db '*.*',0
 s_dot       db '.',0
+s_skip      db 'CCFIND: some directories skipped (queue full / path too long)',13,10
+s_skip_len  equ $-s_skip
 
 section .bss
 align 2
-pattern     resb 16
-startdir    resb 80
-curpath     resb 300            ; enlarged: LFN directory names up to ~255 chars
-tmppath     resb 400            ; enlarged: curpath + "\" + LFN child name
-srchbuf     resb 300            ; enlarged for LFN paths
-linebuf     resb 400            ; enlarged: curpath + "\" + LFN (260) + CRLF
+pattern     resb 128            ; >= the whole 127-byte PSP tail: copies can't overrun
+startdir    resb 128
+curpath     resb 300            ; queued paths are <= PATHMAX (259) chars
+tmppath     resb 528            ; curpath(259) + "\" + LFN name (<=260) + NUL
+srchbuf     resb 300            ; curpath + "\*.*"
+linebuf     resb 528            ; curpath(259) + "\" + LFN name (<=260) + CRLF
+qskip       resb 1              ; 1 = a directory was dropped from the queue
 dta         resb 64
 lfn_avail   resb 1              ; 1 if INT 21h/714Eh is supported, else 0
 lfn_handle  resw 1              ; handle returned by 714Eh

@@ -1,16 +1,27 @@
 ; ============================================================================
-;  CCZIP.COM  --  Claude Commander's external ZIP lister (Layer 3 helper)
+;  CCZIP.COM  --  Claude Commander's ZIP helper (Layer 3): list/extract/pack
 ;
 ;  Usage:  CCZIP <file.zip>        human-readable listing (name/size/method)
 ;          CCZIP L <file.zip>      machine listing for cc: "<size> <name>" lines
 ;                                  (one per FILE; directory members are skipped)
+;          CCZIP X  <zip> <n> <d>  extract file #n (L order) into dir <d>
+;          CCZIP XA <zip> <d>      extract every file into dir <d>
+;          CCZIP A  <zip> @<list> [root]   create a STORED zip from a file list
+;          CCZIP AP <zip> @<list> [root]   append the listed files to a zip
 ;  Parses the End-Of-Central-Directory record and the central directory.
 ;  Prints to stdout so cc can show or redirect it:  CCZIP L foo.zip > list.txt
 ;  cc's container-browser (the [open] map) uses the L form to show a ZIP as a
 ;  navigable folder.
 ;
-;  (Listing only -- DEFLATE decompression is intentionally out of scope for a
-;  tiny helper.  Extraction can be added later or delegated to a real unzip.)
+;  Extraction handles STORED and DEFLATE members (a built-in INFLATE with its
+;  own 32 KB window) and keeps sub-folders.  It never overwrites: outputs are
+;  created with INT 21h/5Bh and a name clash becomes NAME~1..NAME~9 (base cut
+;  to 6, extension kept); if all ten are taken the member fails.
+;
+;  Errorlevel: 0 = everything done; 1 = something failed or was refused (a
+;  member skipped as unsafe/encrypted/unsupported/corrupt, an I/O error, an
+;  AP onto an unusable archive).  Member names are vetted before extraction:
+;  leading '/' '\' are dropped, and a '..' component or ':' is refused.
 ;
 ;  Assemble:  nasm -f bin czip.asm -o cczip.com
 ; ============================================================================
@@ -20,6 +31,10 @@ TAILMAX equ 4096                ; bytes from EOF scanned for the EOCD record
 CDMAX   equ 32768               ; central-directory bytes buffered
 IBUF_SZ equ 4096                ; INFLATE input refill chunk / STORED copy chunk
 OBUF_SZ equ 4096                ; INFLATE output flush chunk
+NMDISP  equ 128                 ; longest member name shown by a listing line
+                                ; (128 + size + method text still fits linebuf)
+EOFSLACK equ 4                  ; zero bytes INFLATE may read past csize before
+                                ; the member is declared truncated
 
 start:
         cld
@@ -34,18 +49,18 @@ start:
         mov     byte [apmode], 0
         mov     byte [fname], 0
         mov     byte [a_root], 0
+        mov     byte [failed], 0
+        mov     byte [fatal], 0
         call    parse_args          ; -> fname (+ lmode if "L" prefix)
         cmp     byte [apmode], 0    ; "AP" append mode adds to an existing zip
         je      .noappend
         call    do_append
-        mov     ax, 4C00h
-        int     21h
+        jmp     exit_rc
 .noappend:
         cmp     byte [amode], 0     ; "A" add mode creates a fresh archive
         je      .noadd
         call    do_add
-        mov     ax, 4C00h
-        int     21h
+        jmp     exit_rc
 .noadd:
         cmp     byte [fname], 0
         je      .usage
@@ -93,6 +108,7 @@ start:
         mov     cx, [taillen]
         mov     dx, tailbuf
         int     21h
+        jc      .notzip             ; read error (AX = code, not a count)
         mov     [tailgot], ax
 
         ; --- scan backward for the EOCD signature 50 4B 05 06 ---
@@ -135,6 +151,7 @@ start:
         mov     cx, CDMAX
         mov     dx, cdbuf
         int     21h
+        jc      .notzip
         mov     [cdgot], ax
 
         ; extract modes keep the file open (need the member data later)
@@ -153,12 +170,8 @@ start:
 .walk:
         or      bp, bp
         jz      .done
-        ; bounds: need at least 46 bytes of header
-        mov     ax, si
-        sub     ax, cdbuf
-        add     ax, 46
-        cmp     ax, [cdgot]
-        ja      .done
+        call    cd_fit              ; whole header inside the bytes read?
+        jc      .done
         ; signature 50 4B 01 02 ?
         cmp     byte [si], 050h
         jne     .done
@@ -176,20 +189,20 @@ start:
         int     21h
 
 .extract:
+        call    alloc_win
         call    extract_member
         mov     bx, [fh]            ; close the zip
         mov     ah, 3Eh
         int     21h
-        mov     ax, 4C00h
-        int     21h
+        jmp     exit_rc
 
 .extractall:
+        call    alloc_win
         call    extract_all
         mov     bx, [fh]
         mov     ah, 3Eh
         int     21h
-        mov     ax, 4C00h
-        int     21h
+        jmp     exit_rc
 
 .usage:
         mov     si, s_usage
@@ -207,6 +220,46 @@ start:
         mov     ax, 4C01h
         int     21h
 
+; exit with errorlevel 1 if any member failed / was skipped, else 0
+exit_rc:
+        mov     al, [failed]
+        mov     ah, 4Ch
+        int     21h
+
+; CF=1 if the central-directory header at si (46 fixed bytes + name + extra +
+; comment) does not lie wholly inside the cdgot bytes actually read; a bogus
+; length can then never walk a reader past the buffer.  Registers preserved.
+cd_fit:
+        push    ax
+        push    bx
+        mov     bx, si
+        sub     bx, cdbuf           ; offset of this header in cdbuf
+        mov     ax, bx
+        add     ax, 46
+        jc      .bad
+        cmp     ax, [cdgot]
+        ja      .bad                ; fixed part itself not there
+        mov     ax, 46
+        add     ax, [si+28]
+        jc      .bad
+        add     ax, [si+30]
+        jc      .bad
+        add     ax, [si+32]
+        jc      .bad
+        add     ax, bx
+        jc      .bad
+        cmp     ax, [cdgot]
+        ja      .bad
+        pop     bx
+        pop     ax
+        clc
+        ret
+.bad:
+        pop     bx
+        pop     ax
+        stc
+        ret
+
 ; ----------------------------------------------------------------------------
 ; print one central-directory entry; si -> header, advanced to the next.
 ;   method=word[+10] usize=dword[+24] namelen=word[+28]
@@ -215,8 +268,12 @@ print_entry:
         cmp     byte [lmode], 0
         jne     print_entry_l
         mov     di, linebuf
-        ; name (namelen bytes from si+46)
+        ; name (namelen bytes from si+46, display-truncated to fit linebuf)
         mov     cx, [si+28]
+        cmp     cx, NMDISP
+        jbe     .nmok
+        mov     cx, NMDISP
+.nmok:
         push    si
         lea     bx, [si+46]
 .nm:
@@ -300,7 +357,11 @@ print_entry_l:
         call    putnum_di
         mov     byte [di], ' '
         inc     di
-        mov     cx, [si+28]         ; name
+        mov     cx, [si+28]         ; name (display-truncated to fit linebuf)
+        cmp     cx, NMDISP
+        jbe     .nmok
+        mov     cx, NMDISP
+.nmok:
         lea     bx, [si+46]
 .nm:
         jcxz    .nmend
@@ -549,6 +610,24 @@ s_bytes     db ' bytes ',0
 s_stored    db '(stored)',0
 s_defl      db '(deflated)',0
 s_other     db '(method?)',0
+s_pfx       db 'CCZIP: ',0
+s_crlf      db 0Dh,0Ah,0
+s_unsafe    db 'unsafe name skipped: ',0
+s_encr      db 'encrypted member skipped: ',0
+s_method    db 'unsupported method skipped: ',0
+s_corrupt   db 'corrupt or truncated data: ',0
+s_ioerr     db 'read error: ',0
+s_wrerr     db 'write error (disk full?): ',0
+s_nocreate  db 'cannot create: ',0
+s_nomember  db 'no such member',0Dh,0Ah,0
+s_cdreload  db 'CCZIP: cannot re-read the central directory',0Dh,0Ah,0
+s_apbad     db 'CCZIP: not a ZIP or unreadable -- refusing to append',0Dh,0Ah,0
+s_apbig     db 'CCZIP: central directory too large -- refusing to append',0Dh,0Ah,0
+s_apopen    db 'CCZIP: cannot open archive for writing',0Dh,0Ah,0
+s_apfull    db 'CCZIP: central directory full, not added: ',0
+s_srcerr    db 'CCZIP: cannot read, not added: ',0
+s_listerr   db 'CCZIP: cannot open file list',0Dh,0Ah,0
+s_wfatal    db 'CCZIP: write error (disk full?) -- archive incomplete',0Dh,0Ah,0
 
 ; ============================================================================
 ;  EXTRACTION  --  CCZIP X <zip> <member-index> <destdir>
@@ -597,11 +676,8 @@ extract_member:
 .w:
         or      bp, bp
         jz      .nf
-        mov     ax, si
-        sub     ax, cdbuf
-        add     ax, 46
-        cmp     ax, [cdgot]
-        ja      .nf
+        call    cd_fit
+        jc      .nf
         cmp     byte [si], 050h
         jne     .nf
         cmp     byte [si+1], 04Bh
@@ -634,7 +710,13 @@ extract_member:
         jmp     .w
 .hit:
         call    do_extract
+        ret
 .nf:
+        mov     si, s_pfx
+        call    puts
+        mov     si, s_nomember
+        call    puts
+        mov     byte [failed], 1
         ret
 
 ; Create every intermediate directory along outpath (ignoring "already exists"
@@ -680,6 +762,8 @@ do_extract:
         jmp     .cpn
 .cpe:
         mov     byte [di], 0
+        mov     ax, [si+8]
+        mov     [e_flags], ax
         mov     ax, [si+10]
         mov     [e_method], ax
         mov     ax, [si+20]
@@ -690,9 +774,24 @@ do_extract:
         mov     [e_loff], ax
         mov     ax, [si+44]
         mov     [e_loff+2], ax
-        ; outpath = destdir + '\' + e_name, preserving sub-dirs ('/'->'\') so a
+        ; refuse what we cannot (or must not) write, before touching the disk
+        mov     word [e_err], s_encr
+        test    byte [e_flags], 1   ; general-purpose bit 0 = encrypted
+        jnz     .skip
+        mov     word [e_err], s_method
+        mov     ax, [e_method]
+        or      ax, ax
+        jz      .mok
+        cmp     ax, 8
+        jne     .skip
+.mok:
+        mov     word [e_err], s_unsafe
+        call    safe_name           ; si -> vetted relative name
+        jc      .skip
+        ; outpath = destdir + '\' + name, preserving sub-dirs ('/'->'\') so a
         ; packed folder tree is recreated. Flat members (no separator) land
         ; directly in destdir exactly as before.
+        push    si
         mov     si, destdir
         mov     di, outpath
         call    apz
@@ -703,7 +802,7 @@ do_extract:
         mov     byte [di], '\'
         inc     di
 .nos:
-        mov     si, e_name
+        pop     si
 .cpx:
         mov     al, [si]
         or      al, al
@@ -718,18 +817,25 @@ do_extract:
         jmp     .cpx
 .cpxe:
         mov     byte [di], 0
-        call    make_dirs           ; create any intermediate sub-directories
         ; read 30-byte local header to resolve data offset
+        mov     word [e_err], s_ioerr
         mov     bx, [fh]
         mov     ax, 4200h
         mov     cx, [e_loff+2]
         mov     dx, [e_loff]
         int     21h
+        jc      .skip
         mov     bx, [fh]
         mov     ah, 3Fh
         mov     cx, 30
         mov     dx, lhdr
         int     21h
+        jc      .skip
+        mov     word [e_err], s_corrupt
+        cmp     ax, 30
+        jne     .skip
+        cmp     dword [lhdr], 04034B50h ; local header signature PK\3\4
+        jne     .skip
         ; data = e_loff + 30 + local_namelen[+26] + local_extralen[+28]
         mov     ax, [e_loff]
         mov     dx, [e_loff+2]
@@ -741,39 +847,280 @@ do_extract:
         adc     dx, 0
         mov     [e_doff], ax
         mov     [e_doff+2], dx
+        mov     word [e_err], s_ioerr
         mov     bx, [fh]
         mov     ax, 4200h
         mov     cx, [e_doff+2]
         mov     dx, [e_doff]
         int     21h
-        ; create the output file
-        mov     ah, 3Ch
-        xor     cx, cx
-        mov     dx, outpath
-        int     21h
-        jc      .ret
+        jc      .skip
+        ; create the output file (and any intermediate sub-directories)
+        call    make_dirs
+        mov     word [e_err], s_nocreate
+        call    create_new          ; never overwrites: a clash -> NAME~n
+        jc      .skip
         mov     [ofh], ax
         mov     word [obpos], 0
+        ; from here a data/IO error anywhere below (however deeply nested in
+        ; INFLATE) unwinds straight to .abort via member_abort
+        mov     [abort_sp], sp
         mov     ax, [e_method]
         or      ax, ax
         jz      .stored
-        cmp     ax, 8
-        je      .deflated
-        jmp     .closeout           ; unsupported method -> empty file
+        call    inflate
+        jmp     .closeout
 .stored:
         call    copy_stored
-        jmp     .closeout
-.deflated:
-        call    inflate
 .closeout:
         call    flush_out
         mov     ah, 3Eh
         mov     bx, [ofh]
         int     21h
+        ret
+.abort:                             ; sp = [abort_sp]; e_err says why
+        mov     ah, 3Eh
+        mov     bx, [ofh]
+        int     21h
+        mov     ah, 41h             ; drop the partial output
+        mov     dx, outpath
+        int     21h
+.skip:
+        call    member_msg          ; "CCZIP: <why>: <name>"
+        mov     byte [failed], 1
+        cmp     byte [fatal], 0
+        jne     .die
+        ret
+.die:
+        mov     ax, 4C01h           ; write failure: no point going on
+        int     21h
+
+; Create outpath as a NEW file: INT 21h/5Bh never truncates an existing one.
+; On a clash (or a device name like CON) retry NAME~1..NAME~9 -- the final
+; component's base cut to 6 chars + '~' + digit, its extension kept (the
+; scheme of CCRAR's create_out).  CF=0 -> ax = handle, outpath = the name
+; used; CF=1 -> nothing created.
+create_new:
+        mov     si, outpath
+        mov     bx, si              ; bx -> start of the final component
+        xor     dx, dx              ; dx -> its last '.' (0 = none)
+.scan:
+        lodsb
+        or      al, al
+        jz      .scanned
+        cmp     al, '\'
+        je      .sep
+        cmp     al, '/'
+        je      .sep
+        cmp     al, ':'
+        je      .sep
+        cmp     al, '.'
+        jne     .scan
+        lea     dx, [si-1]
+        jmp     .scan
+.sep:
+        mov     bx, si
+        xor     dx, dx
+        jmp     .scan
+.scanned:
+        dec     si                  ; si -> the NUL
+        or      dx, dx
+        jnz     .hasdot
+        mov     dx, si              ; no extension: the base runs to the end
+.hasdot:
+        mov     ax, dx
+        sub     ax, bx              ; base length, cut to 6
+        cmp     ax, 6
+        jbe     .b6
+        mov     ax, 6
+.b6:
+        add     ax, bx
+        mov     [cn_tail], ax       ; "~n" + extension go here on a clash
+        mov     si, dx              ; keep '.' + up to 3 extension chars
+        mov     di, cn_ext
+        mov     cx, 4
+.ex:
+        lodsb
+        or      al, al
+        jz      .exd
+        stosb
+        loop    .ex
+.exd:
+        mov     byte [di], 0
+        mov     byte [cn_try], '0'
+.try:
+        mov     ah, 5Bh
+        xor     cx, cx
+        mov     dx, outpath
+        int     21h
+        jc      .next
+        mov     bx, ax
+        push    ax
+        mov     ax, 4400h           ; IOCTL: is this handle a character device?
+        int     21h
+        pop     ax
+        test    dl, 80h             ; (also clears CF)
+        jz      .ret
+        mov     ah, 3Eh             ; a device, not a file: close, rename
+        int     21h
+.next:
+        inc     byte [cn_try]
+        cmp     byte [cn_try], '9'
+        ja      .fail
+        mov     di, [cn_tail]
+        mov     al, '~'
+        stosb
+        mov     al, [cn_try]
+        stosb
+        mov     si, cn_ext
+.ce:
+        lodsb
+        stosb
+        or      al, al
+        jnz     .ce
+        jmp     .try
+.fail:
+        stc
 .ret:
         ret
 
-; copy e_csize bytes fh -> ofh (STORED member)
+; Unwind a failing member (e_err set) back to do_extract.abort.
+member_abort:
+        mov     sp, [abort_sp]
+        jmp     do_extract.abort
+
+; Output write failed or was short (disk full): abort the member and the run.
+write_fail:
+        mov     byte [fatal], 1
+        mov     word [e_err], s_wrerr
+        jmp     member_abort
+
+; print "CCZIP: <[e_err]><e_name>\r\n"
+member_msg:
+        mov     si, s_pfx
+        call    puts
+        mov     si, [e_err]
+        call    puts
+        mov     si, e_name
+        call    puts
+        mov     si, s_crlf
+        call    puts
+        ret
+
+; Vet the member name in e_name for use as a path under destdir.  Leading
+; '/' '\' are dropped (absolute -> relative); a ':' anywhere (drive / stream)
+; or a component made only of dots and at least 2 long ('..', '...') -- with
+; '/' and '\' both separators -- rejects it, as does an empty name.
+;   -> si = start of the usable name inside e_name, CF=1 if unsafe
+safe_name:
+        mov     si, e_name
+.lead:
+        mov     al, [si]
+        cmp     al, '/'
+        je      .l1
+        cmp     al, '\'
+        jne     .body
+.l1:
+        inc     si
+        jmp     .lead
+.body:
+        push    si
+        cmp     byte [si], 0
+        je      .bad
+        mov     bx, si              ; bx = start of the current component
+.sc:
+        mov     al, [si]
+        or      al, al
+        jz      .endc
+        cmp     al, ':'
+        je      .bad
+        cmp     al, '/'
+        je      .endc
+        cmp     al, '\'
+        je      .endc
+        inc     si
+        jmp     .sc
+.endc:                              ; component = [bx..si)
+        mov     cx, si
+        sub     cx, bx
+        cmp     cx, 2
+        jb      .nextc
+        mov     di, bx
+.dots:
+        cmp     byte [di], '.'
+        jne     .nextc
+        inc     di
+        cmp     di, si
+        jb      .dots
+        jmp     .bad                ; all dots -> parent-dir escape
+.nextc:
+        cmp     byte [si], 0
+        je      .ok
+        inc     si
+        mov     bx, si
+        jmp     .sc
+.ok:
+        pop     si
+        clc
+        ret
+.bad:
+        pop     si
+        stc
+        ret
+
+; Give INFLATE its own 32 KB window so it never overwrites cdbuf (which XA is
+; still walking).  Shrink our block to 64 KB, then allocate 800h paragraphs;
+; fs:winbase addresses the window.  If DOS has no memory to spare we fall
+; back to the old shared window (fs=ds, winbase=cdbuf) and set winshared so
+; extract_all re-reads the central directory after every deflated member.
+alloc_win:
+        mov     ax, ds
+        mov     fs, ax
+        mov     word [winbase], cdbuf
+        mov     byte [winshared], 1
+        mov     byte [cddirty], 0
+        mov     ah, 4Ah             ; resize our block (es = PSP) to 64 KB
+        mov     bx, 1000h
+        int     21h
+        jc      .ret
+        mov     ah, 48h
+        mov     bx, 0800h
+        int     21h
+        jc      .ret
+        mov     fs, ax
+        mov     word [winbase], 0
+        mov     byte [winshared], 0
+.ret:
+        ret
+
+; restore cdbuf from the file after INFLATE used it as its window (fallback
+; path only).  CF=1 (message printed, failed set) if it cannot.
+reload_cd:
+        mov     byte [cddirty], 0
+        mov     bx, [fh]
+        mov     ax, 4200h
+        mov     cx, [cdofs_hi]
+        mov     dx, [cdofs_lo]
+        int     21h
+        jc      .bad
+        mov     bx, [fh]
+        mov     ah, 3Fh
+        mov     cx, [cdgot]
+        mov     dx, cdbuf
+        int     21h
+        jc      .bad
+        cmp     ax, [cdgot]
+        jne     .bad
+        clc
+        ret
+.bad:
+        mov     si, s_cdreload
+        call    puts
+        mov     byte [failed], 1
+        stc
+        ret
+
+; copy e_csize bytes fh -> ofh (STORED member).  A read error or an early EOF
+; (truncated archive) aborts the member; a failed/short write aborts the run.
 copy_stored:
 .lp:
         mov     ax, [e_csize]
@@ -788,26 +1135,32 @@ copy_stored:
         jae     .full
         mov     cx, ax
 .full:
-        push    cx
         mov     bx, [fh]
         mov     ah, 3Fh
         mov     dx, iobuf
         int     21h
-        pop     cx
+        jc      .rderr
         mov     cx, ax
         or      cx, cx
-        jz      .done
-        push    cx
+        jz      .trunc
         mov     bx, [ofh]
         mov     ah, 40h
         mov     dx, iobuf
         int     21h
-        pop     cx
+        jc      write_fail
+        cmp     ax, cx
+        jne     write_fail
         sub     [e_csize], cx
         sbb     word [e_csize+2], 0
         jmp     .lp
 .done:
         ret
+.rderr:
+        mov     word [e_err], s_ioerr
+        jmp     member_abort
+.trunc:
+        mov     word [e_err], s_corrupt
+        jmp     member_abort
 
 ; extract EVERY file member (XA mode) into destdir
 extract_all:
@@ -816,11 +1169,8 @@ extract_all:
 .w:
         or      bp, bp
         jz      .done
-        mov     ax, si
-        sub     ax, cdbuf
-        add     ax, 46
-        cmp     ax, [cdgot]
-        ja      .done
+        call    cd_fit
+        jc      .done
         cmp     byte [si], 050h
         jne     .done
         cmp     byte [si+1], 04Bh
@@ -844,6 +1194,10 @@ extract_all:
         call    do_extract          ; clobbers si
         pop     bp
         pop     si
+        cmp     byte [cddirty], 0   ; shared-window fallback: INFLATE just
+        je      .adv                ; overwrote cdbuf -> restore it first
+        call    reload_cd
+        jc      .done
 .adv:
         mov     ax, 46
         add     ax, [si+28]
@@ -860,18 +1214,27 @@ extract_all:
 ;  members are the files named (one full path per line) in <listfile>.
 ; ----------------------------------------------------------------------------
 
-; write cx bytes at ds:dx -> ofh; a_outpos += written
+; write cx bytes at ds:dx -> ofh; a_outpos += written.  A failed or short
+; write (disk full) is fatal: the archive cannot be finished -> exit 1.
 emit:
         push    ax
         push    bx
         mov     bx, [ofh]
         mov     ah, 40h
         int     21h
+        jc      emit_fail
+        cmp     ax, cx
+        jne     emit_fail
         add     [a_outpos], ax
         adc     word [a_outpos+2], 0
         pop     bx
         pop     ax
         ret
+emit_fail:
+        mov     si, s_wfatal
+        call    puts
+        mov     ax, 4C01h
+        int     21h
 
 ; CRC-32 (poly 0xEDB88320) of cx bytes at ds:di, folded into [a_crc]
 ; (caller seeds a_crc = 0xFFFFFFFF and inverts at the end)
@@ -902,7 +1265,7 @@ do_add:
         xor     cx, cx
         mov     dx, fname
         int     21h
-        jc      .ret
+        jc      .nocreate
         mov     [ofh], ax
         mov     dword [a_outpos], 0
         mov     word [a_count], 0
@@ -912,7 +1275,11 @@ do_add:
         mov     bx, [ofh]
         mov     ah, 3Eh
         int     21h
-.ret:
+        ret
+.nocreate:
+        mov     si, s_apopen
+        call    puts
+        mov     byte [failed], 1
         ret
 
 ; Read addlist (one source path per line) and append each named file to the
@@ -922,13 +1289,17 @@ add_list:
         mov     ax, 3D00h
         mov     dx, addlist
         int     21h
-        jc      .ret
+        jc      .nolist
         mov     bx, ax
         push    bx
         mov     ah, 3Fh
         mov     cx, TAILMAX-1
         mov     dx, tailbuf
         int     21h
+        jnc     .lok
+        xor     ax, ax              ; read error -> treat as an empty list
+        mov     byte [failed], 1
+.lok:
         mov     [lgot], ax
         pop     bx
         mov     ah, 3Eh
@@ -973,6 +1344,11 @@ add_list:
         jmp     .nl
 .ret:
         ret
+.nolist:
+        mov     si, s_listerr
+        call    puts
+        mov     byte [failed], 1
+        ret
 
 ; ----------------------------------------------------------------------------
 ;  APPEND  --  CCZIP AP <zip> @<listfile> [root] : add the listed files to an
@@ -981,12 +1357,20 @@ add_list:
 ;  the EOCD) with the new members' local headers + data, then re-emit the old
 ;  central records (preserved in cdbuf) followed by the new ones and a fresh
 ;  EOCD.  If the target does not exist yet we fall back to do_add (create new).
+;  Anything else wrong with an existing target (unreadable, no EOCD found,
+;  directory too big to buffer) is refused -- never "recreated", which would
+;  throw its members away.
 ; ----------------------------------------------------------------------------
 do_append:
         mov     ax, 3D00h           ; open existing archive read-only
         mov     dx, fname
         int     21h
-        jc      .fresh              ; no such file -> just create it
+        jnc     .opened
+        cmp     ax, 2               ; file not found -> just create it
+        je      .fresh
+        mov     si, s_apopen
+        jmp     .refuse
+.opened:
         mov     [fh], ax
         ; --- size via LSEEK to end ---
         mov     bx, [fh]
@@ -1024,11 +1408,12 @@ do_append:
         mov     cx, [taillen]
         mov     dx, tailbuf
         int     21h
+        jc      .badclose
         mov     [tailgot], ax
         ; --- scan backward for the EOCD signature 50 4B 05 06 ---
         mov     cx, [tailgot]
         sub     cx, 4
-        jbe     .freshclose
+        jbe     .badclose
         mov     si, tailbuf
         add     si, cx
 .scan:
@@ -1044,12 +1429,16 @@ do_append:
         dec     si
         cmp     si, tailbuf
         jae     .scan
-        jmp     .freshclose
+        jmp     .badclose
 .got:
         ; existing count=word[+10], cd size=dword[+12], cd offset=dword[+16]
         mov     ax, [si+10]
         mov     [a_count], ax
+        cmp     word [si+14], 0     ; cd size must fit cdbuf, or the new
+        jne     .toobig             ; records would run off its end
         mov     ax, [si+12]
+        cmp     ax, CDMAX
+        ja      .toobig
         mov     [a_cdsize], ax
         mov     ax, [si+16]
         mov     [cdofs_lo], ax
@@ -1063,9 +1452,12 @@ do_append:
         int     21h
         mov     bx, [fh]
         mov     ah, 3Fh
-        mov     cx, CDMAX
+        mov     cx, [a_cdsize]      ; exactly the old directory
         mov     dx, cdbuf
         int     21h
+        jc      .badclose
+        cmp     ax, [a_cdsize]
+        jne     .badclose
         mov     bx, [fh]            ; done with the read handle
         mov     ah, 3Eh
         int     21h
@@ -1077,7 +1469,8 @@ do_append:
         mov     ax, 3D01h
         mov     dx, fname
         int     21h
-        jc      .fresh
+        mov     si, s_apopen
+        jc      .refuse
         mov     [ofh], ax
         mov     bx, [ofh]
         mov     ax, 4200h
@@ -1091,14 +1484,32 @@ do_append:
         ; --- append the listed files, then rewrite directory + EOCD ---
         call    add_list
         call    write_central_and_eocd
+        ; cut the file here: the old tail (EOCD + comment) may extend past the
+        ; new end, and a stale EOCD left behind would be found first
+        mov     bx, [ofh]
+        mov     ah, 40h
+        xor     cx, cx              ; 0-byte write = truncate at file pointer
+        int     21h
+        jc      emit_fail
         mov     bx, [ofh]
         mov     ah, 3Eh
         int     21h
         ret
-.freshclose:
-        mov     bx, [fh]            ; not a recognizable zip -> close, recreate
+.toobig:
+        mov     si, s_apbig
+        jmp     .refclose
+.badclose:
+        mov     si, s_apbad
+.refclose:
+        push    si
+        mov     bx, [fh]            ; not a usable zip -> close, leave it alone
         mov     ah, 3Eh
         int     21h
+        pop     si
+.refuse:
+        call    puts
+        mov     byte [failed], 1
+        ret
 .fresh:
         call    do_add
         ret
@@ -1108,7 +1519,7 @@ add_one_file:
         mov     ax, 3D00h
         mov     dx, srcpath
         int     21h
-        jc      .ret
+        jc      .srcerr
         mov     [sfh], ax
         mov     dword [a_crc], 0FFFFFFFFh
         mov     dword [a_size], 0
@@ -1118,6 +1529,7 @@ add_one_file:
         mov     cx, IBUF_SZ
         mov     dx, iobuf
         int     21h
+        jc      .srcclose           ; nothing written yet -> just skip it
         or      ax, ax
         jz      .p1d
         add     [a_size], ax
@@ -1133,6 +1545,13 @@ add_one_file:
         mov     eax, [a_outpos]
         mov     [a_lhoff], eax
         call    store_name
+        ; its central record must still fit in cdbuf (checked BEFORE any
+        ; bytes go out, so a full directory leaves a valid archive)
+        mov     ax, [a_cdptr]
+        add     ax, 46
+        add     ax, [a_namelen]
+        cmp     ax, cdbuf+CDMAX
+        ja      .cdfull
         call    write_local_header
         mov     bx, [sfh]
         mov     ax, 4200h           ; rewind for the data copy
@@ -1145,6 +1564,7 @@ add_one_file:
         mov     cx, IBUF_SZ
         mov     dx, iobuf
         int     21h
+        jc      .p2err              ; header already out -> cannot recover
         or      ax, ax
         jz      .p2d
         mov     cx, ax
@@ -1157,8 +1577,38 @@ add_one_file:
         int     21h
         call    append_central
         inc     word [a_count]
-.ret:
         ret
+.cdfull:
+        mov     si, s_apfull
+        jmp     .skipclose
+.srcclose:
+        mov     si, s_srcerr
+.skipclose:
+        push    si
+        mov     bx, [sfh]
+        mov     ah, 3Eh
+        int     21h
+        pop     si
+        jmp     .skipmsg
+.srcerr:
+        mov     si, s_srcerr
+.skipmsg:
+        call    puts
+        mov     si, srcpath
+        call    puts
+        mov     si, s_crlf
+        call    puts
+        mov     byte [failed], 1
+        ret
+.p2err:
+        mov     si, s_srcerr
+        call    puts
+        mov     si, srcpath
+        call    puts
+        mov     si, s_crlf
+        call    puts
+        mov     ax, 4C01h
+        int     21h
 
 ; a_baseptr = basename of srcpath; a_namelen = its length
 basename_src:
@@ -1353,10 +1803,14 @@ write_central_and_eocd:
         ret
 
 ; ----------------------------------------------------------------------------
-;  INFLATE (RFC 1951) -- streaming, 32 KB circular window (reuses cdbuf).
+;  INFLATE (RFC 1951) -- streaming, 32 KB circular window at fs:winbase
+;  (its own segment -- see alloc_win).  Any malformed / truncated stream
+;  aborts the member through member_abort, so it can never spin forever.
 ; ----------------------------------------------------------------------------
 
-; next input byte -> al (0 at EOF); bounded by e_csize via fill_input.
+; next input byte -> al; bounded by e_csize via fill_input.  Past the end of
+; the member's compressed data it yields a few zero bytes (EOFSLACK), then
+; declares the member truncated.
 getbyte:
         push    bx
         push    cx
@@ -1368,6 +1822,9 @@ getbyte:
         mov     bx, [ibpos]
         cmp     bx, [ibcnt]
         jb      .got
+        inc     byte [eofpad]
+        cmp     byte [eofpad], EOFSLACK
+        ja      inflate_bad
         xor     al, al
         jmp     .done
 .got:
@@ -1394,17 +1851,24 @@ fill_input:
         jae     .full
         mov     cx, ax
 .full:
-        push    cx
         mov     bx, [fh]
         mov     ah, 3Fh
         mov     dx, ibuf
         int     21h
-        pop     cx
+        jc      .rderr
         mov     [ibcnt], ax
         sub     [e_csize], ax
         sbb     word [e_csize+2], 0
 .ret:
         ret
+.rderr:
+        mov     word [e_err], s_ioerr
+        jmp     member_abort
+
+; malformed or truncated deflate stream -> abort this member
+inflate_bad:
+        mov     word [e_err], s_corrupt
+        jmp     member_abort
 
 ; getbits(need in CL, 0..16) -> AX ; preserves all other registers.
 getbits:
@@ -1444,7 +1908,8 @@ out_byte:
         push    bx
         mov     bx, [wpos]
         and     bx, 7FFFh
-        mov     [win+bx], al
+        add     bx, [winbase]
+        mov     [fs:bx], al
         inc     word [wpos]
         mov     bx, [obpos]
         mov     [obuf+bx], al
@@ -1468,6 +1933,9 @@ flush_out:
         mov     ah, 40h
         mov     dx, obuf
         int     21h
+        jc      write_fail
+        cmp     ax, cx
+        jne     write_fail
         mov     word [obpos], 0
 .ret:
         pop     dx
@@ -1483,7 +1951,8 @@ do_copy:
         mov     bx, [wpos]
         sub     bx, dx
         and     bx, 7FFFh
-        mov     al, [win+bx]
+        add     bx, [winbase]
+        mov     al, [fs:bx]
         call    out_byte
         dec     cx
         jmp     .cl
@@ -1745,7 +2214,7 @@ inflate_codes:
         jmp     .lp
 .length:
         cmp     ax, 285
-        ja      .ret                ; malformed -> stop
+        ja      inflate_bad         ; bad code / invalid symbol
         sub     ax, 257
         mov     bp, ax
         add     ax, ax
@@ -1762,7 +2231,7 @@ inflate_codes:
         mov     word [dc_sym_p], dc_symbol
         call    decode_sym
         cmp     ax, 29
-        ja      .ret
+        ja      inflate_bad
         mov     bp, ax
         add     ax, ax
         mov     si, ax
@@ -1788,6 +2257,9 @@ inflate:
         mov     word [ibcnt], 0
         mov     word [wpos], 0
         mov     word [obpos], 0
+        mov     byte [eofpad], 0
+        mov     al, [winshared]     ; shared window -> cdbuf gets clobbered
+        mov     [cddirty], al
 .block:
         mov     cl, 1
         call    getbits
@@ -1800,7 +2272,7 @@ inflate:
         je      .fixed
         cmp     ax, 2
         je      .dynamic
-        ret                         ; reserved BTYPE -> stop
+        jmp     inflate_bad         ; reserved BTYPE 3
 .fixed:
         call    build_fixed
         call    inflate_codes
@@ -1816,8 +2288,13 @@ inflate:
         mov     bl, al              ; LEN low
         call    getbyte
         mov     bh, al              ; LEN high
-        call    getbyte             ; NLEN low (ignored)
-        call    getbyte             ; NLEN high (ignored)
+        call    getbyte
+        mov     cl, al              ; NLEN low
+        call    getbyte
+        mov     ch, al              ; NLEN high
+        not     cx
+        cmp     cx, bx              ; NLEN must be the one's complement of LEN
+        jne     inflate_bad
         mov     cx, bx
 .scopy:
         jcxz    .next
@@ -1883,13 +2360,26 @@ linebuf     resb 160
 ; --- extraction state ---
 filei       resw 1                  ; current FILE index while scanning
 e_method    resw 1
+e_flags     resw 1                  ; general-purpose bit flags (bit 0 = encrypted)
+e_err       resw 1                  ; -> reason string for a failing member
 e_csize     resd 1                  ; compressed size / remaining input budget
 e_loff      resd 1                  ; local-header offset
 e_doff      resd 1                  ; member data offset
 e_name      resb 128
-outpath     resb 160
+outpath     resb 256                ; destdir (<128) + '\' + name (<=120) + NUL
 lhdr        resb 32
 ofh         resw 1
+abort_sp    resw 1                  ; sp to restore when a member aborts
+winbase     resw 1                  ; INFLATE window offset within fs
+failed      resb 1                  ; any member failed/skipped -> exit 1
+fatal       resb 1                  ; write failure -> stop after this member
+winshared   resb 1                  ; 1 = window shares cdbuf (no memory)
+cddirty     resb 1                  ; cdbuf clobbered by INFLATE -> reload
+eofpad      resb 1                  ; zero bytes supplied past end of input
+cn_try      resb 1                  ; create_new: current '~' digit
+cn_ext      resb 6                  ; create_new: saved ".EXT" + NUL
+alignb 2
+cn_tail     resw 1                  ; create_new: where "~n.EXT" is written
 
 ; --- INFLATE state ---
 bitbuf      resd 1
@@ -1926,7 +2416,6 @@ obuf        resb OBUF_SZ
 iobuf       resb IBUF_SZ
 
 tailbuf     resb TAILMAX
-cdbuf       resb CDMAX
-win         equ cdbuf               ; 32 KB INFLATE window reuses cdbuf (dead by then)
+cdbuf       resb CDMAX              ; (also the INFLATE window if alloc_win fails)
 stackspace  resb 1024
 stacktop:

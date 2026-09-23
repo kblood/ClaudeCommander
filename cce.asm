@@ -7,9 +7,19 @@
 ;  Keys:  arrows/Home/End/PgUp/PgDn move   printable insert   Enter splits line
 ;         Backspace/Del remove   F2 save   Esc or F10 quit.
 ;
+;  Safety: a file larger than the 48 KB buffer is refused ("file too large",
+;  exit 1) instead of being loaded truncated.  F2 writes <name>.$$$ in the same
+;  directory, checks every write/close, and only then deletes the original and
+;  renames the temp over it (original attributes restored); any failure keeps
+;  the '*' dirty mark and shows the error on the status line.  Esc/F10 with
+;  unsaved changes asks "Save changes? (Y/N/Esc)": Y saves (quits only if the
+;  save worked), N discards, Esc returns to the editor.
+;
 ;  Self-test:  CCEDIT /T <file>  replays key pairs (AL,AH) from cce.key and
 ;  dumps each frame to CCEDUMP.TXT.  Because edits + F2 persist to <file>, a
 ;  scripted "type, save, quit" run is verified by inspecting the saved file.
+;  An exhausted script acts as Esc, and answers N if the save prompt is up, so
+;  a script that ends with unsaved edits still terminates (edits discarded).
 ;
 ;  Assemble:  nasm -f bin cce.asm -o ccedit.com
 ; ============================================================================
@@ -39,6 +49,7 @@ start:
         call    dump_screen
 .live:
         call    get_key             ; al=ascii ah=scan
+        mov     word [msgp], 0      ; a key dismisses the last status message
         call    handle_key
         cmp     byte [quit], 0
         je      .loop
@@ -129,7 +140,9 @@ load_keys:
         ret
 
 ; ----------------------------------------------------------------------------
-; load fname into textbuf -> [len].  Missing/unreadable -> len 0 (new file).
+; load fname into textbuf -> [len].  Missing file -> len 0 (new file).
+; A file that does not fit in TEXTMAX, or a read error, is fatal (exit 1):
+; editing a truncated copy and saving it would destroy the rest of the file.
 load_file:
         mov     word [len], 0
         mov     ax, 3D00h
@@ -141,31 +154,196 @@ load_file:
         mov     cx, TEXTMAX
         mov     dx, textbuf
         int     21h
-        jc      .close
+        jc      .rderr
         mov     [len], ax
+        cmp     ax, TEXTMAX
+        jb      .close              ; short read = whole file
+        mov     ah, 3Fh             ; buffer full: is there more?
+        mov     cx, 1
+        mov     dx, probe
+        int     21h
+        jc      .rderr
+        or      ax, ax
+        jnz     .toobig
 .close:
         mov     ah, 3Eh
         int     21h
 .ret:
         ret
-
-; ----------------------------------------------------------------------------
-; save textbuf[0..len) back to fname; clear dirty.
-do_save:
-        mov     ah, 3Ch             ; create/truncate
-        xor     cx, cx
-        mov     dx, fname
-        int     21h
-        jc      .ret
-        mov     bx, ax
-        mov     ah, 40h
-        mov     cx, [len]
-        mov     dx, textbuf
-        int     21h
+.toobig:
+        mov     dx, s_toobig
+        jmp     .fatal
+.rderr:
+        mov     dx, s_rderr
+.fatal:
+        push    dx
         mov     ah, 3Eh
         int     21h
+        pop     dx
+        mov     ah, 09h
+        int     21h
+        mov     ax, 4C01h
+        int     21h
+
+; ----------------------------------------------------------------------------
+; do_save: safe save of textbuf[0..len) to fname.  Writes tmpname (fname with
+; its extension replaced by .$$$), checks every write + the close, then
+; deletes fname and renames tmpname -> fname.  The original is only touched
+; once the new copy is complete on disk.  CF=0 ok (dirty cleared); CF=1 failed
+; (dirty kept, [msgp] says why).
+do_save:
+        cmp     byte [fname], 0
+        je      .fail               ; no file name (CCEDIT started bare)
+        call    make_tmpname
+        mov     byte [haveattr], 0
+        mov     ax, 4300h           ; remember the original's attributes
+        mov     dx, fname
+        int     21h
+        jc      .create
+        mov     [origattr], cx
+        mov     byte [haveattr], 1
+.create:
+        mov     ah, 3Ch
+        xor     cx, cx
+        mov     dx, tmpname
+        int     21h
+        jc      .fail
+        mov     bx, ax
+        mov     cx, [len]
+        jcxz    .close              ; empty text: nothing to write
+        mov     ah, 40h
+        mov     dx, textbuf
+        int     21h
+        jc      .wfail
+        cmp     ax, cx              ; short write = disk full
+        jne     .wfail
+.close:
+        mov     ah, 3Eh
+        int     21h
+        jc      .tfail
+        ; the new copy is complete: replace the original
+        mov     ah, 41h
+        mov     dx, fname
+        int     21h
+        jnc     .ren
+        cmp     ax, 2               ; file not found = new file, fine
+        jne     .tfail              ; e.g. read-only: keep the original
+.ren:
+        mov     ah, 56h
+        mov     dx, tmpname
+        mov     di, fname
+        int     21h
+        jc      .rfail
+        cmp     byte [haveattr], 0
+        je      .ok
+        mov     ax, 4301h
+        mov     cx, [origattr]
+        mov     dx, fname
+        int     21h                 ; best effort
+.ok:
         mov     byte [dirty], 0
-.ret:
+        clc
+        ret
+.wfail:
+        mov     ah, 3Eh             ; bx = temp handle
+        int     21h
+.tfail:
+        mov     ah, 41h             ; drop the partial temp copy
+        mov     dx, tmpname
+        int     21h
+.fail:
+        mov     word [msgp], s_savefail
+        stc
+        ret
+.rfail:
+        mov     word [msgp], s_renfail  ; text is safe in <name>.$$$
+        stc
+        ret
+
+; make_tmpname: tmpname = fname with the extension of its last path component
+; replaced by (or, if none, extended with) ".$$$".  Editing a *.$$$ file uses
+; ".$$_" so the temp can never be the file itself.
+make_tmpname:
+        mov     si, fname
+        mov     di, tmpname
+        xor     bx, bx              ; bx = where the extension's '.' went
+.cp:
+        mov     al, [si]
+        or      al, al
+        jz      .end
+        cmp     al, '.'
+        jne     .nodot
+        mov     bx, di
+.nodot:
+        cmp     al, '\'
+        je      .sep
+        cmp     al, '/'
+        je      .sep
+        cmp     al, ':'
+        jne     .st
+.sep:
+        xor     bx, bx              ; a dot in a directory name doesn't count
+.st:
+        mov     [di], al
+        inc     di
+        inc     si
+        jmp     .cp
+.end:
+        or      bx, bx
+        jz      .app
+        ; existing extension "$$$"?  then use "$$_"
+        mov     ah, '$'
+        cmp     [bx+1], ah
+        jne     .trunc
+        cmp     [bx+2], ah
+        jne     .trunc
+        cmp     [bx+3], ah
+        jne     .trunc
+        cmp     byte [bx+4], 0
+        jne     .trunc
+        mov     byte [bx+3], '_'
+        mov     byte [bx+4], 0
+        ret
+.trunc:
+        mov     di, bx
+.app:
+        mov     dword [di], '.$$$'
+        mov     byte [di+4], 0
+        ret
+
+; ask_save: "Save changes? (Y/N/Esc)".  CF=0 -> quit (saved or discarded);
+; CF=1 -> stay (Esc, or Y whose save failed).  An exhausted /T key script
+; answers N so a scripted run can never hang in the prompt.
+ask_save:
+        mov     word [msgp], s_ask
+        call    render
+        cmp     byte [test_mode], 0
+        je      .key
+        call    dump_screen
+.key:
+        call    get_key
+        cmp     byte [keys_out], 0
+        jne     .discard
+        cmp     al, 1Bh
+        je      .cancel
+        or      al, 20h             ; fold to lowercase
+        cmp     al, 'y'
+        je      .yes
+        cmp     al, 'n'
+        je      .discard
+        jmp     ask_save            ; anything else: ask again
+.yes:
+        call    do_save
+        jc      .stay               ; status line shows the failure
+        ret
+.discard:
+        mov     word [msgp], 0
+        clc
+        ret
+.cancel:
+        mov     word [msgp], 0
+.stay:
+        stc
         ret
 
 ; ----------------------------------------------------------------------------
@@ -182,6 +360,7 @@ get_key:
         add     word [keypos], 2
         ret
 .quit:
+        mov     byte [keys_out], 1  ; (ask_save treats this as N)
         mov     al, 1Bh             ; Esc -> quit
         xor     ah, ah
         ret
@@ -240,8 +419,12 @@ handle_key:
         ret
 
 do_quit:
-        mov     byte [quit], 1
-        ret
+        cmp     byte [dirty], 0
+        je      .q
+        call    ask_save            ; CF=1 -> stay in the editor
+        jc      .r
+.q:     mov     byte [quit], 1
+.r:     ret
 
 ; ----------------------------------------------------------------------------
 ; ins_char: insert AL at [cur], shift the tail right one byte.
@@ -615,6 +798,10 @@ draw_status:
         loop    .clr
         mov     di, (SCRH-1)*SCRW*2
         mov     si, s_hint
+        cmp     word [msgp], 0      ; prompt / error replaces the hint
+        je      .hint
+        mov     si, [msgp]
+.hint:
         call    stat_puts
         ; filename
         mov     si, fname
@@ -747,9 +934,19 @@ dumpname    db 'CCEDUMP.TXT',0
 dumpsep     db '==== FRAME ====',0Dh,0Ah
 dumpsep_len equ $-dumpsep
 
+s_ask       db ' Save changes? (Y/N/Esc) ',0
+s_savefail  db ' SAVE FAILED - file unchanged ',0
+s_renfail   db ' SAVE FAILED - text is in .$$$ file ',0
+s_toobig    db 'CCEDIT: file too large (max 48K) - not opened',13,10,'$'
+s_rderr     db 'CCEDIT: read error - not opened',13,10,'$'
+
 test_mode   db 0
 quit        db 0
 dirty       db 0
+keys_out    db 0
+haveattr    db 0
+msgp        dw 0
+origattr    dw 0
 dumph       dw 0FFFFh
 cur         dw 0
 len         dw 0
@@ -762,6 +959,8 @@ keylen      dw 0
 section .bss
 align 2
 fname       resb 128
+tmpname     resb 136
+probe       resb 2
 linebuf     resb 84
 keybuf      resb 1024
 textbuf     resb TEXTMAX

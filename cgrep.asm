@@ -11,6 +11,8 @@
 ;  reads up to 32 KB of the file and prints each line that contains <text>
 ;  (case-insensitive) as  full\path:line  to stdout, so callers can redirect.
 ;  Files larger than 32 KB are searched in their first 32 KB only.
+;  Exit code (like grep): 0 = at least one line matched, 1 = no match.  (cc
+;  never reads a helper's exit code; it only parses the redirected stdout.)
 ;
 ;  Assemble:  nasm -f bin cgrep.asm -o ccgrep.com
 ; ============================================================================
@@ -19,10 +21,13 @@
 QMAX     equ 16384              ; directory-queue byte budget
 FBUFMAX  equ 32768              ; bytes of each file searched
 MAXLINE  equ 200                ; longest printed line
+PATHMAX  equ 259                ; longest directory path that is queued
 
 start:
         cld
         mov     sp, stacktop
+        mov     byte [nomatch], 1   ; .bss is not zeroed
+        mov     byte [qskip], 0
         call    parse_tail          ; -> needle, startdir, filemask
         call    probe_lfn           ; detect LFN support
         call    measure_needle      ; -> nlen
@@ -38,13 +43,28 @@ start:
         call    scan_dir
         jmp     .next
 .done:
-        mov     ax, 4C00h
+        ; dirs dropped (queue full / path too long)? Say so on STDERR only:
+        ; cc parses every stdout line of GREPOUT.TXT as a match row.
+        cmp     byte [qskip], 0
+        je      .x
+        mov     ah, 40h
+        mov     bx, 2               ; stderr
+        mov     cx, s_skip_len
+        mov     dx, s_skip
+        int     21h
+.x:
+        mov     al, [nomatch]       ; 0 = something matched, 1 = nothing
+        mov     ah, 4Ch
         int     21h
 
 ; ----------------------------------------------------------------------------
 ; parse PSP tail: token1 -> needle, token2 -> startdir ("."), token3 -> mask ("*.*")
 parse_tail:
         movzx   cx, byte [80h]
+        cmp     cx, 127             ; tail can't exceed 127 bytes (PSP:81h-FFh);
+        jbe     .tl                 ; clamp so no token outgrows its 128-byte buffer
+        mov     cx, 127
+.tl:
         mov     si, 81h
         mov     di, needle
         call    .skipsp
@@ -80,6 +100,8 @@ parse_tail:
         jcxz    .cd
         mov     al, [si]
         cmp     al, ' '
+        je      .cd
+        cmp     al, 0Dh             ; CR ends the tail
         je      .cd
         mov     [di], al
         inc     di
@@ -366,6 +388,7 @@ print_line:
         mov     bx, 1               ; stdout
         mov     dx, linebuf
         int     21h
+        mov     byte [nomatch], 0
         mov     di, [le_save]       ; return di = le
         ret
 
@@ -418,25 +441,44 @@ catz_di:
 .d:     ret
 
 ; ----------------------------------------------------------------------------
-; enqueue(si=ASCIIZ): append to the directory queue (drops on overflow).
+; enqueue(si=ASCIIZ): append to the directory queue.  When the tail would run
+; off the end, the already-dequeued head space is reclaimed by sliding the
+; pending entries down to qbuf.  A path that still doesn't fit (or is longer
+; than PATHMAX, so it could not be extended safely) is dropped and flagged in
+; qskip.
 enqueue:
-        mov     di, [qtail]
         push    si
-        push    di
+        mov     di, si
 .len:
-        cmp     byte [si], 0
+        cmp     byte [di], 0
         je      .have
-        inc     si
+        inc     di
         jmp     .len
 .have:
-        sub     si, [qtail]
-        mov     ax, di
-        add     ax, si
+        sub     di, si              ; di = string length
+        cmp     di, PATHMAX
+        ja      .drop
+        mov     ax, [qtail]
+        add     ax, di
+        inc     ax                  ; room for NUL
+        cmp     ax, qbuf+QMAX
+        jbe     .fits
+        push    di                  ; compact: [qhead,qtail) -> qbuf
+        mov     si, [qhead]
+        mov     cx, [qtail]
+        sub     cx, si
+        mov     di, qbuf
+        rep     movsb               ; dest < src, forward copy is safe
+        mov     word [qhead], qbuf
+        mov     [qtail], di
+        pop     ax
+        add     ax, di
         inc     ax
         cmp     ax, qbuf+QMAX
-        pop     di
+        ja      .drop
+.fits:
         pop     si
-        ja      .ret
+        mov     di, [qtail]
 .cp:
         mov     al, [si]
         mov     [di], al
@@ -445,7 +487,10 @@ enqueue:
         or      al, al
         jnz     .cp
         mov     [qtail], di
-.ret:
+        ret
+.drop:
+        pop     si
+        mov     byte [qskip], 1
         ret
 
 ; dequeue -> curpath = next dir; CF=1 if queue empty.
@@ -470,8 +515,11 @@ dequeue:
 
 ; ----------------------------------------------------------------------------
 ; wildmatch: si = pattern (ASCIIZ), di = text (ASCIIZ).  CF=1 on match.
+; DOS semantics: a trailing "." / ".*" in the pattern also matches a name
+; with no extension, so the default "*.*" mask covers README and MAKEFILE.
 wildmatch:
         push    bp
+        mov     bp, di              ; bp = start of text (for the no-dot test)
         xor     bx, bx
 .wl:
         mov     ah, [di]
@@ -510,7 +558,27 @@ wildmatch:
         jmp     .send
 .chk:
         cmp     byte [si], 0
+        je      .yes
+        cmp     byte [si], '.'      ; pattern left = "." + stars only, and
+        jne     .no                 ; the name has no dot -> extensionless hit
+.nodot:
+        cmp     byte [bp], 0
+        je      .dotend
+        cmp     byte [bp], '.'
+        je      .no
+        inc     bp
+        jmp     .nodot
+.dotend:
+        inc     si
+.dstar:
+        cmp     byte [si], '*'
+        jne     .dchk
+        inc     si
+        jmp     .dstar
+.dchk:
+        cmp     byte [si], 0
         jne     .no
+.yes:
         pop     bp
         stc
         ret
@@ -529,8 +597,11 @@ probe_lfn:
         xor     bx, bx
         mov     dx, s_dot
         mov     di, wfd
+        stc                         ; pre-DOS 7 leaves CF unchanged on AH=71h
         int     21h
         jc      .no
+        cmp     ax, 7100h           ; ...and returns AX=7100h: not supported
+        je      .no
         mov     byte [lfn_avail], 1
         mov     bx, ax
         mov     ax, 71A1h
@@ -543,15 +614,19 @@ probe_lfn:
 ; ============================================================================
 s_star      db '*.*',0
 s_dot       db '.',0
+s_skip      db 'CCGREP: some directories skipped (queue full / path too long)',13,10
+s_skip_len  equ $-s_skip
 
 section .bss
 align 2
-needle      resb 80
+needle      resb 128            ; each >= the whole 127-byte PSP tail
 nlen        resw 1
-startdir    resb 80
-filemask    resb 16
-curpath     resb 300            ; enlarged: LFN directory names up to ~255 chars
-tmppath     resb 400            ; enlarged: curpath + "\" + LFN child name
+startdir    resb 128
+filemask    resb 128
+curpath     resb 300            ; queued paths are <= PATHMAX (259) chars
+tmppath     resb 400            ; curpath(259) + "\" + 8.3 child name + NUL
+qskip       resb 1              ; 1 = a directory was dropped from the queue
+nomatch     resb 1              ; exit code: 1 until a line is printed
 fpath       resb 600            ; enlarged: curpath + "\" + LFN (260) + null
 srchbuf     resb 300            ; enlarged for LFN paths
 linebuf     resb 900            ; enlarged: fpath(600) + lineno + line text

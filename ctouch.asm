@@ -10,7 +10,9 @@
 ;  INT 21h/5701h to write the SFT date/time, close.  Read-only files are
 ;  handled by clearing the read-only bit for the operation and restoring the
 ;  original attributes afterwards.  Prints "<name>  YYYY-MM-DD HH:MM:SS" on
-;  success so the result is visible / pipeable.
+;  success so the result is visible / pipeable.  A malformed or out-of-range
+;  date/time (year 1980-2107, month 1-12, day 1-31, hh<24, mm<60, ss<60;
+;  separators - / . :) prints the usage and exits 1 without touching the file.
 ;
 ;  Like the other Layer-3 helpers this is a tiny standalone .COM (no table,
 ;  no libc) so it costs nothing against cc.asm's 64 KB resident segment.
@@ -42,15 +44,36 @@ start:
         mov     [sec], dh
         jmp     .pack
 .explicit:
+        ; every field must be present, numeric and in range (FAT dates cover
+        ; 1980-2107); anything else is a usage error, never a garbage stamp
         mov     si, darg
         call    parse_num               ; year
+        jc      .usage
+        cmp     ax, 1980
+        jb      .usage
+        cmp     ax, 2107
+        ja      .usage
         mov     [year], ax
         call    skip_sep
+        jc      .usage
         call    parse_num               ; month
+        jc      .usage
+        cmp     ax, 1
+        jb      .usage
+        cmp     ax, 12
+        ja      .usage
         mov     [mon], al
         call    skip_sep
+        jc      .usage
         call    parse_num               ; day
+        jc      .usage
+        cmp     ax, 1
+        jb      .usage
+        cmp     ax, 31
+        ja      .usage
         mov     [day], al
+        cmp     byte [si], 0            ; nothing may follow the day
+        jne     .usage
         mov     byte [hr], 0
         mov     byte [minu], 0
         mov     byte [sec], 0
@@ -58,13 +81,28 @@ start:
         je      .pack
         mov     si, targ
         call    parse_num               ; hour
+        jc      .usage
+        cmp     ax, 23
+        ja      .usage
         mov     [hr], al
         call    skip_sep
+        jc      .usage
         call    parse_num               ; minute
+        jc      .usage
+        cmp     ax, 59
+        ja      .usage
         mov     [minu], al
+        cmp     byte [si], 0            ; HH:MM -> seconds 00
+        je      .pack
         call    skip_sep
+        jc      .usage
         call    parse_num               ; second
+        jc      .usage
+        cmp     ax, 59
+        ja      .usage
         mov     [sec], al
+        cmp     byte [si], 0
+        jne     .usage
 .pack:
         ; date word = ((year-1980)<<9) | (month<<5) | day
         mov     ax, [year]
@@ -121,12 +159,14 @@ start:
         mov     cx, [ftime]
         mov     dx, [fdate]
         int     21h
-        pushf                           ; preserve 5701h's CF across close
+        sbb     al, al                  ; al = FF if 5701h failed
+        mov     [setbad], al
         mov     bx, [fh]
-        mov     ah, 3Eh
-        int     21h
-        popf
+        mov     ah, 3Eh                 ; the close is where the stamp is
+        int     21h                     ; flushed (write-protect shows here)
         jc      .setfail
+        cmp     byte [setbad], 0
+        jne     .setfail
         call    restore_attr
         call    print_ok
         mov     ax, 4C00h
@@ -162,33 +202,50 @@ restore_attr:
 
 ; ----------------------------------------------------------------------------
 ; parse_num: si -> ASCII digits; returns AX = value; si advanced past digits.
+; CF=1 if there was no digit or the value does not fit in 16 bits.
 parse_num:
         xor     ax, ax
+        mov     cl, [si]
+        cmp     cl, '0'
+        jb      .bad
+        cmp     cl, '9'
+        ja      .bad
 .l:     mov     cl, [si]
         cmp     cl, '0'
         jb      .done
         cmp     cl, '9'
         ja      .done
         mov     dx, 10
-        mul     dx                      ; dx:ax = ax*10 (value stays < 65536)
+        mul     dx                      ; dx:ax = ax*10
+        jc      .bad                    ; overflow (dx != 0)
         sub     cl, '0'
         mov     ch, 0
         add     ax, cx
+        jc      .bad
         inc     si
         jmp     .l
-.done:  ret
+.done:  clc
+        ret
+.bad:   stc
+        ret
 
-; skip_sep: advance si past a single non-digit separator (e.g. '-' or ':').
+; skip_sep: advance si past exactly one separator ('-' '/' '.' ':').
+; CF=1 if [si] is not a separator (end of string, digit, or anything else).
 skip_sep:
         mov     al, [si]
-        or      al, al
-        jz      .d
-        cmp     al, '0'
-        jb      .skip
-        cmp     al, '9'
-        jbe     .d                      ; a digit: leave it for parse_num
+        cmp     al, '-'
+        je      .skip
+        cmp     al, '/'
+        je      .skip
+        cmp     al, '.'
+        je      .skip
+        cmp     al, ':'
+        je      .skip
+        stc
+        ret
 .skip:  inc     si
-.d:     ret
+        clc
+        ret
 
 ; ----------------------------------------------------------------------------
 ; parse_args: split the command tail into fname, darg, targ (each NUL-term'd,
@@ -325,8 +382,9 @@ s_setfail db 'CCTOUCH: cannot set date/time',13,10,0
 section .bss
 align 2
 fname     resb 128
-darg      resb 16
-targ      resb 16
+darg      resb 128                      ; tail is <=127 chars: no overflow
+targ      resb 128
+setbad    resb 1
 year      resw 1
 mon       resb 1
 day       resb 1

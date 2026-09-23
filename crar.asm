@@ -19,6 +19,12 @@
 ;  compressed entries are skipped on extract. RAR5 archives are detected and
 ;  declined. Layer-3 helper: cc's [open] map (rar=CCRAR) makes it browsable.
 ;
+;  Extracted files get the member's BASE name mapped to 8.3 and are created
+;  with INT 21h/5Bh (never overwrite); a clash becomes NAME~1..NAME~9.
+;  Exit code: 0 ok; 1 on a corrupt block chain (walk stops), a member not
+;  extracted (compressed / encrypted / X index not found), or any I/O error
+;  (the partial output file is deleted).
+;
 ;  Assemble:  nasm -f bin crar.asm -o ccrar.com
 ; ============================================================================
         org     100h
@@ -31,6 +37,8 @@ start:
         mov     byte [xallmode], 0
         mov     byte [fname], 0
         call    parse_args
+        mov     al, [xmode]         ; exit code: X starts "failed" until the
+        mov     [rc], al            ; requested member is really extracted
         cmp     byte [fname], 0
         je      .usage
         mov     ax, 3D00h
@@ -64,20 +72,21 @@ start:
         mov     bx, [fh]
         mov     ah, 3Eh
         int     21h
-        mov     ax, 4C00h
+        mov     al, [rc]            ; 0 ok / 1 corrupt, skipped or not found
+        mov     ah, 4Ch
         int     21h
 .usage:
         mov     si, s_usage
-        jmp     .die
+        jmp     fatal
 .noopen:
         mov     si, s_noopen
-        jmp     .die
+        jmp     fatal
 .badfmt:
         mov     si, s_badfmt
-        jmp     .die
+        jmp     fatal
 .rar5:
         mov     si, s_rar5
-.die:
+fatal:
         call    puts
         mov     ax, 4C01h
         int     21h
@@ -104,17 +113,21 @@ skip32:
 block_loop:
         mov     word [filei], 0
 .next:
+        mov     word [hend], bbuf+7
         mov     cx, 7
         mov     dx, bbuf
         call    read_n
+        jc      .bad
+        or      ax, ax
+        jz      .done               ; EOF / no more blocks
         cmp     ax, 7
-        jne     .done               ; EOF / no more blocks
+        jne     .bad                ; truncated block header
         mov     ax, [bbuf+3]
         mov     [flags], ax
         mov     ax, [bbuf+5]
         mov     [hsize], ax
         cmp     ax, 7
-        jb      .done               ; corrupt
+        jb      .bad                ; corrupt
         ; read the rest of the header (hsize-7 bytes) into bbuf+7
         mov     ax, [hsize]
         sub     ax, 7
@@ -128,6 +141,11 @@ block_loop:
         mov     dx, bbuf+7
         call    read_n
         pop     cx
+        jc      .bad
+        cmp     ax, cx
+        jne     .bad                ; header cut short -> fields are garbage
+        add     ax, bbuf+7
+        mov     [hend], ax          ; end of the header bytes really in bbuf
         ; if the header was larger than our buffer, skip the remainder
         mov     ax, [hsize]
         sub     ax, 7
@@ -146,6 +164,8 @@ block_loop:
         mov     [adds], ax
         mov     ax, [bbuf+9]
         mov     [adds+2], ax
+        test    ah, 80h             ; >= 2 GB: a relative seek by it would go
+        jnz     .bad                ; BACKWARDS and walk the chain forever
 .haveadds:
         mov     al, [bbuf+2]        ; HEAD_TYPE
         cmp     al, 7Bh             ; end block
@@ -158,6 +178,8 @@ block_loop:
 .file:
         call    on_file
         jmp     .next
+.bad:
+        mov     byte [rc], 1        ; corrupt chain: stop, report via exit code
 .done:
         ret
 
@@ -181,12 +203,16 @@ on_file:
         cmp     ax, [xindex]
         jne     .skip
         call    do_extract
+        jc      .inc                ; compressed / encrypted: rc stays 1
+        mov     byte [rc], 0
         jmp     .inc
 .skip:
         call    skip_data
         jmp     .inc
 .xa:
         call    do_extract
+        jnc     .inc
+        mov     byte [rc], 1        ; a member could not be extracted
 .inc:
         inc     word [filei]
         ret
@@ -199,10 +225,12 @@ do_extract:
         jne     .skip
         test    word [flags], 0004h ; password-protected
         jnz     .skip
-        call    extract_stored
+        call    extract_stored      ; exits the program on any I/O failure
+        clc
         ret
 .skip:
         call    skip_data
+        stc
         ret
 
 skip_data:
@@ -211,15 +239,12 @@ skip_data:
         call    skip32
         ret
 
-; copy ADD_SIZE (PACK_SIZE) bytes verbatim into <destdir>\<namebuf>
+; copy ADD_SIZE (PACK_SIZE) bytes verbatim into a NEW <destdir>\<dosname>.
+; Any read/write failure deletes the partial file and exits with code 1.
 extract_stored:
-        call    build_outpath
-        mov     ah, 3Ch
-        xor     cx, cx
-        mov     dx, outpath
-        int     21h
-        jc      .skipd
-        mov     [ofh], ax
+        call    create_out
+        mov     si, s_ecreate
+        jc      fatal
         mov     ax, [adds]
         mov     [rem], ax
         mov     ax, [adds+2]
@@ -239,35 +264,56 @@ extract_stored:
 .rd:
         mov     dx, datbuf
         call    read_n
+        mov     si, s_eread
+        jc      .kill
         or      ax, ax
-        jz      .close
+        jz      .kill               ; archive ends inside the member
         mov     cx, ax
+        sub     [rem], ax           ; count bytes READ, never bytes written
+        sbb     word [rem+2], 0
         mov     bx, [ofh]
         mov     ah, 40h
         mov     dx, datbuf
         int     21h
-        mov     bx, ax
-        sub     [rem], bx
-        sbb     word [rem+2], 0
+        mov     si, s_ewrite
+        jc      .kill
+        cmp     ax, cx
+        jne     .kill               ; short write = disk full
         jmp     .cl
 .close:
         mov     bx, [ofh]
         mov     ah, 3Eh
         int     21h
         ret
-.skipd:
-        call    skip_data
-        ret
+.kill:
+        mov     bx, [ofh]           ; close + delete the partial file, exit 1
+        mov     ah, 3Eh
+        int     21h
+        mov     ah, 41h
+        mov     dx, outpath
+        int     21h
+        jmp     fatal
 
 ; FILE_HEAD name (NAME_SIZE @+26, bytes at +32 / +40 if LARGE) -> namebuf:
-; base name only, spaces -> '_', capped to 12.
+; base name only, spaces/controls -> '_', capped to 12 (the L listing name);
+; and dosname = the same base name mapped to a valid 8.3 name (the file X/XA
+; actually create -- never a path, so nothing can land outside <destdir>).
 set_name:
         mov     si, bbuf+32         ; name offset, no LARGE fields
         test    word [flags], 0100h ; LARGE -> 8 bytes of high sizes precede
         jz      .haveoff
         mov     si, bbuf+40
 .haveoff:
-        mov     cx, [bbuf+26]       ; NAME_SIZE
+        mov     cx, [bbuf+26]       ; NAME_SIZE, clamped to the header bytes read
+        mov     ax, [hend]
+        sub     ax, si
+        jae     .avok
+        xor     ax, ax
+.avok:
+        cmp     cx, ax
+        jbe     .lenok
+        mov     cx, ax
+.lenok:
         ; bx scans for the last path separator within [si, si+cx)
         mov     bx, si
         mov     di, si
@@ -287,8 +333,14 @@ set_name:
         mov     bx, si
         jmp     .scan
 .copy:
+        push    di
+        push    bx
         mov     si, bx
-        mov     bx, di              ; bx = name end
+        mov     cx, di
+        sub     cx, bx
+        call    make83
+        pop     si                  ; si = base name start
+        pop     bx                  ; bx = name end
         mov     di, namebuf
         mov     cx, 12
 .cc:
@@ -299,7 +351,7 @@ set_name:
         or      al, al
         jz      .cdone
         cmp     al, ' '
-        jne     .keep
+        ja      .keep               ; space / control (CR, LF...) -> '_'
         mov     al, '_'
 .keep:
         mov     [di], al
@@ -338,7 +390,8 @@ build_outpath:
         mov     byte [di], '\'
         inc     di
 .nm:
-        mov     si, namebuf
+        mov     [onam], di          ; where the file name starts
+        mov     si, dosname
 .n:
         mov     al, [si]
         mov     [di], al
@@ -348,6 +401,139 @@ build_outpath:
         inc     di
         jmp     .n
 .done:
+        ret
+
+; si -> member base name, cx bytes (stops at a NUL) -> dosname = a valid 8.3
+; name: base = the part before the LAST '.', first 8 chars; ext = first 3
+; after it; bad chars -> '_'. [dblen] = base length (for NAME~n on a clash).
+make83:
+        mov     bx, si
+        add     bx, cx              ; bx = end
+        mov     di, si
+        xor     dx, dx              ; dx = last '.' (0 = none)
+.f:
+        cmp     di, bx
+        jae     .fe
+        mov     al, [di]
+        or      al, al
+        jz      .fnul
+        cmp     al, '.'
+        jne     .fn
+        mov     dx, di
+.fn:
+        inc     di
+        jmp     .f
+.fnul:
+        mov     bx, di              ; name ends at the NUL
+.fe:
+        or      dx, dx
+        jnz     .hd
+        mov     dx, bx              ; no dot: the base runs to the end
+.hd:
+        mov     di, dosname
+        mov     cx, 8
+.b:
+        cmp     si, dx
+        jae     .be
+        jcxz    .be
+        lodsb
+        call    dos_char
+        stosb
+        dec     cx
+        jmp     .b
+.be:
+        cmp     di, dosname
+        jne     .bok
+        mov     al, '_'             ; empty base (".txt", "..") -> "_"
+        stosb
+.bok:
+        mov     ax, di
+        sub     ax, dosname
+        mov     [dblen], ax
+        mov     si, dx
+        inc     si                  ; past the '.'
+        cmp     si, bx
+        jae     .z                  ; no / empty extension
+        mov     al, '.'
+        stosb
+        mov     cx, 3
+.e:
+        cmp     si, bx
+        jae     .z
+        jcxz    .z
+        lodsb
+        call    dos_char
+        stosb
+        dec     cx
+        jmp     .e
+.z:
+        mov     byte [di], 0
+        ret
+
+; al -> '_' if it is not legal in a DOS file name (controls, space, '.' and
+; "*+,/:;<=>?[\]| -- so no drive, path or ".." can survive), else unchanged.
+dos_char:
+        cmp     al, ' '
+        jbe     .bad
+        push    di
+        push    cx
+        mov     di, s_badch
+        mov     cx, S_BADCH_N
+        repne   scasb
+        pop     cx
+        pop     di
+        jne     .ok
+.bad:
+        mov     al, '_'
+.ok:
+        ret
+
+; create <destdir>\<dosname> as a NEW file (INT 21h/5Bh never truncates an
+; existing one); on a clash (or a device name like CON/PRN) try NAME~1..~9.
+; CF=0 -> [ofh] = handle, outpath = the name used; CF=1 -> nothing created.
+create_out:
+        call    build_outpath
+        mov     byte [try], '0'
+.try:
+        mov     ah, 5Bh
+        xor     cx, cx
+        mov     dx, outpath
+        int     21h
+        jc      .next
+        mov     [ofh], ax
+        mov     bx, ax
+        mov     ax, 4400h           ; IOCTL: is this handle a character device?
+        int     21h
+        test    dl, 80h             ; (also clears CF)
+        jz      .ret
+        mov     ah, 3Eh             ; a device, not a file: close, rename
+        int     21h
+.next:
+        inc     byte [try]
+        cmp     byte [try], '9'
+        ja      .fail
+        mov     di, [onam]          ; name = base[0..min(len,6)) + '~' + digit
+        mov     ax, [dblen]
+        cmp     ax, 6
+        jbe     .l6
+        mov     ax, 6
+.l6:
+        add     di, ax
+        mov     al, '~'
+        stosb
+        mov     al, [try]
+        stosb
+        mov     si, dosname         ; + the ".EXT" (and NUL) unchanged
+        add     si, [dblen]
+.ce:
+        lodsb
+        stosb
+        or      al, al
+        jnz     .ce
+        jmp     .try
+.fail:
+        stc
+.ret:
         ret
 
 ; "<UNP_SIZE> <namebuf>\r\n" to stdout
@@ -555,6 +741,11 @@ s_usage     db 'Usage: CCRAR <a.rar>',0Dh,0Ah,0
 s_noopen    db 'CCRAR: cannot open archive',0Dh,0Ah,0
 s_badfmt    db 'CCRAR: not a RAR archive',0Dh,0Ah,0
 s_rar5      db 'CCRAR: RAR5 not supported',0Dh,0Ah,0
+s_ecreate   db 'CCRAR: cannot create output file',0Dh,0Ah,0
+s_eread     db 'CCRAR: read error / truncated archive',0Dh,0Ah,0
+s_ewrite    db 'CCRAR: write error (disk full?)',0Dh,0Ah,0
+s_badch     db '."*+,/:;<=>?[\]|', 7Fh
+S_BADCH_N   equ $ - s_badch
 
 BBUF_SZ     equ 1024
 
@@ -563,6 +754,8 @@ align 2
 lmode       resb 1
 xmode       resb 1
 xallmode    resb 1
+rc          resb 1
+try         resb 1
 fname       resb 128
 destdir     resb 128
 tok1        resb 128
@@ -573,10 +766,14 @@ filei       resw 1
 hsize       resw 1
 flags       resw 1
 hiq         resw 1
+hend        resw 1
+onam        resw 1
+dblen       resw 1
 adds        resd 1
 rem         resd 1
 numtmp      resb 16
 namebuf     resb 16
+dosname     resb 16
 linebuf     resb 64
 outpath     resb 160
 bbuf        resb BBUF_SZ

@@ -6,6 +6,8 @@
 ;             "differ at offset N: AA vs BB" (first differing byte, decimal
 ;             offset + hex values) or "differ: length N1 vs N2" if one is a
 ;             prefix of the other.
+;  Exit code (like cmp/diff):  0 identical, 1 differ, 2 error (usage / open /
+;  read failure -- a read error is reported, never compared as data).
 ;
 ;  Assemble:  nasm -f bin cdiff.asm -o ccdiff.com
 ; ============================================================================
@@ -15,6 +17,7 @@ BUFSZ   equ 8192
 start:
         cld
         mov     sp, stacktop
+        mov     byte [rc], 0
         call    parse_two
         cmp     byte [arg1], 0
         je      .usage
@@ -39,12 +42,14 @@ start:
         mov     cx, BUFSZ
         mov     dx, buf1
         int     21h
+        jc      .rderr              ; CF=1: AX is an error code, not a count
         mov     [n1], ax
         mov     bx, [fh2]
         mov     ah, 3Fh
         mov     cx, BUFSZ
         mov     dx, buf2
         int     21h
+        jc      .rderr
         mov     [n2], ax
         ; common = min(n1,n2)
         mov     ax, [n1]
@@ -105,7 +110,7 @@ start:
         mov     al, [db2]
         call    put_hex2
         call    emit_line
-        jmp     .done
+        jmp     .differ
 .lendiff:
         ; one file is a prefix of the other
         mov     di, linebuf
@@ -122,6 +127,13 @@ start:
         mov     si, s_lenend
         call    cat
         call    emit_line
+.differ:
+        mov     byte [rc], 1
+        jmp     .done
+.rderr:
+        mov     dx, s_rderr
+        call    puts
+        mov     byte [rc], 2
         jmp     .done
 .identical:
         mov     di, linebuf
@@ -135,17 +147,18 @@ start:
         mov     bx, [fh2]
         mov     ah, 3Eh
         int     21h
-        mov     ax, 4C00h
+        mov     al, [rc]            ; 0 identical / 1 differ / 2 read error
+        mov     ah, 4Ch
         int     21h
 .usage:
         mov     dx, s_usage
         call    puts
-        mov     ax, 4C01h
+        mov     ax, 4C02h
         int     21h
 .err1:
         mov     dx, s_err1
         call    puts
-        mov     ax, 4C01h
+        mov     ax, 4C02h
         int     21h
 .err2:
         mov     bx, [fh1]
@@ -153,7 +166,7 @@ start:
         int     21h
         mov     dx, s_err2
         call    puts
-        mov     ax, 4C01h
+        mov     ax, 4C02h
         int     21h
 
 ; ----------------------------------------------------------------------------
@@ -283,9 +296,11 @@ s_vs        db ' vs ',0
 s_len       db 'differ: prefix matches up to offset ',0
 s_lenend    db ' (lengths differ)',0
 s_same      db 'identical',0
+s_rderr     db 'CCDIFF: read error',13,10,0
 
 section .bss
 align 2
+rc          resb 1              ; exit code; .bss is not zeroed -> set at start
 arg1        resb 128
 arg2        resb 128
 fh1         resw 1

@@ -196,6 +196,7 @@ parse_wav:
         jc      .endchunks
         mov     [ckid], eax
         call    getdw               ; chunk size
+        jc      .endchunks          ; truncated chunk header
         mov     [cksize], eax
         mov     eax, [ckid]
         cmp     eax, 'fmt '         ; "fmt "
@@ -203,8 +204,11 @@ parse_wav:
         cmp     eax, 'data'         ; "data"
         je      .data
         call    skip_chunk
+        jc      .bad                ; size wraps the 32-bit position
         jmp     .chunk
 .fmt:
+        cmp     dword [cksize], 16  ; a short fmt would shift every later read
+        jb      .bad
         call    getw                ; audio format
         mov     [afmt], ax
         call    getw                ; channels
@@ -218,9 +222,10 @@ parse_wav:
         mov     word [havefmt], 1
         mov     eax, [cksize]       ; skip any extra fmt bytes
         sub     eax, 16
-        jbe     .chunk
+        jz      .chunk
         mov     [cksize], eax
         call    skip_chunk
+        jc      .bad
         jmp     .chunk
 .data:
         call    cur_filepos         ; dx:ax = data offset
@@ -237,12 +242,15 @@ parse_wav:
         stc
         ret
 
-; advance the file position by [cksize] bytes (rounded up to even)
+; advance the file position by [cksize] bytes (rounded up to even). CF=1 (and
+; no seek) if the size would wrap the 32-bit position: the walk only ever moves
+; forward (each chunk header is 8 bytes), and a seek past EOF ends it (getdw CF).
 skip_chunk:
         mov     eax, [cksize]
         test    al, 1
         jz      .even
-        inc     eax
+        add     eax, 1
+        jc      .ret                ; FFFFFFFFh + pad byte wraps
 .even:
         push    eax
         call    cur_filepos         ; dx:ax = current pos
@@ -252,10 +260,12 @@ skip_chunk:
         or      ebx, ecx            ; ebx = current pos (32-bit)
         pop     eax                 ; skip amount
         add     ebx, eax            ; ebx = new pos
+        jc      .ret                ; wrapped -> would seek backwards
         mov     eax, ebx
         mov     edx, ebx
         shr     edx, 16             ; dx = high word
-        call    seek_set
+        call    seek_set            ; (ends with `or` -> CF=0)
+.ret:
         ret
 
 ; ============================================================================
@@ -306,6 +316,7 @@ dump_wav:
         mov     dx, pcmbuf
         int     21h                 ; cx = block size
         pop     cx
+        jc      .done               ; read error: AX is an error code
         or      ax, ax
         jz      .done
         mov     cx, ax
@@ -348,6 +359,8 @@ play_wav:
         int     21h
         mov     eax, [datasize]
         mov     [remaining], eax
+        mov     word [srcpos], 0    ; empty source buffer -> first src_byte refills
+        mov     word [srclen], 0
         ; physical address of dmabuf
         xor     eax, eax
         mov     ax, cs
@@ -539,6 +552,9 @@ src_refill:
         mov     cx, SRCBUF_SZ
         mov     dx, srcbuf
         int     21h
+        jnc     .ok
+        xor     ax, ax              ; read error -> treat as EOF
+.ok:
         mov     [srclen], ax
         mov     word [srcpos], 0
         ret
@@ -745,6 +761,8 @@ parse_blaster:
         inc     di
         mov     al, [es:di]
         sub     al, '0'
+        cmp     al, 3               ; 8-bit DMA is channel 0..3 only
+        ja      .tok                ; bad/missing digit: keep default, rescan here
         mov     [dmachan], al
         inc     di
         jmp     .tok

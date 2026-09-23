@@ -8,7 +8,9 @@
 ;          source char, any other char is a literal). e.g.
 ;             CCREN *.TXT *.BAK        photo?.* -> img?.*
 ;          Matches are collected first, then renamed, so the enumeration is not
-;          disturbed.
+;          disturbed. <srcmask> may carry a drive/path (C:\OLD\*.TXT); the
+;          renames then happen in that directory. <dstmask> must be a bare
+;          mask (no path). Exit code 1 if any rename failed.
 ;
 ;  Assemble:  nasm -f bin cren.asm -o ccren.com
 ; ============================================================================
@@ -23,6 +25,43 @@ start:
         je      .usage
         cmp     byte [arg2], 0
         je      .usage
+        ; <dstmask> may not carry a path (the new name lives in srcdir)
+        mov     si, arg2
+.dchk:
+        lodsb
+        or      al, al
+        jz      .dchk_ok
+        cmp     al, '\'
+        je      .usage
+        cmp     al, '/'
+        je      .usage
+        cmp     al, ':'
+        je      .usage
+        jmp     .dchk
+.dchk_ok:
+        ; srcdir = arg1 up to and including its last '\', '/' or ':'
+        ; (find-first/next return bare names; the renames must use this dir)
+        mov     si, arg1
+        mov     di, srcdir
+        mov     bx, srcdir          ; bx = end of the directory prefix
+.sdir:
+        lodsb
+        mov     [di], al
+        inc     di
+        or      al, al
+        jz      .sdir_end
+        cmp     al, '\'
+        je      .sdir_mark
+        cmp     al, '/'
+        je      .sdir_mark
+        cmp     al, ':'
+        jne     .sdir
+.sdir_mark:
+        mov     bx, di
+        jmp     .sdir
+.sdir_end:
+        mov     byte [bx], 0
+        mov     [srcdir_end], bx
         ; split the destination mask once
         mov     si, arg2
         mov     di, dname
@@ -86,12 +125,24 @@ start:
         call    split
         ; build the new name from dstmask
         call    build_new
-        ; rename curname -> newname
-        mov     dx, [curname]
-        mov     di, newname
+        ; rename srcdir+curname -> srcdir+newname
+        mov     di, newpath
+        mov     si, srcdir          ; (bare directory at this point)
+        call    cat
+        mov     si, newname
+        call    cat
+        mov     byte [di], 0
+        mov     di, [srcdir_end]
+        mov     si, [curname]
+        call    cat
+        mov     byte [di], 0
+        mov     dx, srcdir          ; srcdir now holds dir+old name
+        mov     di, newpath
         mov     ax, 5600h
         int     21h
         pushf
+        mov     di, [srcdir_end]    ; trim back to the bare directory
+        mov     byte [di], 0
         ; print "old -> new" (note failures)
         mov     di, linebuf
         mov     si, [curname]
@@ -121,7 +172,13 @@ start:
         mov     si, s_files
         call    cat
         call    emit_line
+        mov     ax, [okcount]
+        cmp     ax, [ncount]
+        jne     .somefail
         mov     ax, 4C00h
+        int     21h
+.somefail:
+        mov     ax, 4C01h           ; at least one rename failed
         int     21h
 .nomatch:
         mov     dx, s_nomatch
@@ -341,7 +398,7 @@ puts:
         ret
 
 ; ============================================================================
-s_usage     db 'Usage: CCREN <srcmask> <dstmask>',13,10,0
+s_usage     db 'Usage: CCREN [d:][path\]<srcmask> <dstmask>',13,10,0
 s_nomatch   db 'CCREN: no files matched',13,10,0
 s_arrow     db ' -> ',0
 s_failed    db '  (FAILED)',0
@@ -356,7 +413,10 @@ dname       resb 16
 dext        resb 8
 sname       resb 16
 sext        resb 8
-newname     resb 16
+newname     resb 32                 ; mask literals + '*' can exceed 8.3
+srcdir      resb 128+16             ; dir prefix of arg1 (+ old name)
+newpath     resb 128+32
+srcdir_end  resw 1
 dst_hasdot  resb 1
 ncount      resw 1
 idx         resw 1

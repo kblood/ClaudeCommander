@@ -10,6 +10,11 @@
 ;   Each directory entry (64 B): char name[56] | uint32 filepos | uint32 filelen
 ;   Path separator is '/'.  Example entry: "progs/player.mdl"
 ;
+; Errorlevel 0 = OK, 1 = an entry failed or was refused.  X/XA vet names
+; first: leading '/' '\' dropped, a '..' component or ':' refused.  They never
+; overwrite: outputs are created with INT 21h/5Bh and a clash becomes
+; NAME~1..NAME~9 (extension kept); if all are taken the entry fails.
+;
 ; This is a Layer-3 helper: cc's [open] map (pak=CCPAK) makes it browsable
 ; exactly like the ZIP plugin -- Enter to browse, F5 to extract, Alt-F9 all.
 ; F3 on a member inside the archive runs "<viewhelper> <container> <index>"
@@ -70,12 +75,27 @@ start:
 
 .do_read:
         call    read_dir
-        jnc     .dispatch
+        jnc     .chktrunc
         mov     dx, s_e_read
         mov     ah, 9
         int     21h
         call    close_pak
         mov     ax, 4C01h
+        int     21h
+
+.chktrunc:
+        cmp     byte [truncated], 0
+        je      .dispatch
+        ; directory longer than MAX_ENT: say so (stderr for the L listing,
+        ; so cc's "<size> <name>" parse never sees it; stdout otherwise)
+        mov     bx, 1
+        cmp     byte [lmode], 0
+        je      .wh
+        mov     bx, 2
+.wh:
+        mov     ah, 40h
+        mov     cx, S_W_TRUNC_LEN
+        mov     dx, s_w_trunc
         int     21h
 
 .dispatch:
@@ -92,7 +112,8 @@ start:
         call    extract_all
 .fin:
         call    close_pak
-        mov     ax, 4C00h
+        mov     al, [failed]        ; errorlevel 1 if any entry failed/skipped
+        mov     ah, 4Ch
         int     21h
 
 ;──────────────────────────────────────────────────────────────────────────────
@@ -162,6 +183,7 @@ read_dir:
         cmp     eax, MAX_ENT
         jbe     .ok
         mov     eax, MAX_ENT
+        mov     byte [truncated], 1     ; the rest is not loaded -> warn
 .ok:    mov     [pak_count], ax         ; word store (max 512)
         or      ax, ax
         jz      .empty
@@ -182,6 +204,8 @@ read_dir:
         mov     dx, entry_table
         int     21h
         jc      .fail
+        shr     ax, 6                   ; short read -> only whole entries
+        mov     [pak_count], ax
 .empty: clc
         ret
 .fail:  stc
@@ -213,6 +237,7 @@ emit_one:
         mov     byte [di], ' '
         inc     di
         lea     si, [si + E_NAME]
+        mov     cx, 56                  ; name[56] need not be NUL-terminated
 .cp:
         mov     al, [si]
         or      al, al
@@ -220,7 +245,7 @@ emit_one:
         mov     [di], al
         inc     si
         inc     di
-        jmp     .cp
+        loop    .cp
 .cpe:
         mov     word [di], 0A0Dh        ; CR LF
         add     di, 2
@@ -239,10 +264,32 @@ emit_one:
 extract_one:
         mov     ax, [xindex]
         cmp     ax, [pak_count]
-        jae     .ret
+        jae     .noent
         shl     ax, 6
         add     ax, entry_table
         mov     [cur_entry], ax
+
+        ; e_name = the entry's name[56] (need not be NUL-terminated), then
+        ; vet it: no '..' component, no ':', leading separators dropped
+        mov     si, ax
+        mov     di, e_name
+        mov     cx, 56
+.cpb:
+        mov     al, [si]
+        or      al, al
+        jz      .cpbe
+        mov     [di], al
+        inc     si
+        inc     di
+        loop    .cpb
+.cpbe:
+        mov     byte [di], 0
+        call    safe_name               ; si -> vetted name, CF=1 unsafe
+        jnc     .safe
+        mov     si, s_e_unsafe
+        jmp     fail_msg
+.safe:
+        push    si
 
         ; outpath = destdir + '\' (if needed) + name, '/' mapped to '\'
         mov     si, destdir
@@ -263,8 +310,7 @@ extract_one:
         mov     byte [di], '\'
         inc     di
 .nosep:
-        mov     si, [cur_entry]
-        add     si, E_NAME
+        pop     si                      ; vetted name (NUL-terminated, <=56)
 .cpn:
         mov     al, [si]
         or      al, al
@@ -283,7 +329,99 @@ extract_one:
         mov     si, [cur_entry]
         mov     dx, outpath
         call    do_extract
+        jnc     .ret
+        mov     si, s_e_extract
+        jmp     fail_msg
 .ret:
+        ret
+.noent:
+        mov     byte [failed], 1        ; no such entry
+        ret
+
+; print "CCPAK: <reason at si><e_name>\r\n", mark the run failed
+fail_msg:
+        call    puts0
+        mov     si, e_name
+        call    puts0
+        mov     si, s_crlf
+        call    puts0
+        mov     byte [failed], 1
+        ret
+
+; write ASCIIZ ds:si to stdout
+puts0:
+        mov     dx, si
+.l:     cmp     byte [si], 0
+        je      .w
+        inc     si
+        jmp     .l
+.w:     mov     cx, si
+        sub     cx, dx
+        mov     ah, 40h
+        mov     bx, 1
+        int     21h
+        ret
+
+; Vet the entry name in e_name for use as a path under destdir.  Leading
+; '/' '\' are dropped (absolute -> relative); a ':' anywhere (drive) or a
+; component made only of dots and at least 2 long ('..', '...') -- with '/'
+; and '\' both separators -- rejects it, as does an empty name.
+;   -> si = start of the usable name inside e_name, CF=1 if unsafe
+; (Same rules as czip.asm's safe_name.)
+safe_name:
+        mov     si, e_name
+.lead:
+        mov     al, [si]
+        cmp     al, '/'
+        je      .l1
+        cmp     al, '\'
+        jne     .body
+.l1:
+        inc     si
+        jmp     .lead
+.body:
+        push    si
+        cmp     byte [si], 0
+        je      .bad
+        mov     bx, si                  ; bx = start of the current component
+.sc:
+        mov     al, [si]
+        or      al, al
+        jz      .endc
+        cmp     al, ':'
+        je      .bad
+        cmp     al, '/'
+        je      .endc
+        cmp     al, '\'
+        je      .endc
+        inc     si
+        jmp     .sc
+.endc:                                  ; component = [bx..si)
+        mov     cx, si
+        sub     cx, bx
+        cmp     cx, 2
+        jb      .nextc
+        mov     di, bx
+.dots:
+        cmp     byte [di], '.'
+        jne     .nextc
+        inc     di
+        cmp     di, si
+        jb      .dots
+        jmp     .bad                    ; all dots -> parent-dir escape
+.nextc:
+        cmp     byte [si], 0
+        je      .ok
+        inc     si
+        mov     bx, si
+        jmp     .sc
+.ok:
+        pop     si
+        clc
+        ret
+.bad:
+        pop     si
+        stc
         ret
 
 ;──────────────────────────────────────────────────────────────────────────────
@@ -346,11 +484,8 @@ do_extract:
         int     21h
         jc      .fail
 
-        ; create output file
-        mov     ah, 3Ch
-        xor     cx, cx
-        mov     dx, [ext_fname_p]
-        int     21h
+        ; create output file (never overwrites: a clash -> NAME~n)
+        call    create_new
         jc      .fail
         mov     [out_fh], ax
 
@@ -377,7 +512,7 @@ do_extract:
         int     21h
         jc      .fail_close
         or      ax, ax
-        jz      .done           ; premature EOF, accept what we got
+        jz      .fail_close     ; premature EOF = truncated PAK
 
         mov     cx, ax
         mov     bx, [out_fh]
@@ -404,7 +539,101 @@ do_extract:
         mov     ah, 3Eh
         int     21h
         mov     word [out_fh], 0FFFFh
+        mov     ah, 41h         ; drop the partial output
+        mov     dx, [ext_fname_p]
+        int     21h
 .fail:  stc
+        ret
+
+;──────────────────────────────────────────────────────────────────────────────
+; create_new -- create outpath as a NEW file: INT 21h/5Bh never truncates an
+; existing one.  On a clash (or a device name like CON) retry NAME~1..NAME~9:
+; the final component's base cut to 6 chars + '~' + digit, its extension kept
+; (the scheme of CCRAR's create_out).  CF=0 -> ax = handle, outpath = the
+; name used; CF=1 -> nothing created.  (Same routine as czip.asm's.)
+;──────────────────────────────────────────────────────────────────────────────
+create_new:
+        mov     si, outpath
+        mov     bx, si              ; bx -> start of the final component
+        xor     dx, dx              ; dx -> its last '.' (0 = none)
+.scan:
+        lodsb
+        or      al, al
+        jz      .scanned
+        cmp     al, '\'
+        je      .sep
+        cmp     al, '/'
+        je      .sep
+        cmp     al, ':'
+        je      .sep
+        cmp     al, '.'
+        jne     .scan
+        lea     dx, [si-1]
+        jmp     .scan
+.sep:
+        mov     bx, si
+        xor     dx, dx
+        jmp     .scan
+.scanned:
+        dec     si                  ; si -> the NUL
+        or      dx, dx
+        jnz     .hasdot
+        mov     dx, si              ; no extension: the base runs to the end
+.hasdot:
+        mov     ax, dx
+        sub     ax, bx              ; base length, cut to 6
+        cmp     ax, 6
+        jbe     .b6
+        mov     ax, 6
+.b6:
+        add     ax, bx
+        mov     [cn_tail], ax       ; "~n" + extension go here on a clash
+        mov     si, dx              ; keep '.' + up to 3 extension chars
+        mov     di, cn_ext
+        mov     cx, 4
+.ex:
+        lodsb
+        or      al, al
+        jz      .exd
+        stosb
+        loop    .ex
+.exd:
+        mov     byte [di], 0
+        mov     byte [cn_try], '0'
+.try:
+        mov     ah, 5Bh
+        xor     cx, cx
+        mov     dx, outpath
+        int     21h
+        jc      .next
+        mov     bx, ax
+        push    ax
+        mov     ax, 4400h           ; IOCTL: is this handle a character device?
+        int     21h
+        pop     ax
+        test    dl, 80h             ; (also clears CF)
+        jz      .ret
+        mov     ah, 3Eh             ; a device, not a file: close, rename
+        int     21h
+.next:
+        inc     byte [cn_try]
+        cmp     byte [cn_try], '9'
+        ja      .fail
+        mov     di, [cn_tail]
+        mov     al, '~'
+        stosb
+        mov     al, [cn_try]
+        stosb
+        mov     si, cn_ext
+.ce:
+        lodsb
+        stosb
+        or      al, al
+        jnz     .ce
+        jmp     .try
+.fail:
+        stc
+.ret:
         ret
 
 ;──────────────────────────────────────────────────────────────────────────────
@@ -486,6 +715,7 @@ parse_args:
         call    read_tok
         ret
 .islist:
+        mov     byte [lmode], 1
         call    skip_sp
         mov     di, pak_path
         call    read_tok
@@ -569,6 +799,15 @@ s_e_open:
         db      'CCPAK: cannot open or not a valid PAK (missing PACK header)', 0Dh, 0Ah, '$'
 s_e_read:
         db      'CCPAK: error reading PAK directory', 0Dh, 0Ah, '$'
+s_w_trunc:
+        db      'CCPAK: warning: directory has more than 512 entries; only the first 512 are available', 0Dh, 0Ah
+S_W_TRUNC_LEN equ $ - s_w_trunc
+s_e_unsafe:
+        db      'CCPAK: unsafe name skipped: ', 0
+s_e_extract:
+        db      'CCPAK: extract failed: ', 0
+s_crlf:
+        db      0Dh, 0Ah, 0
 
 ;──────────────────────────────────────────────────────────────────────────────
 ; BSS (labels only; all zeroed by startup rep stosb)
@@ -585,7 +824,7 @@ pak_dirofs:     resd    1       ; uint32: directory offset
 pak_dirlen:     resd    1       ; uint32: directory length in bytes
 pak_count:      resw    1       ; number of entries loaded
 
-lmode:          resb    1       ; unused (kept for symmetry with CD64/CT64)
+lmode:          resb    1       ; 1 = L (only steers where warnings go)
 xmode:          resb    1       ; 1 = X (extract one)
 xallmode:       resb    1       ; 1 = XA (extract all)
 destdir:        resb    128     ; X/XA destination directory
@@ -594,8 +833,14 @@ tok1:           resb    128     ; parse_args scratch token
 
 iter_i:         resw    1       ; do_list loop counter
 cur_entry:      resw    1       ; extract_one: entry_table pointer for the target
-linebuf:        resb    80      ; emit_one line buffer
-outpath:        resb    200     ; extract_one/make_dirs scratch path
+linebuf:        resb    80      ; emit_one line buffer (10 + 1 + 56 + CRLF)
+outpath:        resb    200     ; extract_one/make_dirs scratch path (<128+1+56+1)
+e_name:         resb    58      ; NUL-terminated copy of the entry's name[56]
+failed:         resb    1       ; any entry failed/skipped -> errorlevel 1
+truncated:      resb    1       ; directory had more than MAX_ENT entries
+cn_try:         resb    1       ; create_new: current '~' digit
+cn_ext:         resb    6       ; create_new: saved ".EXT" + NUL
+cn_tail:        resw    1       ; create_new: where "~n.EXT" is written
 
 ; do_extract state
 ext_fname_p:    resw    1       ; pointer to output filename

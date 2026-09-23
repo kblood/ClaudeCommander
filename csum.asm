@@ -39,7 +39,7 @@ start:
         mov     cx, BUFSZ
         mov     dx, buf
         int     21h
-        jc      .close
+        jc      .rderr              ; CF=1: AX is an error code, not a count
         mov     cx, ax
         jcxz    .close
         mov     [chunklen], cx
@@ -65,6 +65,14 @@ start:
         mov     [crc_hi], ax
         call    print_result
         mov     ax, 4C00h
+        int     21h
+.rderr:
+        mov     bx, [fh]            ; never print a CRC of a partial read
+        mov     ah, 3Eh
+        int     21h
+        mov     dx, s_rderr
+        call    puts
+        mov     ax, 4C01h
         int     21h
 .err:
         mov     dx, s_err
@@ -249,6 +257,7 @@ puts:
 ; ============================================================================
 s_usage     db 'Usage: CCSUM <file>',13,10,0
 s_err       db 'CCSUM: cannot open file',13,10,0
+s_rderr     db 'CCSUM: read error',13,10,0
 
 section .bss
 align 2

@@ -6,10 +6,17 @@
 ;          first missing part) into <output>. Inverse of CCSPLIT, e.g.
 ;          CCSPLIT BIG.ZIP 100K  then  CCJOIN BIG.ZIP BIG.
 ;
+;  Safety: the parts are enumerated before <output> is created -- no
+;  <base>.001 means nothing is touched, and <output> is refused if its
+;  truename (INT 21h/60h) equals any part's (CCJOIN BIG.001 BIG would
+;  otherwise truncate part 1 before reading it). A read/write error deletes
+;  the partial output and exits 1.
+;
 ;  Assemble:  nasm -f bin cjoin.asm -o ccjoin.com
 ; ============================================================================
         org     100h
 BUFSZ   equ 16384
+MAXPART equ 999
 
 start:
         cld
@@ -19,6 +26,36 @@ start:
         je      .usage
         cmp     byte [arg2], 0
         je      .usage
+        ; canonical output name
+        mov     si, arg1
+        mov     di, outtrue
+        mov     ah, 60h
+        int     21h
+        jc      .errout
+        ; enumerate the parts (stop at the first missing one); none of them
+        ; may be the output file itself
+        mov     word [partnum], 1
+.scan:
+        call    build_partname
+        mov     ax, 4300h           ; exists? (get attributes)
+        mov     dx, partname
+        int     21h
+        jc      .scanned
+        mov     si, partname
+        mov     di, parttrue
+        mov     ah, 60h
+        int     21h
+        jc      .same               ; unresolvable -> refuse rather than guess
+        call    same_true
+        jc      .same
+        inc     word [partnum]
+        cmp     word [partnum], MAXPART
+        jbe     .scan
+.scanned:
+        mov     ax, [partnum]
+        dec     ax
+        mov     [nparts], ax
+        jz      .noparts            ; no <base>.001 -> leave <output> alone
         ; create output
         mov     ah, 3Ch
         xor     cx, cx
@@ -32,36 +69,28 @@ start:
         mov     ax, 3D00h
         mov     dx, partname
         int     21h
-        jc      .nomore             ; missing part -> stop
+        jc      .ioerr              ; vanished since the scan
         mov     [fh], ax
-        call    copy_all
+        call    copy_all            ; CF=1 on read/write error
+        pushf
         mov     bx, [fh]
         mov     ah, 3Eh
         int     21h
+        popf
+        jc      .ioerr
         inc     word [partnum]
-        cmp     word [partnum], 1000
-        jae     .finish
-        jmp     .part
-.nomore:
-        ; if no part 001 existed at all, that's an error
-        cmp     word [partnum], 1
-        jne     .finish
-        mov     bx, [ofh]
-        mov     ah, 3Eh
-        int     21h
-        mov     dx, s_noparts
-        call    puts
-        mov     ax, 4C01h
-        int     21h
+        mov     ax, [partnum]
+        cmp     ax, [nparts]
+        jbe     .part
 .finish:
         mov     bx, [ofh]
         mov     ah, 3Eh
         int     21h
+        jc      .ioerr_closed
         mov     di, linebuf
         mov     si, s_joined
         call    cat
-        mov     ax, [partnum]
-        dec     ax                  ; partnum is one past the last joined
+        mov     ax, [nparts]
         xor     dx, dx
         call    put_dec32
         mov     si, s_parts
@@ -69,19 +98,64 @@ start:
         call    emit_line
         mov     ax, 4C00h
         int     21h
+.ioerr:
+        mov     bx, [ofh]
+        mov     ah, 3Eh
+        int     21h
+.ioerr_closed:
+        mov     ah, 41h             ; don't leave a truncated output behind
+        mov     dx, arg1
+        int     21h
+        mov     dx, s_errio
+        jmp     .die
+.noparts:
+        mov     dx, s_noparts
+        jmp     .die
+.same:
+        mov     dx, s_same
+        jmp     .die
 .usage:
         mov     dx, s_usage
-        call    puts
-        mov     ax, 4C01h
-        int     21h
+        jmp     .die
 .errout:
         mov     dx, s_errout
+.die:
         call    puts
         mov     ax, 4C01h
         int     21h
 
+; same_true: CF=1 if outtrue == parttrue (ASCII case-insensitive).
+same_true:
+        mov     si, outtrue
+        mov     di, parttrue
+.cmp:
+        mov     al, [si]
+        mov     ah, [di]
+        cmp     al, 'a'
+        jb      .h
+        cmp     al, 'z'
+        ja      .h
+        sub     al, 20h
+.h:     cmp     ah, 'a'
+        jb      .c
+        cmp     ah, 'z'
+        ja      .c
+        sub     ah, 20h
+.c:     cmp     al, ah
+        jne     .no
+        or      al, al
+        jz      .yes
+        inc     si
+        inc     di
+        jmp     .cmp
+.no:    clc
+        ret
+.yes:   stc
+        ret
+
 ; ----------------------------------------------------------------------------
-; copy_all: copy every byte from fh to ofh
+; copy_all: copy every byte from fh to ofh. CF=1 on a read error or a
+; short/failed write.
 copy_all:
 .cl:
         mov     bx, [fh]
@@ -89,6 +163,7 @@ copy_all:
         mov     cx, BUFSZ
         mov     dx, buf
         int     21h
+        jc      .fail               ; AX = error code, not a count
         or      ax, ax
         jz      .d
         mov     cx, ax
@@ -96,10 +171,16 @@ copy_all:
         mov     ah, 40h
         mov     dx, buf
         int     21h
+        jc      .fail
+        cmp     ax, cx              ; short write = disk full
+        jne     .fail
         cmp     cx, BUFSZ
         jb      .d
         jmp     .cl
-.d:     ret
+.d:     clc
+        ret
+.fail:  stc
+        ret
 
 ; build_partname: arg2 + "." + 3-digit partnum -> partname
 build_partname:
@@ -232,6 +313,8 @@ puts:
 s_usage     db 'Usage: CCJOIN <output> <base>',13,10,0
 s_errout    db 'CCJOIN: cannot create output',13,10,0
 s_noparts   db 'CCJOIN: no <base>.001 found',13,10,0
+s_same      db 'CCJOIN: output would overwrite one of the parts',13,10,0
+s_errio     db 'CCJOIN: read/write error (disk full?) - output deleted',13,10,0
 s_joined    db 'joined ',0
 s_parts     db ' part(s)',0
 
@@ -240,9 +323,12 @@ align 2
 arg1        resb 128
 arg2        resb 128
 partname    resb 132
+outtrue     resb 128
+parttrue    resb 128
 fh          resw 1
 ofh         resw 1
 partnum     resw 1
+nparts      resw 1
 linebuf     resb 80
 buf         resb BUFSZ
 stackspace  resb 1024
